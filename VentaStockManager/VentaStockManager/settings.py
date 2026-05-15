@@ -1,52 +1,72 @@
-from pathlib import Path
+"""
+Django settings for VentaStockManager.
+
+Toda la configuración sensible o que cambia entre entornos (local, staging,
+production) se lee desde variables de entorno. Ver `.env.example` para la
+lista completa con valores de referencia.
+
+Variables clave:
+    SECRET_KEY              Requerida en producción.
+    DEBUG                   "True"/"1" para desarrollo. Default: False.
+    ALLOWED_HOSTS           Lista separada por comas.
+    CSRF_TRUSTED_ORIGINS    Lista separada por comas (con https://).
+    DATABASE_URL            Postgres/MySQL/sqlite URL. Default: sqlite local.
+    GOOGLE_CREDENTIALS_PATH Ruta al JSON del service account de Google.
+    GOOGLE_SHEET_ID         ID de la planilla de artículos.
+"""
+
+import mimetypes
 import os
-from environs import Env, EnvError
+from pathlib import Path
+
+import dj_database_url
+from environs import Env
 
 env = Env()
-env.read_env()
+env.read_env()  # Lee .env del directorio actual si existe
 
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Static files (CSS, JavaScript, Images)
 
-STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'static')
-# WHITENOISE_MANIFEST_STRICT = False
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+SECRET_KEY = env.str(
+    "SECRET_KEY",
+    default="django-insecure-dev-only-key-DO-NOT-USE-IN-PRODUCTION",
+)
+DEBUG = env.bool("DEBUG", default=False)
+ALLOWED_HOSTS = env.list(
+    "ALLOWED_HOSTS",
+    default=["localhost", "127.0.0.1", "0.0.0.0"],
+)
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'articulo', 'static'),
-]
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Cuando vivimos detrás de un proxy con TLS (Render, ngrok, etc.) Django
+# necesita saber leer el header forwarded para reconocer la conexión como
+# segura.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-# SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-# Quick-start development settings - unsuitable for production
-SECRET_KEY = "DihCl2FfbgQqgUDEp0HS_aJPqcSUlP_lB_HytyBi29Ws791ZTNgaWqgK9LNp9SANpXM"
-# CSRF_COOKIE_SECURE = True
-# # Configuración para hacer que las cookies de sesión solo se envíen a través de conexiones seguras
-# SESSION_COOKIE_SECURE = True
-# DEBUG = bool(os.environ.get('DJANGO_DEBUG', False))
-DEBUG=False
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '2ee0-201-252-61-204.ngrok-free.app', 'jairoDO.pythonanywhere.com','golosinas-insa.com']
-CSRF_TRUSTED_ORIGINS = ["https://2ee0-201-252-61-204.ngrok-free.app"]
+# Cookies seguras solo cuando no estamos en dev.
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
-# Application definition    
+
+# ---------------------------------------------------------------------------
+# Apps + middleware
+# ---------------------------------------------------------------------------
 INSTALLED_APPS = [
     'material',
     'material.admin',
-    # 'material.admin.default',
-    'whitenoise.runserver_nostatic',    
+    'whitenoise.runserver_nostatic',
     'django.contrib.auth',
-    # 'django.contrib.admin',  # Commented out to avoid duplicate 'admin' label
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
-    #'django.contrib.staticfiles',
-    # 'bootstrap5',
     'dal',
     'dal_select2',
-    'django_extensions',    
+    'django_extensions',
     'cliente.apps.ClienteConfig',
     'venta.apps.VentaConfig',
     'articulo.apps.ArticuloConfig',
@@ -58,7 +78,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -75,8 +95,8 @@ TEMPLATES = [
         'DIRS': [
             os.path.join(BASE_DIR, 'compra', 'templates'),
             os.path.join(BASE_DIR, 'venta', 'templates'),
-            os.path.join(BASE_DIR, 'cliente', 'templates')
-        ],  
+            os.path.join(BASE_DIR, 'cliente', 'templates'),
+        ],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -89,76 +109,78 @@ TEMPLATES = [
     },
 ]
 
-# # Database
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'jairoDO$osvaldo_manager',
-        'USER': 'jairoDO',
-        'PASSWORD': '05v4ld0!',
-        'HOST': 'jairoDO.mysql.pythonanywhere-services.com',
-        'PORT': '3306'
-    }
-}
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
-#     }
-# }
 
-# Password validation
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+# `dj_database_url` parsea DATABASE_URL en formato:
+#   postgres://user:pass@host:port/dbname?sslmode=require
+# Si la variable no existe, cae al sqlite local (útil para `manage.py runserver`).
+DATABASES = {
+    'default': dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+        conn_health_checks=True,
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-# Internationalization
+
+# ---------------------------------------------------------------------------
+# i18n / l10n
+# ---------------------------------------------------------------------------
 LANGUAGE_CODE = 'es'
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_L10N = True
-# USE_TZ = True
 
-# Default primary key field type
+
+# ---------------------------------------------------------------------------
+# Static files (Whitenoise)
+# ---------------------------------------------------------------------------
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'articulo', 'static'),
+]
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STATICFILES_FINDERS = [
+    'django.contrib.staticfiles.finders.FileSystemFinder',
+    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
+]
+
+
+# ---------------------------------------------------------------------------
+# Misc Django
+# ---------------------------------------------------------------------------
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# Additional settings
 ADMIN_MEDIA_PREFIX = '/static/admin/'
 
-MATERIAL_ADMIN_SITE = {
-    # 'HEADER':  _('Your site header'),  # Admin site header
-    # 'TITLE':  _('Your site title'),  # Admin site title
-    # 'FAVICON':  'path/to/favicon',  # Admin site favicon (path to static should be specified)
-    # 'MAIN_BG_COLOR':  'color',  # Admin site main color, css color should be specified
-    # 'MAIN_HOVER_COLOR':  'color',  # Admin site main hover color, css color should be specified
-    # 'PROFILE_PICTURE':  'path/to/image',  # Admin site profile picture (path to static should be specified)
-    # 'PROFILE_BG':  'path/to/image',  # Admin site profile background (path to static should be specified)
-    # 'LOGIN_LOGO':  'path/to/image',  # Admin site logo on login page (path to static should be specified)
-    # 'LOGOUT_BG':  'path/to/image',  # Admin site background on login/logout pages (path to static should be specified)
-    'SHOW_THEMES':  True,  #  Show default admin themes button
-    'TRAY_REVERSE': True,  # Hide object-tools and additional-submit-line by default
-    'NAVBAR_REVERSE': True,  # Hide side navbar by default
-    'SHOW_COUNTS': True, # Show instances counts for each model
-#     'APP_ICONS': {  # Set icons for applications(lowercase), including 3rd party apps, {'application_name': 'material_icon_name', ...}
-#         'sites': 'send',
-#     },
-#     'MODEL_ICONS': {  # Set icons for models(lowercase), including 3rd party models, {'model_name': 'material_icon_name', ...}
-#         'site': 'contact_mail',
-#     }
-}
-# settings.py
 
+# ---------------------------------------------------------------------------
+# django-material admin
+# ---------------------------------------------------------------------------
+MATERIAL_ADMIN_SITE = {
+    'SHOW_THEMES': True,
+    'TRAY_REVERSE': True,
+    'NAVBAR_REVERSE': True,
+    'SHOW_COUNTS': True,
+}
+
+
+# ---------------------------------------------------------------------------
+# django-q (async tasks via DB ORM)
+# ---------------------------------------------------------------------------
 Q_CLUSTER = {
     'name': 'DjangoQ',
     'workers': 4,
@@ -166,33 +188,40 @@ Q_CLUSTER = {
     'timeout': 60,
     'queue_limit': 50,
     'bulk': 10,
-    'orm': 'default'  # Usar el ORM de Django
+    'orm': 'default',
 }
 
-# Configuración de HSTS (HTTP Strict Transport Security)
-# SECURE_HSTS_SECONDS = 31536000  # 1 año en segundos
-# SECURE_SSL_REDIRECT = True
-# SECURE_HSTS_PRELOAD = True
-# Asegúrate de leer la documentación y ajustar el valor según tus necesidades de seguridad
-if DEBUG:
 
-    INSTALLED_APPS.append('debug_toolbar')
-    MIDDLEWARE.append('debug_toolbar.middleware.DebugToolbarMiddleware')
+# ---------------------------------------------------------------------------
+# Google Sheets sync (articulos)
+# ---------------------------------------------------------------------------
+# El service-account JSON nunca se commitea. En Render se sube como Secret File
+# y se monta en /etc/secrets/google-credentials.json. Localmente, apuntá a tu
+# copia fuera del repo (ej. ~/credentials-backup/golosinas-insa-credentials.json).
+GOOGLE_CREDENTIALS_PATH = env.str(
+    "GOOGLE_CREDENTIALS_PATH",
+    default=str(BASE_DIR.parent / "credentials.json"),  # legacy default
+)
+GOOGLE_SHEET_ID = env.str(
+    "GOOGLE_SHEET_ID",
+    default="1Zv9TDVJRDG_Ar-U4qTvlTcTiJ7RUpZnawxGwPpL4IZI",
+)
+GOOGLE_SHEET_RANGE = env.str(
+    "GOOGLE_SHEET_RANGE",
+    default="articulos!A1:Z1500",
+)
 
-try:
-    if env.str("environment") == "production":
-        from VentaStockManager.production_settings import *
-    elif env.str("environment") == "development":
-        from VentaStockManager.dev_settings import *
-except EnvError:
-    pass
 
-STATICFILES_FINDERS = [
-    'django.contrib.staticfiles.finders.FileSystemFinder',
-    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
-]
-
-# Configurar tipos MIME
-import mimetypes
+# ---------------------------------------------------------------------------
+# MIME types (asegurar que .js sirva como JavaScript)
+# ---------------------------------------------------------------------------
 mimetypes.add_type("text/javascript", ".js", True)
 mimetypes.add_type("application/javascript", ".js", True)
+
+
+# ---------------------------------------------------------------------------
+# Dev-only extras
+# ---------------------------------------------------------------------------
+if DEBUG:
+    INSTALLED_APPS.append('debug_toolbar')
+    MIDDLEWARE.append('debug_toolbar.middleware.DebugToolbarMiddleware')

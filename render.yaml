@@ -1,0 +1,112 @@
+# Infraestructura como código para Render.
+# Render lee este archivo en cada deploy y aplica los cambios.
+# Los SECRETOS no se commitean acá — se setean en el dashboard de Render
+# (sync: false) y Render los mantiene fuera del repo.
+#
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  # -------------------------------------------------------------------
+  # Web service — STAGING (rama: staging)
+  # -------------------------------------------------------------------
+  - type: web
+    name: golosinas-insa-staging
+    runtime: python
+    region: oregon  # ajustá si Neon está en otra región
+    plan: free
+    branch: staging
+    rootDir: VentaStockManager
+    buildCommand: |
+      pip install -r ../requirements.txt
+      python manage.py collectstatic --no-input
+      python manage.py migrate --no-input
+    startCommand: gunicorn VentaStockManager.wsgi:application
+    healthCheckPath: /admin/login/
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: golosinas-insa-staging.onrender.com
+      - key: CSRF_TRUSTED_ORIGINS
+        value: https://golosinas-insa-staging.onrender.com
+      - key: GOOGLE_CREDENTIALS_PATH
+        value: /etc/secrets/google-credentials.json
+      # Sheet de staging (copia del de prod, para no tocar datos reales)
+      - key: GOOGLE_SHEET_ID
+        value: 1GiKCywO6-6ab_sfUgDXxxbPzvjNXmSYyZBLckh5vtDs
+      - key: GOOGLE_SHEET_RANGE
+        value: articulos!A1:Z1500
+      # Secretos — se setean en el dashboard, no en este archivo
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false  # pegar manualmente la de Neon staging
+
+  # -------------------------------------------------------------------
+  # Web service — PRODUCTION (rama: main)
+  # -------------------------------------------------------------------
+  - type: web
+    name: golosinas-insa
+    runtime: python
+    region: oregon
+    plan: free
+    branch: main
+    rootDir: VentaStockManager
+    buildCommand: |
+      pip install -r ../requirements.txt
+      python manage.py collectstatic --no-input
+      python manage.py migrate --no-input
+    startCommand: gunicorn VentaStockManager.wsgi:application
+    healthCheckPath: /admin/login/
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: golosinas-insa.onrender.com
+      - key: CSRF_TRUSTED_ORIGINS
+        value: https://golosinas-insa.onrender.com
+      - key: GOOGLE_CREDENTIALS_PATH
+        value: /etc/secrets/google-credentials.json
+      - key: GOOGLE_SHEET_ID
+        value: 1Zv9TDVJRDG_Ar-U4qTvlTcTiJ7RUpZnawxGwPpL4IZI
+      - key: GOOGLE_SHEET_RANGE
+        value: articulos!A1:Z1500
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false  # pegar manualmente la de Neon production
+
+# -------------------------------------------------------------------
+# CRON JOB — sync diario de Google Sheets → DB de production
+# -------------------------------------------------------------------
+# IMPORTANTE: este servicio requiere plan pago (Render Cron Jobs no está
+# en free tier). Hasta que upgradees, este bloque se ignora — usá
+# GitHub Actions como workaround (ver .github/workflows/sync-articulos.yml).
+#
+# Una vez en plan pago, descomentá el bloque de abajo.
+#
+# - type: cron
+#   name: golosinas-insa-sync-articulos
+#   runtime: python
+#   region: oregon
+#   plan: starter
+#   branch: main
+#   rootDir: VentaStockManager
+#   schedule: "0 6 * * *"  # 06:00 UTC = 03:00 ART
+#   buildCommand: pip install -r ../requirements.txt
+#   command: python manage.py cargar_articulo_xlsx
+#   envVars:
+#     - key: PYTHON_VERSION
+#       value: 3.11.4
+#     - key: GOOGLE_CREDENTIALS_PATH
+#       value: /etc/secrets/google-credentials.json
+#     - key: GOOGLE_SHEET_ID
+#       value: 1Zv9TDVJRDG_Ar-U4qTvlTcTiJ7RUpZnawxGwPpL4IZI
+#     - key: GOOGLE_SHEET_RANGE
+#       value: articulos!A1:Z1500
+#     - key: DATABASE_URL
+#       sync: false

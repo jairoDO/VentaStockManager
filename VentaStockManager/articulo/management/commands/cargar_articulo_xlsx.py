@@ -1,25 +1,25 @@
-# app/management/commands/importar_articulos.py
+# app/management/commands/cargar_articulo_xlsx.py
 
-import argparse
-import openpyxl
-from datetime import datetime, timedelta
-from django.core.management.base import BaseCommand
-from articulo.models import Articulo
-import traceback
 import decimal
 import os
+import traceback
+from datetime import datetime, timedelta
+
+import openpyxl
+from django.conf import settings
+from django.core.management.base import BaseCommand
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
 from openpyxl import Workbook
 
-SERVICE_ACCOUNT_FILE = 'credentials.json'
+from articulo.models import Articulo
+
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-FILE_ID = '1Zv9TDVJRDG_Ar-U4qTvlTcTiJ7RUpZnawxGwPpL4IZI'
+
 
 def login_google_sheets():
     credentials = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        settings.GOOGLE_CREDENTIALS_PATH, scopes=SCOPES)
     return build('sheets', 'v4', credentials=credentials)
 
 def download_sheet_from_google_sheets(sheet_id, range_name, ruta_descarga):
@@ -48,11 +48,11 @@ def download_sheet_from_google_sheets(sheet_id, range_name, ruta_descarga):
     return ruta_archivo
 
 def buscar_y_cargar_documento():
-    # ID del documento y rango de datos
-    sheet_id = '1Zv9TDVJRDG_Ar-U4qTvlTcTiJ7RUpZnawxGwPpL4IZI'
-    range_name = 'articulos!A1:Z1000'  # Ajusta el rango según tus necesidades
-
-    ruta_documento = download_sheet_from_google_sheets(sheet_id, range_name, 'articulo.xlsx')
+    ruta_documento = download_sheet_from_google_sheets(
+        settings.GOOGLE_SHEET_ID,
+        settings.GOOGLE_SHEET_RANGE,
+        'articulo.xlsx',
+    )
 
     if ruta_documento and os.path.exists(ruta_documento):
         call_command('cargar_articulo_xlsx', '-ruta_archivo', ruta_documento)
@@ -79,7 +79,11 @@ class Command(BaseCommand):
 
         try:
             if not ruta_archivo:
-                ruta_archivo = download_sheet_from_google_sheets(FILE_ID, 'articulos!A1:Z1000', 'articulo.xlsx')
+                ruta_archivo = download_sheet_from_google_sheets(
+                    settings.GOOGLE_SHEET_ID,
+                    settings.GOOGLE_SHEET_RANGE,
+                    'articulo.xlsx',
+                )
             if not ruta_archivo:
                 raise ValueError("No se pudo descargar el archivo.")
             self.procesar_archivo_xlsx(ruta_archivo)

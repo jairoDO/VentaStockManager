@@ -176,14 +176,16 @@ cython_debug/
 
 # End of https://www.toptal.com/developers/gitignore/api/django
 
-client_secrets.json
-credentials_module.json
+# Credentials — never commit (any extension, any name pattern)
+credentials.*
+*credentials*
+service_account*
+client_secret*
 settings.yaml
-credentials.jsoncredentials.json
 
-# Credentials (never commit)
-credentials.json
-service_account_credentials.json
-client_secrets.json2
-*.credentials.json
+# Excel files downloaded from Google Sheets (efímeros)
 articulo.xlsx/
+VentaStockManager/articulo/data/
+
+# Claude Code workspace
+.claude/
