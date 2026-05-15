@@ -180,3 +180,10 @@ client_secrets.json
 credentials_module.json
 settings.yaml
 credentials.jsoncredentials.json
+
+# Credentials (never commit)
+credentials.json
+service_account_credentials.json
+client_secrets.json2
+*.credentials.json
+articulo.xlsx/
