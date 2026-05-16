@@ -59,6 +59,8 @@ if not DEBUG:
 INSTALLED_APPS = [
     'material',
     'material.admin',
+    'django.contrib.admin',  # requerido por @admin.register en django.contrib.auth.admin
+    'django.contrib.staticfiles',
     'whitenoise.runserver_nostatic',
     'django.contrib.auth',
     'django.contrib.contenttypes',
