@@ -15,6 +15,7 @@ services:
     region: oregon  # ajustá si Neon está en otra región
     plan: free
     branch: staging
+    autoDeploy: true
     rootDir: VentaStockManager
     buildCommand: |
       pip install -r ../requirements.txt
@@ -53,6 +54,7 @@ services:
     region: oregon
     plan: free
     branch: main
+    autoDeploy: true
     rootDir: VentaStockManager
     buildCommand: |
       pip install -r ../requirements.txt
