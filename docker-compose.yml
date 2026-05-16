@@ -1,0 +1,54 @@
+# Stack local para desarrollo. NO se usa en Render.
+#
+# Uso:
+#   docker compose up                  # arranca app + postgres
+#   docker compose exec web bash       # entrar al container de Django
+#   docker compose exec web python manage.py migrate
+#   docker compose exec web python manage.py createsuperuser
+#
+# La app queda en http://localhost:8000
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ventastock
+      POSTGRES_PASSWORD: ventastock_dev
+      POSTGRES_DB: ventastock
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ventastock"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Mismo formato que en Render — la app no sabe la diferencia
+      DATABASE_URL: postgres://ventastock:ventastock_dev@db:5432/ventastock
+      SECRET_KEY: dev-only-not-for-production
+      DEBUG: "True"
+      ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0
+      CSRF_TRUSTED_ORIGINS: http://localhost:8000
+      # Para probar el sync de Google Sheets localmente, montá tu
+      # credentials.json como volumen (ver abajo) y apuntá acá:
+      GOOGLE_CREDENTIALS_PATH: /run/secrets/google-credentials.json
+      GOOGLE_SHEET_ID: 1GiKCywO6-6ab_sfUgDXxxbPzvjNXmSYyZBLckh5vtDs
+      GOOGLE_SHEET_RANGE: articulos!A1:Z1500
+    ports:
+      - "8000:8000"
+    volumes:
+      # Montar el código actual — cambios se reflejan al instante
+      - .:/app
+      # Montar tus credenciales locales como Secret File (solo lectura)
+      - ~/credentials-backup/golosinas-insa-credentials.json:/run/secrets/google-credentials.json:ro
+
+volumes:
+  postgres_data:

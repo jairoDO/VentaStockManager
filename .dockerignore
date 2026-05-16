@@ -1,0 +1,43 @@
+# No copiar nada que no necesitemos al contexto de build de Docker.
+
+.git/
+.gitignore
+.github/
+.claude/
+.vscode/
+.idea/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Credenciales — nunca
+credentials.*
+*credentials*
+service_account*
+client_secret*
+
+# Output de collectstatic — se genera dentro del container
+VentaStockManager/static/
+VentaStockManager/staticfiles/
+
+# Excel descargados del Google Sheet
+VentaStockManager/articulo/data/
+articulo.xlsx/
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# SQLite local del repo (si llega a existir)
+db.sqlite3
+db.sqlite3-journal
+
+# Rama de respaldo / temporales
+requirements-backup.txt
