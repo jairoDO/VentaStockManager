@@ -58,14 +58,17 @@ if not DEBUG:
 # ---------------------------------------------------------------------------
 INSTALLED_APPS = [
     'material',
-    'material.admin',
-    'django.contrib.admin',  # requerido por @admin.register en django.contrib.auth.admin
-    'django.contrib.staticfiles',
-    'whitenoise.runserver_nostatic',
+    # MaterialAdminConfig hereda de django.contrib.admin.apps.AdminConfig,
+    # asi que registra label='admin' con default_site=MaterialAdminSite.
+    # Importante: NO incluir 'django.contrib.admin' ni 'material.admin'
+    # (los nombres "auto-detectables") para evitar choque de labels.
+    'material.admin.apps.MaterialAdminConfig',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'whitenoise.runserver_nostatic',
     'dal',
     'dal_select2',
     'django_extensions',
