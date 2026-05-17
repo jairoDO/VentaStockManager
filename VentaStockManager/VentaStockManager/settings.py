@@ -58,11 +58,13 @@ if not DEBUG:
 # ---------------------------------------------------------------------------
 INSTALLED_APPS = [
     'material',
-    # MaterialAdminConfig hereda de django.contrib.admin.apps.AdminConfig,
-    # asi que registra label='admin' con default_site=MaterialAdminSite.
-    # Importante: NO incluir 'django.contrib.admin' ni 'material.admin'
-    # (los nombres "auto-detectables") para evitar choque de labels.
-    'material.admin.apps.MaterialAdminConfig',
+    # material.admin registra label='material_admin' (no 'admin'), por lo
+    # tanto NO conflictua con django.contrib.admin. El comentario original
+    # "avoid duplicate admin label" era incorrecto.
+    'material.admin',
+    # django.contrib.admin tiene que estar para que @admin.register en
+    # django.contrib.auth.admin funcione (default_site lookup).
+    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
