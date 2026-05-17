@@ -189,3 +189,7 @@ VentaStockManager/articulo/data/
 
 # Claude Code workspace
 .claude/
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
