@@ -91,6 +91,20 @@
 - [ ] Si dejo todas las filas vacías → error visible
 - [ ] Mensajes de error están en español
 
+## Test 11: Descuento (feature pendiente de caracterizar)
+
+⚠️ **No entiendo bien cómo funciona aún** — completar viendo el comportamiento
+actual en local + preguntar al cliente.
+
+- [ ] ¿Dónde se aplica el descuento? (¿por fila, por venta total, por cliente?)
+- [ ] ¿En qué se aplica? (¿porcentaje, monto fijo?)
+- [ ] ¿Se "recuerda" entre ventas? ¿Por cliente? ¿Por artículo?
+- [ ] ¿Cómo se ingresa? (¿campo en el form, deducido?)
+- [ ] ¿Afecta el total de fila, el total general, o ambos?
+- [ ] ¿Hay un modelo `Descuento` en la DB, o es un campo de Venta?
+- [ ] ¿Qué dice el código actual sobre esto? (buscar "descuento" en
+      models.py, forms.py, admin.py, articulo_venta_admins.js)
+
 ---
 
 ## Comportamientos conocidos como BUG (no a preservar)
