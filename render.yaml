@@ -46,14 +46,19 @@ services:
         sync: false  # pegar manualmente la de Neon staging
 
   # -------------------------------------------------------------------
-  # Web service — PRODUCTION (rama: main)
+  # Web service — PRODUCTION (rama: production)
   # -------------------------------------------------------------------
+  # Convención de ramas durante la migración:
+  #   - main        = snapshot del código que corre en PythonAnywhere (legacy)
+  #   - staging     = lo que va a Render staging (deploy + tests)
+  #   - production  = lo que va a Render production (deploy real al cliente)
+  # Cuando jubilemos PythonAnywhere, main puede absorber a production.
   - type: web
     name: golosinas-insa
     runtime: python
     region: oregon
     plan: free
-    branch: main
+    branch: production
     autoDeploy: true
     rootDir: VentaStockManager
     buildCommand: |
