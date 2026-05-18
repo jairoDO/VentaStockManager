@@ -44,14 +44,12 @@ class VentaForm(forms.ModelForm):
     #         cliente_field.widget.can_add_related = True
     #         cliente_field.widget.attrs['data-add-object-url'] = reverse('admin:cliente_cliente_add')
 
+    # NOTA: removidas las referencias a select2 desde CDN externo y a
+    # init_select2.js (este ultimo no existia y daba 404). Django-autocomplete-light
+    # ya trae select2 incluido y lo inicializa automaticamente.
     class Media:
-        js = (
-            'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js',
-            'js/init_select2.js',
-        )
-        css = {
-            'all': ('https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css',),
-        }
+        js = ()
+        css = {}
 
 class ArticuloVentaInlineFormSet(BaseInlineFormSet):
     def clean(self):

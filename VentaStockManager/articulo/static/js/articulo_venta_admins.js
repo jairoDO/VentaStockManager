@@ -5,13 +5,6 @@ let get_price_from_articulo_option = node => {
 
     return precio_mayorista, precio_minorista
 }
-function loadScript(url, callback) {
-    const script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.src = url;
-    script.onload = callback;
-    document.head.appendChild(script);
-}
 
 let select_to_articulo_venta = (node, text=null) => {
     let option_selected = '';
@@ -98,31 +91,6 @@ let get_cantidad_node = indice => {
 
 
 document.addEventListener("DOMContentLoaded", function() {
-    loadScript('https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js', function() {
-        console.log('Select2 loaded');
-        
-        // Load Select2 Spanish language file
-        loadScript('https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/i18n/es.js', function() {
-            console.log('Select2 Spanish language file loaded');
-            
-            // Initialize Select2 after both scripts are loaded
-            $("select[id^='id_ventas']").select2({
-                language: 'es',
-                width: '100%'
-            });
-
-            // Add event listeners to the selects
-            const selects = document.querySelectorAll("select[id^='id_ventas']");
-            if (selects.length > 0) {
-                selects.forEach(select => {
-                    console.log('Adding event to select:', select.id);
-                    select.addEventListener('change', handleSelectionChange);
-                });
-            } else {
-                console.error('No select elements found with id starting with "id_ventas"');
-            }
-        });
-    });
     document.querySelectorAll("select[id^='id_ventas']").forEach(item => {
         item.onchange = function() {
             let select_id = this.dataset['select2Id'] || '0';
@@ -347,192 +315,167 @@ document.addEventListener("DOMContentLoaded", function() {
             subtree: true
         });
     }
-    loadScript('https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js', function() {
-        console.log('Select2 loaded');
+
+    function validarFormulario() {
+        console.log('Iniciando validación...');
         
-        // Load Select2 Spanish language file
-        loadScript('https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/i18n/es.js', function() {
-            console.log('Select2 Spanish language file loaded');
-            
-            // Initialize Select2 after both scripts are loaded
-            $("select[id^='id_ventas']").select2({
-                language: 'es',
-                width: '100%'
+        // 1. Identificar filas que realmente necesitan validación
+        const filasRelevantes = Array.from(document.querySelectorAll('tr[id^="ventas-"]'))
+            .filter(fila => {
+                // Ignorar fila template y filas marcadas para eliminar
+                if (fila.id === 'ventas-empty' || fila.id.includes('__prefix__')) return false;
+                const deleteInput = fila.querySelector('input[name$="-DELETE"]');
+                if (deleteInput?.checked) return false;
+
+                // Solo validar filas que tengan un artículo seleccionado
+                const articulo = fila.querySelector('select[id$="-articulo"]')?.value;
+                return Boolean(articulo);
             });
 
-            // Add event listeners to the selects
-            const selects = document.querySelectorAll("select[id^='id_ventas']");
-            if (selects.length > 0) {
-                selects.forEach(select => {
-                    console.log('Adding event to select:', select.id);
-                    select.addEventListener('change', handleSelectionChange);
-                });
-            } else {
-                console.error('No select elements found with id starting with "id_ventas"');
+        console.log(`Filas a validar: ${filasRelevantes.length}`);
+
+        let errores = [];
+        let filasConError = new Set();
+
+        // 2. Validar cada fila relevante
+        filasRelevantes.forEach(fila => {
+            const filaId = fila.id;
+            const indice = filaId.match(/\d+/)[0];
+            
+            // Obtener elementos
+            const selectArticulo = fila.querySelector('select[id$="-articulo"]');
+            const precioInput = fila.querySelector('input[id$="-precio"]');
+
+            // Limpiar clases de error previas
+            [selectArticulo, precioInput].forEach(elem => {
+                if (elem) elem.classList.remove('is-invalid');
+            });
+
+            // Validar artículo (principal validación)
+            if (!selectArticulo?.value) {
+                selectArticulo.classList.add('is-invalid');
+                errores.push(`Fila ${indice}: Debe seleccionar un artículo`);
+                filasConError.add(filaId);
+            }
+
+            // Validar precio solo si hay artículo seleccionado
+            if (selectArticulo?.value && precioInput) {
+                const precio = parseFloat(precioInput.value);
+                if (isNaN(precio) || precio <= 0) {
+                    precioInput.classList.add('is-invalid');
+                    errores.push(`Fila ${indice}: Precio debe ser mayor a 0`);
+                    filasConError.add(filaId);
+                }
+            }
+        });
+
+        // 3. Mostrar resultados
+        if (errores.length > 0) {
+            console.log('Errores encontrados:', errores);
+            mostrarErrores(errores);
+            return false;
+        }
+
+        // 4. Validar que haya al menos una fila válida
+        if (filasRelevantes.length === 0) {
+            mostrarErrores(['Debe seleccionar al menos un artículo']);
+            return false;
+        }
+
+        console.log('Validación exitosa');
+        return true;
+    }
+
+    function mostrarErrores(errores) {
+        // Crear mensaje de error
+        const mensajeError = document.createElement('div');
+        mensajeError.className = 'alert alert-danger alert-dismissible fade show';
+        mensajeError.innerHTML = `
+            <h4>Por favor corrija los siguientes errores:</h4>
+            <ul>
+                ${errores.map(error => `<li>${error}</li>`).join('')}
+            </ul>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+
+        // Insertar mensaje en el DOM
+        const form = document.querySelector('form');
+        const existingAlert = form.querySelector('.alert');
+        if (existingAlert) {
+            existingAlert.remove();
+        }
+        form.insertBefore(mensajeError, form.firstChild);
+
+        // Scroll al primer error
+        const primerElementoConError = document.querySelector('.is-invalid');
+        if (primerElementoConError) {
+            primerElementoConError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+
+    function limpiarFilasVacias() {
+        document.querySelectorAll('tr[id^="ventas-"]').forEach(fila => {
+            if (fila.id === 'ventas-empty' || fila.id.includes('__prefix__')) return;
+
+            const articulo = fila.querySelector('select[id$="-articulo"]')?.value;
+            
+            // Si no hay artículo seleccionado, marcar para eliminar
+            if (!articulo) {
+                const deleteInput = fila.querySelector('input[name$="-DELETE"]');
+                if (deleteInput) {
+                    deleteInput.checked = true;
+                    fila.style.opacity = '0.5';
+                }
+            }
+        });
+    }
+
+    // Validación en tiempo real solo para artículos y precios
+    document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('change', (e) => {
+            const target = e.target;
+            
+            // Solo validar cambios en selects de artículos y campos de precio
+            if (target.matches('select[id$="-articulo"], input[id$="-precio"]')) {
+                const fila = target.closest('tr');
+                if (fila) {
+                    validarFila(fila);
+                }
             }
         });
     });
 
-function validarFormulario() {
-    console.log('Iniciando validación...');
-    
-    // 1. Identificar filas que realmente necesitan validación
-    const filasRelevantes = Array.from(document.querySelectorAll('tr[id^="ventas-"]'))
-        .filter(fila => {
-            // Ignorar fila template y filas marcadas para eliminar
-            if (fila.id === 'ventas-empty' || fila.id.includes('__prefix__')) return false;
-            const deleteInput = fila.querySelector('input[name$="-DELETE"]');
-            if (deleteInput?.checked) return false;
-
-            // Solo validar filas que tengan un artículo seleccionado
-            const articulo = fila.querySelector('select[id$="-articulo"]')?.value;
-            return Boolean(articulo);
-        });
-
-    console.log(`Filas a validar: ${filasRelevantes.length}`);
-
-    let errores = [];
-    let filasConError = new Set();
-
-    // 2. Validar cada fila relevante
-    filasRelevantes.forEach(fila => {
-        const filaId = fila.id;
-        const indice = filaId.match(/\d+/)[0];
-        
-        // Obtener elementos
+    function validarFila(fila) {
         const selectArticulo = fila.querySelector('select[id$="-articulo"]');
         const precioInput = fila.querySelector('input[id$="-precio"]');
 
-        // Limpiar clases de error previas
+        // Limpiar errores previos
         [selectArticulo, precioInput].forEach(elem => {
             if (elem) elem.classList.remove('is-invalid');
         });
 
-        // Validar artículo (principal validación)
-        if (!selectArticulo?.value) {
-            selectArticulo.classList.add('is-invalid');
-            errores.push(`Fila ${indice}: Debe seleccionar un artículo`);
-            filasConError.add(filaId);
-        }
-
-        // Validar precio solo si hay artículo seleccionado
-        if (selectArticulo?.value && precioInput) {
-            const precio = parseFloat(precioInput.value);
-            if (isNaN(precio) || precio <= 0) {
-                precioInput.classList.add('is-invalid');
-                errores.push(`Fila ${indice}: Precio debe ser mayor a 0`);
-                filasConError.add(filaId);
-            }
-        }
-    });
-
-    // 3. Mostrar resultados
-    if (errores.length > 0) {
-        console.log('Errores encontrados:', errores);
-        mostrarErrores(errores);
-        return false;
-    }
-
-    // 4. Validar que haya al menos una fila válida
-    if (filasRelevantes.length === 0) {
-        mostrarErrores(['Debe seleccionar al menos un artículo']);
-        return false;
-    }
-
-    console.log('Validación exitosa');
-    return true;
-}
-
-function mostrarErrores(errores) {
-    // Crear mensaje de error
-    const mensajeError = document.createElement('div');
-    mensajeError.className = 'alert alert-danger alert-dismissible fade show';
-    mensajeError.innerHTML = `
-        <h4>Por favor corrija los siguientes errores:</h4>
-        <ul>
-            ${errores.map(error => `<li>${error}</li>`).join('')}
-        </ul>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    `;
-
-    // Insertar mensaje en el DOM
-    const form = document.querySelector('form');
-    const existingAlert = form.querySelector('.alert');
-    if (existingAlert) {
-        existingAlert.remove();
-    }
-    form.insertBefore(mensajeError, form.firstChild);
-
-    // Scroll al primer error
-    const primerElementoConError = document.querySelector('.is-invalid');
-    if (primerElementoConError) {
-        primerElementoConError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-}
-
-function limpiarFilasVacias() {
-    document.querySelectorAll('tr[id^="ventas-"]').forEach(fila => {
-        if (fila.id === 'ventas-empty' || fila.id.includes('__prefix__')) return;
-
-        const articulo = fila.querySelector('select[id$="-articulo"]')?.value;
-        
-        // Si no hay artículo seleccionado, marcar para eliminar
-        if (!articulo) {
-            const deleteInput = fila.querySelector('input[name$="-DELETE"]');
-            if (deleteInput) {
-                deleteInput.checked = true;
-                fila.style.opacity = '0.5';
-            }
-        }
-    });
-}
-
-// Validación en tiempo real solo para artículos y precios
-document.addEventListener('DOMContentLoaded', () => {
-    document.addEventListener('change', (e) => {
-        const target = e.target;
-        
-        // Solo validar cambios en selects de artículos y campos de precio
-        if (target.matches('select[id$="-articulo"], input[id$="-precio"]')) {
-            const fila = target.closest('tr');
-            if (fila) {
-                validarFila(fila);
-            }
-        }
-    });
-});
-
-function validarFila(fila) {
-    const selectArticulo = fila.querySelector('select[id$="-articulo"]');
-    const precioInput = fila.querySelector('input[id$="-precio"]');
-
-    // Limpiar errores previos
-    [selectArticulo, precioInput].forEach(elem => {
-        if (elem) elem.classList.remove('is-invalid');
-    });
-
-    // Solo validar si hay artículo seleccionado
-    if (selectArticulo?.value) {
-        if (precioInput) {
-            const precio = parseFloat(precioInput.value);
-            if (isNaN(precio) || precio <= 0) {
-                precioInput.classList.add('is-invalid');
+        // Solo validar si hay artículo seleccionado
+        if (selectArticulo?.value) {
+            if (precioInput) {
+                const precio = parseFloat(precioInput.value);
+                if (isNaN(precio) || precio <= 0) {
+                    precioInput.classList.add('is-invalid');
+                }
             }
         }
     }
-}
 
-// Modificar el evento de guardar
-document.querySelector('#guardar-venta').addEventListener('click', function(e) {
-    e.preventDefault();
-    limpiarFilasVacias();
-    if (validarFormulario()) {
-        this.closest('form').submit();
-    }
-});
+    // Modificar el evento de guardar
+    document.querySelector('#guardar-venta').addEventListener('click', function(e) {
+        e.preventDefault();
+        limpiarFilasVacias();
+        if (validarFormulario()) {
+            this.closest('form').submit();
+        }
+    });
 
-function handleSelectionChange(event) {
-    try {
+    function handleSelectionChange(event) {
+        // Obtener el ID correcto independientemente del origen del evento
         const select_id = this.id || this.dataset.select2Id || event?.target?.id;
         console.log('Manejando cambio de selección:', { select_id, eventType: event?.type });
 
@@ -548,151 +491,124 @@ function handleSelectionChange(event) {
             return;
         }
 
-        const selectArticulo = fila.querySelector("select[id^='id_ventas-'][id$='-articulo']");
-        const articuloVenta = select_to_articulo_venta(selectArticulo);
-
-        if (articuloVenta) {
-            const cantidadInput = fila.querySelector('input[id$="-cantidad"]');
-            const precioInput = fila.querySelector('input[id$="-precio"]');
-            const cantidad = parseFloat(cantidadInput.value) || 0;
-
-            if (isNaN(cantidad) || cantidad <= 0) {
-                console.error('Cantidad inválida:', cantidad);
-                return;
-            }
-
-            const precio = cantidad > articuloVenta.umbral 
-                ? parseFloat(articuloVenta.precio_mayorista) 
-                : parseFloat(articuloVenta.precio_minorista);
-
-            if (isNaN(precio) || precio <= 0) {
-                console.error('Precio inválido:', precio);
-                return;
-            }
-
-            precioInput.value = precio.toFixed(2);
-        }
-
         actualizarTotalFila(fila);
         update_precio_total();
-    } catch (error) {
-        console.error('Error en handleSelectionChange:', error);
     }
-}
 
-document.querySelectorAll("select[id^='id_ventas']").forEach(item => {
-    item.onchange = handleSelectionChange;
-    item.onclick = handleSelectionChange; // Si necesitas que el click también lo maneje
-});
-
-function intentarCorregirDatos(filasInvalidas) {
-    let correcciones = [];
-    let correccionesRealizadas = false;
-
-    filasInvalidas.forEach(filaInfo => {
-        const fila = document.querySelector(`#${filaInfo.id}`);
-        if (!fila) return;
-
-        const cantidadInput = fila.querySelector('input[id$="-cantidad"]');
-        const selectArticulo = fila.querySelector('select[id$="-articulo"]');
-        const precioInput = fila.querySelector('input[id$="-precio"]');
-        const deleteInput = fila.querySelector('input[name$="-DELETE"]');
-
-        // Caso 1: Fila completamente vacía
-        if (!selectArticulo?.value && (!cantidadInput?.value || cantidadInput.value === '1')) {
-            if (deleteInput) {
-                deleteInput.checked = true;
-                correcciones.push(`Fila ${filaInfo.id}: Marcada para eliminación por estar vacía`);
-                correccionesRealizadas = true;
-            }
-            return;
-        }
-
-        // Caso 2: Cantidad inválida
-        if (cantidadInput && (isNaN(cantidadInput.value) || parseFloat(cantidadInput.value) <= 0)) {
-            cantidadInput.value = '1';
-            correcciones.push(`Fila ${filaInfo.id}: Cantidad corregida a 1`);
-            correccionesRealizadas = true;
-        }
-
-        // Caso 3: Precio faltante pero artículo seleccionado
-        if (selectArticulo?.value && (!precioInput?.value || parseFloat(precioInput.value) <= 0)) {
-            const articuloVenta = select_to_articulo_venta(selectArticulo);
-            if (articuloVenta) {
-                const cantidad = parseFloat(cantidadInput?.value) || 1;
-                const precio = cantidad > articuloVenta.umbral 
-                    ? articuloVenta.precio_mayorista 
-                    : articuloVenta.precio_minorista;
-                
-                precioInput.value = precio.toFixed(2);
-                correcciones.push(`Fila ${filaInfo.id}: Precio actualizado a ${precio.toFixed(2)}`);
-                correccionesRealizadas = true;
-            }
-        }
+    document.querySelectorAll("select[id^='id_ventas']").forEach(item => {
+        item.onchange = handleSelectionChange;
+        item.onclick = handleSelectionChange; // Si necesitas que el click también lo maneje
     });
 
-    if (correccionesRealizadas) {
-        mostrarModalCorrecciones(correcciones);
-        return true;
+    function intentarCorregirDatos(filasInvalidas) {
+        let correcciones = [];
+        let correccionesRealizadas = false;
+
+        filasInvalidas.forEach(filaInfo => {
+            const fila = document.querySelector(`#${filaInfo.id}`);
+            if (!fila) return;
+
+            const cantidadInput = fila.querySelector('input[id$="-cantidad"]');
+            const selectArticulo = fila.querySelector('select[id$="-articulo"]');
+            const precioInput = fila.querySelector('input[id$="-precio"]');
+            const deleteInput = fila.querySelector('input[name$="-DELETE"]');
+
+            // Caso 1: Fila completamente vacía
+            if (!selectArticulo?.value && (!cantidadInput?.value || cantidadInput.value === '1')) {
+                if (deleteInput) {
+                    deleteInput.checked = true;
+                    correcciones.push(`Fila ${filaInfo.id}: Marcada para eliminación por estar vacía`);
+                    correccionesRealizadas = true;
+                }
+                return;
+            }
+
+            // Caso 2: Cantidad inválida
+            if (cantidadInput && (isNaN(cantidadInput.value) || parseFloat(cantidadInput.value) <= 0)) {
+                cantidadInput.value = '1';
+                correcciones.push(`Fila ${filaInfo.id}: Cantidad corregida a 1`);
+                correccionesRealizadas = true;
+            }
+
+            // Caso 3: Precio faltante pero artículo seleccionado
+            if (selectArticulo?.value && (!precioInput?.value || parseFloat(precioInput.value) <= 0)) {
+                const articuloVenta = select_to_articulo_venta(selectArticulo);
+                if (articuloVenta) {
+                    const cantidad = parseFloat(cantidadInput?.value) || 1;
+                    const precio = cantidad > articuloVenta.umbral 
+                        ? articuloVenta.precio_mayorista 
+                        : articuloVenta.precio_minorista;
+                    
+                    precioInput.value = precio.toFixed(2);
+                    correcciones.push(`Fila ${filaInfo.id}: Precio actualizado a ${precio.toFixed(2)}`);
+                    correccionesRealizadas = true;
+                }
+            }
+        });
+
+        if (correccionesRealizadas) {
+            mostrarModalCorrecciones(correcciones);
+            return true;
+        }
+
+        return false;
     }
 
-    return false;
-}
-
-function mostrarModalCorrecciones(correcciones) {
-    // Crear modal si no existe
-    let modal = document.getElementById('correccionesModal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.innerHTML = `
-            <div class="modal fade" id="correccionesModal" tabindex="-1">
-                <div class="modal-dialog">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">Correcciones Automáticas</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            <div id="listaCorrecciones"></div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                            <button type="button" class="btn btn-primary" id="aceptarCorrecciones">Aceptar y Continuar</button>
+    function mostrarModalCorrecciones(correcciones) {
+        // Crear modal si no existe
+        let modal = document.getElementById('correccionesModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.innerHTML = `
+                <div class="modal fade" id="correccionesModal" tabindex="-1">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Correcciones Automáticas</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div id="listaCorrecciones"></div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                                <button type="button" class="btn btn-primary" id="aceptarCorrecciones">Aceptar y Continuar</button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </div>`;
-        document.body.appendChild(modal);
+                </div>`;
+            document.body.appendChild(modal);
+        }
+
+        // Actualizar contenido
+        const listaCorrecciones = document.getElementById('listaCorrecciones');
+        listaCorrecciones.innerHTML = `
+            <p>Se realizaron las siguientes correcciones:</p>
+            <ul>
+                ${correcciones.map(correccion => `<li>${correccion}</li>`).join('')}
+            </ul>
+            <p>¿Desea continuar con estas correcciones?</p>
+        `;
+
+        // Configurar botón de aceptar
+        const btnAceptar = document.getElementById('aceptarCorrecciones');
+        btnAceptar.onclick = function() {
+            const modal = bootstrap.Modal.getInstance(document.getElementById('correccionesModal'));
+            modal.hide();
+            document.querySelector('form').submit();
+        };
+
+        // Mostrar modal
+        const modalInstance = new bootstrap.Modal(document.getElementById('correccionesModal'));
+        modalInstance.show();
     }
 
-    // Actualizar contenido
-    const listaCorrecciones = document.getElementById('listaCorrecciones');
-    listaCorrecciones.innerHTML = `
-        <p>Se realizaron las siguientes correcciones:</p>
-        <ul>
-            ${correcciones.map(correccion => `<li>${correccion}</li>`).join('')}
-        </ul>
-        <p>¿Desea continuar con estas correcciones?</p>
-    `;
-
-    // Configurar botón de aceptar
-    const btnAceptar = document.getElementById('aceptarCorrecciones');
-    btnAceptar.onclick = function() {
-        const modal = bootstrap.Modal.getInstance(document.getElementById('correccionesModal'));
-        modal.hide();
-        document.querySelector('form').submit();
-    };
-
-    // Mostrar modal
-    const modalInstance = new bootstrap.Modal(document.getElementById('correccionesModal'));
-    modalInstance.show();
-}
-
-// Asegurarse de que Bootstrap está disponible
-document.addEventListener('DOMContentLoaded', () => {
-    if (typeof bootstrap === 'undefined') {
-        console.warn('Bootstrap no está cargado. El modal no funcionará correctamente.');
-    }
+    // Asegurarse de que Bootstrap está disponible
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof bootstrap === 'undefined') {
+            console.warn('Bootstrap no está cargado. El modal no funcionará correctamente.');
+        }
+    });
 });
 
 // Envolver todo el código en una función de inicialización
@@ -921,15 +837,10 @@ function initializeVentaManager() {
         debugLog('DOM cargado, inicializando eventos...');
 
         // Agregar eventos a los selects existentes
-        const selects = document.querySelectorAll("select[id^='id_ventas']");
-        if (selects.length > 0) {
-            selects.forEach(select => {
-                debugLog('Agregando eventos a select:', select.id);
-                select.addEventListener('change', handleSelectionChange);
-            });
-        } else {
-            console.error('No se encontraron elementos select con id que comienza con "id_ventas"');
-        }
+        document.querySelectorAll("select[id^='id_ventas']").forEach(select => {
+            debugLog('Agregando eventos a select:', select.id);
+            select.addEventListener('change', handleSelectionChange);
+        });
 
         // Agregar evento al botón de guardar
         addSafeEventListener('#guardar-venta', 'click', function(e) {
