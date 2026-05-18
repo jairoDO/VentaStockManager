@@ -1,53 +1,51 @@
 let get_price_from_articulo_option = node => {
     let option_selected = node.selectedOptions[0].textContent;
-    let precio_minorista = option_selected.split("|")[3].trim().slice(5);
-    let precio_mayorista = option_selected.split("|")[4].trim().slice(5);
+    let precio_minorista = option_selected.split('|')[3].trim().slice(5);
+    let precio_mayorista = option_selected.split('|')[4].trim().slice(5);
 
-    return precio_mayorista, precio_minorista
-}
+    return (precio_mayorista, precio_minorista);
+};
 
-let select_to_articulo_venta = (node, text=null) => {
+let select_to_articulo_venta = (node, text = null) => {
     let option_selected = '';
-    if(text) {
+    if (text) {
         option_selected = text;
     } else {
         option_selected = node.selectedOptions[0].textContent;
     }
-    let row = option_selected.split("|")
-    if(row.length >= 5 ){
+    let row = option_selected.split('|');
+    if (row.length >= 5) {
         return {
             codigo: row[0].trim(),
             codigo_interno: row[1].trim(),
             nombre: row[2].trim(),
             precio_minorista: row[3].trim().slice(5),
             precio_mayorista: row[4].trim().slice(5),
-            umbral: row[5].trim().slice(7)
+            umbral: row[5].trim().slice(7),
         };
     } else {
-        return null
+        return null;
     }
 };
 
 const update_precio_total = () => {
-    const precio_total_element = document.querySelector("div.readonly");
+    const precio_total_element = document.querySelector('div.readonly');
     const precio_total = calcular_precio_total();
     precio_total_element.innerHTML = `<br><p class="text-blue text-bold">${precio_total.toFixed(2)}</p>`;
-
-}
-const calcular_precio_total = ()=> {
-   return Array.from(document.querySelectorAll('.field-precio_total p')).slice(1).reduce(
-    (acumulador, elemento)=>{
-        if(elemento.class == ['text-blue', 'text-bold']){
-            return acumulador
-        }
-        const valor = parseFloat(elemento.textContent);
-        return acumulador + (isNaN(valor)? 0 : valor)
-    }, 0
-   );
-    
+};
+const calcular_precio_total = () => {
+    return Array.from(document.querySelectorAll('.field-precio_total p'))
+        .slice(1)
+        .reduce((acumulador, elemento) => {
+            if (elemento.class == ['text-blue', 'text-bold']) {
+                return acumulador;
+            }
+            const valor = parseFloat(elemento.textContent);
+            return acumulador + (isNaN(valor) ? 0 : valor);
+        }, 0);
 };
 
-const get_indice = (select_id, select_name='-articulo') => {
+const get_indice = (select_id, select_name = '-articulo') => {
     if (!select_id) {
         console.error('select_id es undefined o null');
         return null;
@@ -62,11 +60,7 @@ const get_indice = (select_id, select_name='-articulo') => {
     }
 
     // Intentar diferentes patrones de extracción
-    const patterns = [
-        /id_ventas-(\d+)-articulo/,
-        /ventas-(\d+)/,
-        /\d+/
-    ];
+    const patterns = [/id_ventas-(\d+)-articulo/, /ventas-(\d+)/, /\d+/];
 
     for (let pattern of patterns) {
         const match = select_id.match(pattern);
@@ -79,26 +73,24 @@ const get_indice = (select_id, select_name='-articulo') => {
     return null;
 };
 
-
 let get_price_node = indice => {
-    return document.querySelector('#id_ventas-'+indice+'-precio');
-}
+    return document.querySelector('#id_ventas-' + indice + '-precio');
+};
 
 let get_cantidad_node = indice => {
-    return document.querySelector('#id_ventas-'+indice+'-cantidad');    
-}
+    return document.querySelector('#id_ventas-' + indice + '-cantidad');
+};
 // }
 
-
-document.addEventListener("DOMContentLoaded", function() {
+document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll("select[id^='id_ventas']").forEach(item => {
-        item.onchange = function() {
+        item.onchange = function () {
             let select_id = this.dataset['select2Id'] || '0';
-            console.log("select_id:", select_id);
+            console.log('select_id:', select_id);
 
             let indice = get_indice(select_id);
             if (!indice) {
-                console.error("Element not found for indice:", indice);
+                console.error('Element not found for indice:', indice);
                 return;
             }
 
@@ -106,7 +98,7 @@ document.addEventListener("DOMContentLoaded", function() {
             let price_node = get_price_node(indice);
 
             if (!cantidadNode || !price_node) {
-                console.error("Element not found for indice:", indice);
+                console.error('Element not found for indice:', indice);
                 return;
             }
 
@@ -118,29 +110,35 @@ document.addEventListener("DOMContentLoaded", function() {
             let total = document.querySelector(`tr#ventas-${indice} td.field-precio_total`);
 
             if (articulo_venta) {
-                console.log("Artículo seleccionado:", articulo_venta.nombre);
+                console.log('Artículo seleccionado:', articulo_venta.nombre);
                 if (cantidad > articulo_venta.umbral) {
-                    price_node.setAttribute("value", articulo_venta.precio_mayorista);
-                    total.innerHTML = "<p style='color:blue'>" + String(parseFloat(cantidad) * parseFloat(price_node.value)) + "</p>";
+                    price_node.setAttribute('value', articulo_venta.precio_mayorista);
+                    total.innerHTML =
+                        "<p style='color:blue'>" +
+                        String(parseFloat(cantidad) * parseFloat(price_node.value)) +
+                        '</p>';
                 } else {
-                    price_node.setAttribute("value", articulo_venta.precio_minorista);
-                    total.innerHTML = "<p style='color:blue'>" + String(parseFloat(cantidad) * parseFloat(articulo_venta.precio_minorista)) + "</p>";
+                    price_node.setAttribute('value', articulo_venta.precio_minorista);
+                    total.innerHTML =
+                        "<p style='color:blue'>" +
+                        String(parseFloat(cantidad) * parseFloat(articulo_venta.precio_minorista)) +
+                        '</p>';
                 }
             }
             update_precio_total();
-        }
+        };
     });
-    
-    function manejarPrecio(fila){
+
+    function manejarPrecio(fila) {
         let cantidad = parseFloat(fila.querySelector('input[id$="-cantidad"]').value) || 0;
         let precio_node = fila.querySelector('input[id$="-precio"]');
         let precio = parseFloat(precio_node.value) || 0;
-        let total = cantidad*precio;
+        let total = cantidad * precio;
         fila.querySelector('.field-precio_total p').textContent = total.toFixed(2);
     }
 
-    function manejarCantidad(fila){
-        actualizarTotalFila(fila)
+    function manejarCantidad(fila) {
+        actualizarTotalFila(fila);
         update_precio_total();
     }
 
@@ -165,14 +163,14 @@ document.addEventListener("DOMContentLoaded", function() {
                 return;
             }
 
-            const precio = cantidad > articuloVenta.umbral 
-                ? parseFloat(articuloVenta.precio_mayorista) 
-                : parseFloat(articuloVenta.precio_minorista);
+            const precio =
+                cantidad > articuloVenta.umbral
+                    ? parseFloat(articuloVenta.precio_mayorista)
+                    : parseFloat(articuloVenta.precio_minorista);
 
             precioInput.value = precio.toFixed(2);
             const total = cantidad * precio;
             totalElement.textContent = total.toFixed(2);
-
         } catch (error) {
             console.error('Error al actualizar total de fila:', error);
             console.error('Fila:', fila);
@@ -189,28 +187,31 @@ document.addEventListener("DOMContentLoaded", function() {
         inputPrecio.addEventListener('change', manejarCambioPrecio);
     }
 
-    
     function actualizarTotalGlobal() {
-        let sumTotal = Array.from(document.querySelectorAll('.field-precio_total p'))
-            .reduce((acc, el) => acc + parseFloat(el.textContent || 0), 0);
+        let sumTotal = Array.from(document.querySelectorAll('.field-precio_total p')).reduce(
+            (acc, el) => acc + parseFloat(el.textContent || 0),
+            0
+        );
         let total_p = document.querySelector('div.readonly');
         if (total_p) {
-            total_p.innerHTML= `<br><strong> ${sumTotal.toFixed(2)}</strong>` ;
+            total_p.innerHTML = `<br><strong> ${sumTotal.toFixed(2)}</strong>`;
         }
     }
 
     function manejarCambioArticulo(event) {
-        let select = event.params.data.element; 
+        let select = event.params.data.element;
         let fila = select.closest('tr');
         let articuloVenta = select_to_articulo_venta(select);
         let cantidad = parseFloat(fila.querySelector('input[id$="-cantidad"]').value) || 0;
         let precioNode = fila.querySelector('input[id$="-precio"]');
-        let precio = cantidad > articuloVenta.umbral ? articuloVenta.precio_mayorista : articuloVenta.precio_minorista;
+        let precio =
+            cantidad > articuloVenta.umbral
+                ? articuloVenta.precio_mayorista
+                : articuloVenta.precio_minorista;
         precioNode.value = precio;
-        precioNode.innerHTML = "<p style='color:blue'>" + precio + "</p>";
+        precioNode.innerHTML = "<p style='color:blue'>" + precio + '</p>';
         actualizarTotalFila(fila);
         update_precio_total();
-
     }
 
     function manejarCambioPrecio(event) {
@@ -218,28 +219,24 @@ document.addEventListener("DOMContentLoaded", function() {
         let fila = input.closest('tr');
         manejarPrecio(fila);
         update_precio_total();
-
     }
 
-    function manejarCambioCantidad(event){
+    function manejarCambioCantidad(event) {
         let input = event.target;
         let fila = input.closest('tr');
         manejarCantidad(fila);
         update_precio_total();
-
     }
 
     function manejarEliminacionArticulo(event) {
         let fila = event.target.closest('tr');
         if (fila) {
-            
-            
             // Marcar el formulario para eliminación
             let deleteInput = fila.querySelector('input[name$="-DELETE"]');
             fila.querySelectorAll('input, select').forEach(element => {
                 element.removeAttribute('required');
-                    element.classList.remove('is-invalid');
-                });
+                element.classList.remove('is-invalid');
+            });
             if (deleteInput) {
                 deleteInput.checked = true;
             }
@@ -266,11 +263,10 @@ document.addEventListener("DOMContentLoaded", function() {
     actualizarTotalGlobal();
 
     // Observa cambios en el grupo de inlines para agregar eventos a nuevos inlines
-    const observer = new MutationObserver(function
-        (mutations) {
-        mutations.forEach(function(mutation) {
+    const observer = new MutationObserver(function (mutations) {
+        mutations.forEach(function (mutation) {
             if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                mutation.addedNodes.forEach(function(node) {
+                mutation.addedNodes.forEach(function (node) {
                     if (node.classList && node.classList.contains('dynamic-ventas')) {
                         agregarEventosANuevoInline(node);
                         actualizarTotalFila(node);
@@ -278,31 +274,49 @@ document.addEventListener("DOMContentLoaded", function() {
                         if (deleteButton) {
                             deleteButton.addEventListener('click', manejarEliminacionArticulo);
                         }
-                        document.querySelectorAll("select[id^='id_ventas']").forEach(
-                            item => {
-                                item.onchange = function(){
-                                    let select_id = this.dataset['select2Id'];
-                                    let indice = get_indice(select_id);
-                                    let cantidad = document.querySelector(`#id_ventas-${indice}-cantidad`).value;
-                                    let price_node = get_price_node(indice);
-                    
-                                    let articulo_venta = select_to_articulo_venta(item);
-                                    let total = document.querySelector(`tr#ventas-${indice} td.field-precio_total`)
-                    
-                                    if(cantidad > articulo_venta.umbral) {
-                                        price_node.setAttribute("value", articulo_venta.precio_mayorista)
-                                        ;
-                                        total.innerHTML =  "<p style='color:blue'>" + String(parseFloat(cantidad)*parseFloat(articulo_venta.precio_mayorista)) + "</p>";
-                                    } else {
-                                        price_node.setAttribute("value", articulo_venta.precio_minorista);
-                                        total.innerHTML = "<p style='color:blue'>" + String(parseFloat(cantidad)*parseFloat(articulo_venta.precio_minorista)) + "</p>";
-                                    }
-                                    update_precio_total();
-                                
+                        document.querySelectorAll("select[id^='id_ventas']").forEach(item => {
+                            item.onchange = function () {
+                                let select_id = this.dataset['select2Id'];
+                                let indice = get_indice(select_id);
+                                let cantidad = document.querySelector(
+                                    `#id_ventas-${indice}-cantidad`
+                                ).value;
+                                let price_node = get_price_node(indice);
+
+                                let articulo_venta = select_to_articulo_venta(item);
+                                let total = document.querySelector(
+                                    `tr#ventas-${indice} td.field-precio_total`
+                                );
+
+                                if (cantidad > articulo_venta.umbral) {
+                                    price_node.setAttribute(
+                                        'value',
+                                        articulo_venta.precio_mayorista
+                                    );
+                                    total.innerHTML =
+                                        "<p style='color:blue'>" +
+                                        String(
+                                            parseFloat(cantidad) *
+                                                parseFloat(articulo_venta.precio_mayorista)
+                                        ) +
+                                        '</p>';
+                                } else {
+                                    price_node.setAttribute(
+                                        'value',
+                                        articulo_venta.precio_minorista
+                                    );
+                                    total.innerHTML =
+                                        "<p style='color:blue'>" +
+                                        String(
+                                            parseFloat(cantidad) *
+                                                parseFloat(articulo_venta.precio_minorista)
+                                        ) +
+                                        '</p>';
                                 }
-                            }
-                        );
-                    }   
+                                update_precio_total();
+                            };
+                        });
+                    }
                 });
             }
         });
@@ -312,16 +326,16 @@ document.addEventListener("DOMContentLoaded", function() {
     if (inlineGroup) {
         observer.observe(inlineGroup, {
             childList: true,
-            subtree: true
+            subtree: true,
         });
     }
 
     function validarFormulario() {
         console.log('Iniciando validación...');
-        
+
         // 1. Identificar filas que realmente necesitan validación
-        const filasRelevantes = Array.from(document.querySelectorAll('tr[id^="ventas-"]'))
-            .filter(fila => {
+        const filasRelevantes = Array.from(document.querySelectorAll('tr[id^="ventas-"]')).filter(
+            fila => {
                 // Ignorar fila template y filas marcadas para eliminar
                 if (fila.id === 'ventas-empty' || fila.id.includes('__prefix__')) return false;
                 const deleteInput = fila.querySelector('input[name$="-DELETE"]');
@@ -330,7 +344,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 // Solo validar filas que tengan un artículo seleccionado
                 const articulo = fila.querySelector('select[id$="-articulo"]')?.value;
                 return Boolean(articulo);
-            });
+            }
+        );
 
         console.log(`Filas a validar: ${filasRelevantes.length}`);
 
@@ -341,7 +356,7 @@ document.addEventListener("DOMContentLoaded", function() {
         filasRelevantes.forEach(fila => {
             const filaId = fila.id;
             const indice = filaId.match(/\d+/)[0];
-            
+
             // Obtener elementos
             const selectArticulo = fila.querySelector('select[id$="-articulo"]');
             const precioInput = fila.querySelector('input[id$="-precio"]');
@@ -418,7 +433,7 @@ document.addEventListener("DOMContentLoaded", function() {
             if (fila.id === 'ventas-empty' || fila.id.includes('__prefix__')) return;
 
             const articulo = fila.querySelector('select[id$="-articulo"]')?.value;
-            
+
             // Si no hay artículo seleccionado, marcar para eliminar
             if (!articulo) {
                 const deleteInput = fila.querySelector('input[name$="-DELETE"]');
@@ -432,9 +447,9 @@ document.addEventListener("DOMContentLoaded", function() {
 
     // Validación en tiempo real solo para artículos y precios
     document.addEventListener('DOMContentLoaded', () => {
-        document.addEventListener('change', (e) => {
+        document.addEventListener('change', e => {
             const target = e.target;
-            
+
             // Solo validar cambios en selects de artículos y campos de precio
             if (target.matches('select[id$="-articulo"], input[id$="-precio"]')) {
                 const fila = target.closest('tr');
@@ -466,7 +481,7 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     // Modificar el evento de guardar
-    document.querySelector('#guardar-venta').addEventListener('click', function(e) {
+    document.querySelector('#guardar-venta').addEventListener('click', function (e) {
         e.preventDefault();
         limpiarFilasVacias();
         if (validarFormulario()) {
@@ -517,30 +532,41 @@ document.addEventListener("DOMContentLoaded", function() {
             if (!selectArticulo?.value && (!cantidadInput?.value || cantidadInput.value === '1')) {
                 if (deleteInput) {
                     deleteInput.checked = true;
-                    correcciones.push(`Fila ${filaInfo.id}: Marcada para eliminación por estar vacía`);
+                    correcciones.push(
+                        `Fila ${filaInfo.id}: Marcada para eliminación por estar vacía`
+                    );
                     correccionesRealizadas = true;
                 }
                 return;
             }
 
             // Caso 2: Cantidad inválida
-            if (cantidadInput && (isNaN(cantidadInput.value) || parseFloat(cantidadInput.value) <= 0)) {
+            if (
+                cantidadInput &&
+                (isNaN(cantidadInput.value) || parseFloat(cantidadInput.value) <= 0)
+            ) {
                 cantidadInput.value = '1';
                 correcciones.push(`Fila ${filaInfo.id}: Cantidad corregida a 1`);
                 correccionesRealizadas = true;
             }
 
             // Caso 3: Precio faltante pero artículo seleccionado
-            if (selectArticulo?.value && (!precioInput?.value || parseFloat(precioInput.value) <= 0)) {
+            if (
+                selectArticulo?.value &&
+                (!precioInput?.value || parseFloat(precioInput.value) <= 0)
+            ) {
                 const articuloVenta = select_to_articulo_venta(selectArticulo);
                 if (articuloVenta) {
                     const cantidad = parseFloat(cantidadInput?.value) || 1;
-                    const precio = cantidad > articuloVenta.umbral 
-                        ? articuloVenta.precio_mayorista 
-                        : articuloVenta.precio_minorista;
-                    
+                    const precio =
+                        cantidad > articuloVenta.umbral
+                            ? articuloVenta.precio_mayorista
+                            : articuloVenta.precio_minorista;
+
                     precioInput.value = precio.toFixed(2);
-                    correcciones.push(`Fila ${filaInfo.id}: Precio actualizado a ${precio.toFixed(2)}`);
+                    correcciones.push(
+                        `Fila ${filaInfo.id}: Precio actualizado a ${precio.toFixed(2)}`
+                    );
                     correccionesRealizadas = true;
                 }
             }
@@ -592,7 +618,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // Configurar botón de aceptar
         const btnAceptar = document.getElementById('aceptarCorrecciones');
-        btnAceptar.onclick = function() {
+        btnAceptar.onclick = function () {
             const modal = bootstrap.Modal.getInstance(document.getElementById('correccionesModal'));
             modal.hide();
             document.querySelector('form').submit();
@@ -621,12 +647,14 @@ function initializeVentaManager() {
     }
 
     // Configuración de Select2
-    $("select[id^='id_ventas']").select2({
-        language: 'es',
-        width: '100%'
-    }).on('select2:select', function(e) {
-        handleSelectionChange.call(this, e);
-    });
+    $("select[id^='id_ventas']")
+        .select2({
+            language: 'es',
+            width: '100%',
+        })
+        .on('select2:select', function (e) {
+            handleSelectionChange.call(this, e);
+        });
 
     // Manejar cambios de selección
     function handleSelectionChange(event) {
@@ -669,11 +697,7 @@ function initializeVentaManager() {
             }
 
             // Patrones de búsqueda
-            const patterns = [
-                /id_ventas-(\d+)-articulo/,
-                /ventas-(\d+)/,
-                /\d+/
-            ];
+            const patterns = [/id_ventas-(\d+)-articulo/, /ventas-(\d+)/, /\d+/];
 
             for (let pattern of patterns) {
                 const match = select_id.match(pattern);
@@ -691,7 +715,7 @@ function initializeVentaManager() {
     // Asegurarse de que el botón de guardar existe
     const guardarBtn = document.querySelector('#guardar-venta');
     if (guardarBtn) {
-        guardarBtn.addEventListener('click', function(e) {
+        guardarBtn.addEventListener('click', function (e) {
             e.preventDefault();
             if (typeof limpiarFilasVacias === 'function') {
                 limpiarFilasVacias();
@@ -704,7 +728,7 @@ function initializeVentaManager() {
 }
 
 // Iniciar cuando el DOM esté listo
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     // Esperar un momento para asegurarse de que Select2 esté cargado
     setTimeout(initializeVentaManager, 100);
 });
@@ -714,8 +738,19 @@ if (typeof jQuery === 'undefined') {
     console.error('jQuery no está cargado. El formulario no funcionará correctamente.');
 }
 
-window.onerror = function(msg, url, lineNo, columnNo, error) {
-    console.error('Error: ' + msg + '\nURL: ' + url + '\nLine: ' + lineNo + '\nColumn: ' + columnNo + '\nError object: ' + JSON.stringify(error));
+window.onerror = function (msg, url, lineNo, columnNo, error) {
+    console.error(
+        'Error: ' +
+            msg +
+            '\nURL: ' +
+            url +
+            '\nLine: ' +
+            lineNo +
+            '\nColumn: ' +
+            columnNo +
+            '\nError object: ' +
+            JSON.stringify(error)
+    );
     return false;
 };
 
@@ -747,7 +782,7 @@ function initializeVentaManager() {
         $("select[id^='id_ventas']").select2({
             language: 'es',
             width: '100%',
-            debug: true // Habilitar modo debug de Select2
+            debug: true, // Habilitar modo debug de Select2
         });
         debugLog('Select2 inicializado correctamente');
     } catch (error) {
@@ -772,11 +807,7 @@ function initializeVentaManager() {
                 }
             }
 
-            const patterns = [
-                /id_ventas-(\d+)-articulo/,
-                /ventas-(\d+)/,
-                /\d+/
-            ];
+            const patterns = [/id_ventas-(\d+)-articulo/, /ventas-(\d+)/, /\d+/];
 
             for (let pattern of patterns) {
                 const match = select_id.match(pattern);
@@ -833,7 +864,7 @@ function initializeVentaManager() {
     }
 
     // Inicializar eventos cuando el DOM esté listo
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
         debugLog('DOM cargado, inicializando eventos...');
 
         // Agregar eventos a los selects existentes
@@ -843,14 +874,14 @@ function initializeVentaManager() {
         });
 
         // Agregar evento al botón de guardar
-        addSafeEventListener('#guardar-venta', 'click', function(e) {
+        addSafeEventListener('#guardar-venta', 'click', function (e) {
             e.preventDefault();
             debugLog('Botón guardar clickeado');
-            
+
             if (typeof limpiarFilasVacias === 'function') {
                 limpiarFilasVacias();
             }
-            
+
             if (typeof validarFormulario === 'function' && validarFormulario()) {
                 debugLog('Enviando formulario...');
                 this.closest('form').submit();
@@ -868,13 +899,13 @@ setTimeout(() => {
 }, 500);
 
 // Manejador global de errores
-window.onerror = function(msg, url, lineNo, columnNo, error) {
+window.onerror = function (msg, url, lineNo, columnNo, error) {
     debugLog('Error global detectado:', {
         mensaje: msg,
         url: url,
         linea: lineNo,
         columna: columnNo,
-        error: error
+        error: error,
     });
     return false;
 };

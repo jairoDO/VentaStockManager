@@ -1,0 +1,29 @@
+# Solo formateamos código nuestro, no librerías de terceros ni output
+# generado por Django.
+
+# Django app static folders generadas por collectstatic
+VentaStockManager/static/
+
+# Librerías de terceros (autocomplete, jquery, material, etc.) embebidas
+# históricamente en static. No queremos tocarlas.
+VentaStockManager/articulo/static/autocomplete_light/
+VentaStockManager/articulo/static/material/
+VentaStockManager/articulo/static/admin/
+
+# Node modules si algún día agregamos un build step
+node_modules/
+
+# Output / artefactos
+dist/
+build/
+*.min.js
+*.min.css
+
+# Worktrees internos de Claude Code
+.claude/
+
+# Migraciones Django auto-generadas (nada de JS pero por las dudas)
+**/migrations/
+
+# Excel
+*.xlsx
