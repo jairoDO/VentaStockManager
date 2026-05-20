@@ -1,0 +1,222 @@
+{% load static %}
+{% comment %}
+Extracto del cliente.
+
+Pantalla full-width con Tailwind CDN para consistencia con la
+pantalla nueva de Venta. Estilo "informe" — todo en una sola
+página, scrolleable, lo más reciente arriba.
+
+No usamos el chrome de django-material-admin a propósito: esto
+es una vista de consulta rápida, no un formulario.
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Extracto — {{ cliente.nombre_completo }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+  <div class="max-w-5xl mx-auto p-6">
+
+    {# ---- Header ---- #}
+    <div class="flex items-start justify-between mb-6">
+      <div>
+        <a href="/admin/cliente/cliente/{{ cliente.id }}/change/"
+           class="text-sm text-blue-600 hover:underline">← Volver al cliente</a>
+        <h1 class="text-2xl font-bold mt-1">{{ cliente.nombre_completo }}</h1>
+        <p class="text-sm text-slate-500">
+          {{ cliente.direccion|default:"sin dirección" }}
+          {% if cliente.telefono %}· {{ cliente.telefono }}{% endif %}
+          {% if cliente.whatsapp_number %}· WA {{ cliente.whatsapp_number }}{% endif %}
+        </p>
+      </div>
+      <div class="text-right">
+        <div class="text-xs text-slate-500 uppercase tracking-wider">Saldo actual</div>
+        {% if saldo > 0 %}
+          <div class="text-3xl font-bold text-green-700">+${{ saldo|floatformat:2 }}</div>
+          <div class="text-xs text-slate-500">a favor del cliente</div>
+        {% elif saldo < 0 %}
+          <div class="text-3xl font-bold text-red-700">-${{ saldo|floatformat:2|cut:"-" }}</div>
+          <div class="text-xs text-slate-500">el cliente debe</div>
+        {% else %}
+          <div class="text-3xl font-bold text-slate-400">$0,00</div>
+          <div class="text-xs text-slate-500">sin movimientos</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ---- Filtro de período ---- #}
+    <div class="bg-white border border-slate-200 rounded p-3 mb-6 flex items-center gap-3 text-sm">
+      <span class="text-slate-600">Mostrar:</span>
+      {% for opt_dias, opt_label in opciones_dias %}
+        {% if opt_dias == dias %}
+          <span class="px-3 py-1 bg-blue-600 text-white rounded">{{ opt_label }}</span>
+        {% else %}
+          <a href="?dias={{ opt_dias }}"
+             class="px-3 py-1 bg-slate-100 hover:bg-slate-200 rounded">{{ opt_label }}</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {# ---- Ventas ---- #}
+    <section class="mb-6">
+      <h2 class="text-lg font-semibold mb-2">
+        Ventas
+        <span class="text-sm text-slate-500 font-normal">({{ ventas|length }})</span>
+      </h2>
+      {% if ventas %}
+        <div class="bg-white border border-slate-200 rounded overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100 text-left text-xs uppercase text-slate-600">
+              <tr>
+                <th class="px-3 py-2">Fecha compra</th>
+                <th class="px-3 py-2">Entrega</th>
+                <th class="px-3 py-2">Vendedor</th>
+                <th class="px-3 py-2">Pedido</th>
+                <th class="px-3 py-2 text-right">Items</th>
+                <th class="px-3 py-2 text-right">Total</th>
+                <th class="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for v in ventas %}
+                <tr class="border-t border-slate-100 {% if v.archivada_en %}bg-slate-50 text-slate-400 italic{% endif %}">
+                  <td class="px-3 py-2">{{ v.fecha_compra|date:"d/m/Y" }}</td>
+                  <td class="px-3 py-2">{{ v.fecha_entrega|date:"d/m/Y" }}</td>
+                  <td class="px-3 py-2">{{ v.vendedor|default:"-" }}</td>
+                  <td class="px-3 py-2">
+                    {% if v.pedido %}
+                      <span class="text-xs px-2 py-0.5 rounded bg-slate-100">
+                        {{ v.pedido.get_estado_display }}
+                      </span>
+                      {% if v.pedido.pagado %}
+                        <span class="text-xs text-green-700 font-medium">pagado</span>
+                      {% endif %}
+                    {% endif %}
+                  </td>
+                  <td class="px-3 py-2 text-right">{{ v.ventas.count }}</td>
+                  <td class="px-3 py-2 text-right font-mono">${{ v.precio_total|floatformat:2 }}</td>
+                  <td class="px-3 py-2 text-right">
+                    <a href="/venta/{{ v.id }}/editar/"
+                       class="text-blue-600 hover:underline text-xs">ver</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="bg-white border border-slate-200 rounded p-4 text-center text-slate-400 text-sm">
+          Sin ventas en el período seleccionado.
+        </div>
+      {% endif %}
+    </section>
+
+    {# ---- Movimientos de cuenta ---- #}
+    <section class="mb-6">
+      <h2 class="text-lg font-semibold mb-2">
+        Cuenta corriente
+        <span class="text-sm text-slate-500 font-normal">({{ movimientos|length }})</span>
+      </h2>
+      {% if movimientos %}
+        <div class="bg-white border border-slate-200 rounded overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100 text-left text-xs uppercase text-slate-600">
+              <tr>
+                <th class="px-3 py-2">Fecha</th>
+                <th class="px-3 py-2">Tipo</th>
+                <th class="px-3 py-2 text-right">Monto</th>
+                <th class="px-3 py-2">Venta</th>
+                <th class="px-3 py-2">Por</th>
+                <th class="px-3 py-2">Descripción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for m in movimientos %}
+                <tr class="border-t border-slate-100">
+                  <td class="px-3 py-2 whitespace-nowrap">{{ m.created_at|date:"d/m/Y H:i" }}</td>
+                  <td class="px-3 py-2">
+                    <span class="text-xs px-2 py-0.5 rounded bg-slate-100">
+                      {{ m.get_tipo_display }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono
+                             {% if m.monto > 0 %}text-green-700{% elif m.monto < 0 %}text-red-700{% endif %}">
+                    {% if m.monto > 0 %}+{% endif %}${{ m.monto|floatformat:2 }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {% if m.venta_id %}
+                      <a href="/venta/{{ m.venta_id }}/editar/"
+                         class="text-blue-600 hover:underline">#{{ m.venta_id }}</a>
+                    {% else %}-{% endif %}
+                  </td>
+                  <td class="px-3 py-2">{{ m.creado_por|default:"sistema" }}</td>
+                  <td class="px-3 py-2 text-slate-600">{{ m.descripcion|default:"" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="bg-white border border-slate-200 rounded p-4 text-center text-slate-400 text-sm">
+          Sin movimientos de cuenta en el período.
+        </div>
+      {% endif %}
+    </section>
+
+    {# ---- Precios pactados ---- #}
+    <section class="mb-6">
+      <h2 class="text-lg font-semibold mb-2">
+        Precios pactados vigentes
+        <span class="text-sm text-slate-500 font-normal">({{ precios_pactados|length }})</span>
+      </h2>
+      {% if precios_pactados %}
+        <div class="bg-white border border-amber-200 rounded overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-amber-50 text-left text-xs uppercase text-slate-600">
+              <tr>
+                <th class="px-3 py-2">Artículo</th>
+                <th class="px-3 py-2 text-right">Precio pactado</th>
+                <th class="px-3 py-2 text-right">Lista actual</th>
+                <th class="px-3 py-2">Desde</th>
+                <th class="px-3 py-2">Última venta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in precios_pactados %}
+                <tr class="border-t border-slate-100">
+                  <td class="px-3 py-2">
+                    <span class="font-medium">{{ p.articulo.nombre }}</span>
+                    <span class="text-xs text-slate-500">
+                      {{ p.articulo.codigo_interno|default:"" }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono text-amber-700">
+                    ${{ p.precio_unitario|floatformat:2 }}
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono text-slate-400">
+                    ${{ p.articulo.precio_minorista|floatformat:2 }}
+                  </td>
+                  <td class="px-3 py-2 text-xs">{{ p.created_at|date:"d/m/Y" }}</td>
+                  <td class="px-3 py-2 text-xs">
+                    {% if p.venta_origen_id %}
+                      <a href="/venta/{{ p.venta_origen_id }}/editar/"
+                         class="text-blue-600 hover:underline">#{{ p.venta_origen_id }}</a>
+                    {% else %}—{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="bg-white border border-slate-200 rounded p-4 text-center text-slate-400 text-sm">
+          Sin precios pactados con este cliente.
+        </div>
+      {% endif %}
+    </section>
+
+  </div>
+</body>
+</html>

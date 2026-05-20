@@ -301,10 +301,20 @@ def generar_pdf_pedidos_(request, pedido_ids=None):
             elements.append(Paragraph(info, styleN))
             elements.append(Spacer(1, padding))
 
+        # Import del helper que respeta descuentos.
+        from venta.utils import subtotal_linea, total_venta as calcular_total_venta
+
         data_articulos = [['Artículo', '#', 'Precio', 'Subtotal']]
-        
+
         for articulo_venta in pedido.venta.ventas.all():
             nombre_articulo = articulo_venta.articulo.get_articulo_short_name()
+            # Si hay descuento por línea, lo anotamos al lado del nombre.
+            # En este PDF no agregamos columna nueva para no romper el
+            # ancho fijo — mejor anotar inline con "(-X%)".
+            desc_linea = articulo_venta.descuento_porcentaje or 0
+            if desc_linea > 0:
+                nombre_articulo = f'{nombre_articulo} (-{desc_linea:g}%)'
+
             nombre_articulo_corto = ""
             max_width = config.column_width_article * cm  # Maximum width in points
             font_name = config.content_font
@@ -334,9 +344,11 @@ def generar_pdf_pedidos_(request, pedido_ids=None):
                 nombre_articulo_corto,
                 articulo_venta.cantidad,
                 articulo_venta.precio,
-                articulo_venta.total
+                # Subtotal con descuento de línea aplicado, no el
+                # bruto que mostraba antes (era el bug).
+                f'{subtotal_linea(articulo_venta):.2f}',
             ])
-        
+
         while len(data_articulos) < 13:
             data_articulos.append(['', '', '', ''])
 
@@ -347,7 +359,7 @@ def generar_pdf_pedidos_(request, pedido_ids=None):
             config.column_width_price * cm,
             config.column_width_total * cm
         ])
-        
+
         content_style = TableStyle([
             ('GRID', (0, 0), (-1, -1), config.table_border_width, border_color),
             ('FONTNAME', (0, 0), (-1, -1), custom_font_name or config.content_font),
@@ -356,8 +368,21 @@ def generar_pdf_pedidos_(request, pedido_ids=None):
         ])
         tabla_articulos.setStyle(content_style)
 
-        # Tabla del total
-        data_total = [['Total:', '', '', pedido.venta.precio_total]]
+        # Tabla del total. El total ahora respeta descuentos (línea
+        # y global). Si hay descuento global, mostramos también el
+        # subtotal y el monto del descuento para que sea claro.
+        from venta.utils import subtotal_venta_sin_desc_global
+        total_final = calcular_total_venta(pedido.venta)
+        desc_global = pedido.venta.descuento_porcentaje or 0
+        if desc_global > 0:
+            subtotal_bruto = subtotal_venta_sin_desc_global(pedido.venta)
+            data_total = [
+                ['Subtotal:', '', '', f'{subtotal_bruto:.2f}'],
+                [f'Descuento {desc_global:g}%:', '', '', f'-{(subtotal_bruto - total_final):.2f}'],
+                ['Total:', '', '', f'{total_final:.2f}'],
+            ]
+        else:
+            data_total = [['Total:', '', '', f'{total_final:.2f}']]
         tabla_total = Table(data_total, colWidths=[
             config.column_width_article * cm,
             config.column_width_quantity * cm,
@@ -438,11 +463,31 @@ def generar_pdf_pedidos(request, pedido_ids=None):
     for index, pedido_id in enumerate(pedido_ids):
         pedido = Pedido.objects.get(id=pedido_id)
         cantidad_articulos.append(pedido.venta.ventas.count())
+        # Vendedor puede estar vacío en ventas viejas migradas; defensivo.
+        # Además, muchos vendedores tienen `nombre=''` y `apellido='Sin
+        # apellido'` (default), con lo cual fullname() queda feo. Si el
+        # nombre real no está cargado, caemos al username de la cuenta.
+        vendedor = pedido.venta.vendedor
+        if vendedor:
+            nombre_real = (vendedor.nombre or '').strip()
+            apellido_real = (vendedor.apellido or '').strip()
+            if nombre_real and apellido_real and apellido_real.lower() != 'sin apellido':
+                nombre_vendedor = f'{nombre_real} {apellido_real}'
+            elif nombre_real:
+                nombre_vendedor = nombre_real
+            elif vendedor.usuario:
+                nombre_vendedor = vendedor.usuario.username
+            else:
+                nombre_vendedor = '-'
+        else:
+            nombre_vendedor = '-'
+
         data_cliente = [
             ['Compra:', pedido.venta.fecha_compra],
             ['Entrega:', pedido.venta.fecha_entrega],
             ['Dirección:', pedido.venta.cliente.direccion],
             ['Cliente:', pedido.venta.cliente.nombre_completo()],
+            ['Vendedor:', nombre_vendedor],
         ]
 
         # Tabla del cliente
@@ -454,11 +499,52 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         ])
         tabla_cliente.setStyle(estilo_tabla_cliente)
 
-        # Tabla de artículos
-        data_articulos = [['Articulos', 'Cant', 'Precio/U', 'Total']]
+        # Tabla de artículos. Para detectar precios pactados, hacemos
+        # un solo query por cliente con todos los artículos de esta
+        # venta (evita N+1 si la venta tiene varios items).
+        from cliente.models import PrecioCliente
+        articulos_venta = list(pedido.venta.ventas.select_related('articulo').all())
+        if articulos_venta and pedido.venta.cliente_id:
+            pactados_ids = {
+                p.articulo_id: p for p in PrecioCliente.objects.filter(
+                    cliente_id=pedido.venta.cliente_id,
+                    articulo_id__in=[av.articulo_id for av in articulos_venta],
+                )
+            }
+        else:
+            pactados_ids = {}
+
+        # Decidimos si mostrar la columna "Desc %" mirando si ALGUNA
+        # línea tiene descuento. Si nadie usa descuento, ahorramos
+        # ancho de columna y queda más limpio (compatible con
+        # PDFs históricos donde no había descuentos).
+        from venta.utils import (
+            subtotal_linea,
+            subtotal_venta_sin_desc_global,
+            total_venta as calcular_total_venta,
+        )
+        hay_descuentos_linea = any(
+            (av.descuento_porcentaje or 0) > 0 for av in articulos_venta
+        )
+        descuento_global = pedido.venta.descuento_porcentaje or 0
+        motivo_descuento = (pedido.venta.descuento_motivo or '').strip()
+
+        # Header dinámico según si hay descuentos por línea.
+        if hay_descuentos_linea:
+            data_articulos = [['Articulos', 'Cant', 'Precio/U', 'Desc%', 'Subtotal']]
+        else:
+            data_articulos = [['Articulos', 'Cant', 'Precio/U', 'Subtotal']]
         doble_space = 0
-        for articulo_venta in pedido.venta.ventas.all():
+        for articulo_venta in articulos_venta:
             nombre_articulo = articulo_venta.articulo.get_articulo_short_name()
+            # Si hay precio pactado, lo marcamos con un asterisco al
+            # lado del nombre. Usamos asterisco y no emoji porque la
+            # fuente default de reportlab (Helvetica) no incluye glifos
+            # Unicode altos y los renderiza como cuadraditos. El cliente
+            # sabe que "(*)" significa precio acordado por la nota al
+            # pie que agregamos abajo.
+            if articulo_venta.articulo_id in pactados_ids:
+                nombre_articulo = f'(*) {nombre_articulo}'
             nombre_articulo_corto = split_text_to_fit_width(
                 nombre_articulo,
                 config.column_width_article * cm,
@@ -466,7 +552,6 @@ def generar_pdf_pedidos(request, pedido_ids=None):
                 config.font_size_content
             )
 
-            # Example usage for price
             precio_text = str(articulo_venta.precio)
             precio_corto = split_text_to_fit_width(
                 precio_text,
@@ -475,37 +560,41 @@ def generar_pdf_pedidos(request, pedido_ids=None):
                 config.font_size_content
             )
 
-            # Example usage for total
-            total_text = str(articulo_venta.total)
-            total_corto = split_text_to_fit_width(
-                total_text,
+            # El subtotal ahora respeta el descuento por línea.
+            # Antes mostraba `articulo_venta.total` que era
+            # cantidad × precio sin descuento — ese era el bug.
+            subtotal_text = f'{subtotal_linea(articulo_venta):.2f}'
+            subtotal_corto = split_text_to_fit_width(
+                subtotal_text,
                 config.column_width_total * cm,
                 config.content_font,
                 config.font_size_content
             )
 
-
-            # nombre_articulo_len = len(nombre_articulo)
-            # for i in range(0, nombre_articulo_len, 29):
-            #     if nombre_articulo_len - i > 29:
-            #         nombre_articulo_corto += nombre_articulo[i:i+29] + "\n"
-            #         doble_space += 1
-            #     else:
-            #         nombre_articulo_corto += nombre_articulo[i:i+29] 
-                
-            data_articulos.append([
+            fila = [
                 nombre_articulo_corto,
                 articulo_venta.cantidad,
                 precio_corto,
-                total_corto
-            ])
+            ]
+            if hay_descuentos_linea:
+                desc_pct = articulo_venta.descuento_porcentaje or 0
+                # Mostramos el % solo si > 0, sino quedan filas con
+                # "0%" que distraen visualmente.
+                fila.append(f'{desc_pct:g}%' if desc_pct else '')
+            fila.append(subtotal_corto)
+            data_articulos.append(fila)
 
-        tabla_articulos = Table(data_articulos, colWidths=[
+        col_widths = [
             config.column_width_article * cm,
             config.column_width_price * cm,
             config.column_width_price * cm,
-            config.column_width_total * cm])
-        
+        ]
+        if hay_descuentos_linea:
+            # Columna de % chica, no necesita el ancho de precio.
+            col_widths.append(1.5 * cm)
+        col_widths.append(config.column_width_total * cm)
+        tabla_articulos = Table(data_articulos, colWidths=col_widths)
+
         estilo_tabla_articulos = TableStyle([
             ('GRID', (0, 0), (-1, -1), 1, config.table_border_color),
             ('FONTNAME', (0, 0), (-1, -1), config.content_font),
@@ -513,8 +602,20 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         ])
         tabla_articulos.setStyle(estilo_tabla_articulos)
 
-        # Tabla del total
-        data_total = [['Total:', pedido.venta.precio_total]]
+        # Tabla del total. Si hay descuento global, mostramos 3 líneas
+        # (subtotal, descuento, total). Si no, solo el total — pero
+        # calculado con `calcular_total_venta` que respeta los
+        # descuentos por línea aunque no haya global.
+        total_final = calcular_total_venta(pedido.venta)
+        if descuento_global > 0:
+            subtotal_bruto = subtotal_venta_sin_desc_global(pedido.venta)
+            data_total = [
+                ['Subtotal:', f'{subtotal_bruto:.2f}'],
+                [f'Descuento {descuento_global:g}%:', f'-{(subtotal_bruto - total_final):.2f}'],
+                ['Total:', f'{total_final:.2f}'],
+            ]
+        else:
+            data_total = [['Total:', f'{total_final:.2f}']]
         tabla_total = Table(data_total, colWidths=[5 * cm, 3 * cm])
         estilo_tabla_total = TableStyle([
             ('GRID', (0, 0), (-1, -1), 1, config.content_color),
@@ -530,6 +631,37 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         elements.append(tabla_articulos)
         elements.append(Spacer(1, padding))
         elements.append(tabla_total)
+        # Motivo del descuento global (opcional, solo si fue cargado).
+        if descuento_global > 0 and motivo_descuento:
+            from reportlab.platypus import Paragraph
+            from reportlab.lib.styles import ParagraphStyle
+            motivo_style = ParagraphStyle(
+                name='motivo_desc',
+                fontName=config.content_font,
+                fontSize=max(6, config.font_size_content - 2),
+                textColor=config.content_color,
+            )
+            elements.append(Spacer(1, padding / 4))
+            elements.append(Paragraph(
+                f'Descuento aplicado: {motivo_descuento}',
+                motivo_style,
+            ))
+        # Si alguna línea es de precio pactado, agregamos una nota
+        # al pie para que el cliente entienda qué significa el (*).
+        if pactados_ids:
+            from reportlab.platypus import Paragraph
+            from reportlab.lib.styles import ParagraphStyle
+            nota_style = ParagraphStyle(
+                name='nota_pactado',
+                fontName=config.content_font,
+                fontSize=max(6, config.font_size_content - 2),
+                textColor=config.content_color,
+            )
+            elements.append(Spacer(1, padding / 2))
+            elements.append(Paragraph(
+                '(*) Artículo con precio pactado con el cliente.',
+                nota_style,
+            ))
         elements.append(Spacer(1, padding))
         if index < len(pedido_ids) - 1:
             elements.append(PageBreak())

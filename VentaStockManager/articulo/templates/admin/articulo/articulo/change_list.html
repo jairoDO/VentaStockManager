@@ -1,0 +1,27 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls %}
+
+{% comment %}
+Override del changelist de Articulo para sumar un link a la
+"Grilla de precios" arriba del listado. La forma menos invasiva
+de hacerlo: extender `object-tools-items` y agregar otro <li>
+junto al botón "Add". Así el botón flotante material-design del
+admin queda intacto y este link aparece como una herramienta
+extra del listado.
+
+Si hubiera que tocar más cosas del changelist, mejor mover esto
+a un override de `change_list_template` desde el ModelAdmin.
+{% endcomment %}
+
+{% block object-tools-items %}
+  {{ block.super }}
+  <li>
+    <a href="{% url 'grilla_precios' %}"
+       class="btn waves-effect waves-light blue darken-1"
+       style="margin-left: 0.5rem;"
+       title="Editar precios de muchos artículos a la vez">
+      <i class="material-icons left">grid_on</i>
+      Grilla de precios
+    </a>
+  </li>
+{% endblock %}

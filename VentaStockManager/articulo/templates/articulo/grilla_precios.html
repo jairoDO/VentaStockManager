@@ -1,0 +1,574 @@
+{% load static %}
+{% comment %}
+Grilla de precios — pantalla tipo planilla (estilo Google Sheets)
+para editar precios y stock de muchos artículos a la vez.
+
+Filosofía:
+  - Carga paginada vía API JSON (50 por defecto). Cargar miles de
+    inputs en el DOM se vuelve muy lento y arruina la UX.
+  - Cambios "en memoria": el operador puede pinchar varios precios
+    sin commitear nada; solo se postea al apretar "Guardar".
+  - Los cambios sin guardar se mantienen entre páginas y filtros,
+    pero advertimos con confirm() para que el operador no los
+    pierda por error.
+  - Bulk apply: seleccionar filas con checkbox y aplicar +monto
+    o +porcentaje a precio minorista y/o mayorista.
+
+Estilo: Tailwind por CDN + Alpine 3 para coherencia con
+`venta/templates/venta/venta_nueva.html`. No usamos chrome de
+django-material-admin porque esta es una pantalla full-width
+"de operación" y no entra cómodo dentro del listado del admin.
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Grilla de precios — VentaStockManager</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {% comment %}
+  Tailwind por CDN. Suficiente para una pantalla interna (sin
+  necesidades de SEO ni Core Web Vitals). Si en algún momento
+  vemos lentitud o FOUC molesto, se puede pasar a un build real.
+  {% endcomment %}
+  <script src="https://cdn.tailwindcss.com"></script>
+  {% comment %}
+  Alpine en defer: queremos que esté disponible antes de
+  DOMContentLoaded para que `x-data` se inicialice, pero no
+  bloquear el primer paint. `defer` cumple las dos cosas.
+  {% endcomment %}
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+{% comment %}
+Form oculto solo para que Django setee la cookie csrftoken cuando
+renderiza esta página (la usamos al hacer POST a /api/grilla/guardar/).
+{% endcomment %}
+<form style="display:none">{% csrf_token %}</form>
+
+{% comment %}
+Inyectamos las opciones de filtros como JSON via json_script — así
+Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
+{% for %} en JS-encoded text.
+{% endcomment %}
+{{ categorias|json_script:"opt-categorias" }}
+{{ proveedores|json_script:"opt-proveedores" }}
+
+<div x-data="grillaPrecios()" x-init="init()" class="max-w-screen-2xl mx-auto p-6 pb-32">
+
+  {# ---- Header ---- #}
+  <header class="mb-6">
+    <a href="/admin/articulo/articulo/" class="text-sm text-blue-600 hover:underline">← Volver al admin</a>
+    <h1 class="text-2xl font-bold mt-1">Grilla de precios</h1>
+    <p class="text-sm text-slate-500">
+      Editá precios de muchos artículos a la vez.
+      Los cambios se aplican al hacer click en
+      <span class="font-medium">"Guardar cambios"</span>.
+      Mientras tanto, podés moverte entre páginas y filtros sin perder lo editado.
+    </p>
+  </header>
+
+  {# ---- Banner de errores ---- #}
+  <div x-show="errores.length" x-cloak
+       class="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded mb-4">
+    <strong class="block mb-1">Hubo problemas al guardar:</strong>
+    <ul class="list-disc list-inside text-sm">
+      <template x-for="(err, i) in errores" :key="i">
+        <li>
+          <template x-if="err.id"><span>Artículo <span x-text="err.id"></span>: </span></template>
+          <template x-if="err.campo"><span x-text="err.campo + ' — '"></span></template>
+          <span x-text="err.mensaje"></span>
+        </li>
+      </template>
+    </ul>
+  </div>
+
+  {# ---- Filtros ---- #}
+  <div class="bg-white shadow rounded-lg p-4 mb-4">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Categoría</label>
+        <select x-model="filtros.categoria"
+                @change="onFiltroCambia()"
+                class="w-full border border-slate-300 rounded px-3 py-2">
+          <option value="">— Todas —</option>
+          <option value="0">— Sin categoría —</option>
+          <template x-for="c in opcionesCategorias" :key="c.id">
+            <option :value="c.id" x-text="c.nombre"></option>
+          </template>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Proveedor</label>
+        <select x-model="filtros.proveedor"
+                @change="onFiltroCambia()"
+                class="w-full border border-slate-300 rounded px-3 py-2">
+          <option value="">— Todos —</option>
+          <option value="0">— Sin proveedor —</option>
+          <template x-for="p in opcionesProveedores" :key="p.id">
+            <option :value="p.id" x-text="p.nombre"></option>
+          </template>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Buscar</label>
+        <input type="text"
+               x-model="filtros.q"
+               @input.debounce.300ms="onFiltroCambia()"
+               placeholder="Nombre, código o código interno…"
+               class="w-full border border-slate-300 rounded px-3 py-2">
+      </div>
+
+      <div class="text-right text-sm text-slate-500">
+        <div>
+          <span class="font-semibold text-slate-700" x-text="totalItems"></span> artículos
+        </div>
+        <div class="text-xs">
+          Página <span x-text="filtros.page"></span> de <span x-text="totalPages || 1"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ---- Bulk apply ---- #}
+  <div class="bg-white shadow rounded-lg p-4 mb-4">
+    <div class="flex items-center gap-3 flex-wrap text-sm">
+      <span class="font-medium text-slate-700">Aplicar a seleccionados</span>
+      <span class="text-xs text-slate-500">(<span x-text="seleccionados.size"></span>)</span>
+
+      <label class="flex items-center gap-1">
+        <input type="radio" value="monto" x-model="bulkAjuste.tipo">
+        <span>+$ monto</span>
+      </label>
+      <label class="flex items-center gap-1">
+        <input type="radio" value="porcentaje" x-model="bulkAjuste.tipo">
+        <span>+% porcentaje</span>
+      </label>
+
+      <input type="number" step="0.01" x-model.number="bulkAjuste.valor"
+             class="w-28 border border-slate-300 rounded px-2 py-1"
+             placeholder="0">
+
+      <span class="text-slate-500">Modifica:</span>
+      <label class="flex items-center gap-1">
+        <input type="checkbox" x-model="bulkAjuste.tocaMinorista">
+        <span>minorista</span>
+      </label>
+      <label class="flex items-center gap-1">
+        <input type="checkbox" x-model="bulkAjuste.tocaMayorista">
+        <span>mayorista</span>
+      </label>
+
+      <button type="button"
+              @click="aplicarBulk()"
+              :disabled="!puedeAplicarBulk()"
+              class="px-3 py-1.5 bg-slate-800 text-white rounded text-sm hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed">
+        Aplicar
+      </button>
+
+      <button type="button" x-show="seleccionados.size > 0" x-cloak
+              @click="limpiarSeleccion()"
+              class="text-xs text-slate-500 hover:underline">
+        limpiar selección
+      </button>
+    </div>
+    <p class="text-xs text-slate-500 mt-2">
+      Tip: el ajuste se calcula sobre el valor ACTUAL del input (no sobre el original),
+      así podés acumular varios ajustes antes de guardar.
+    </p>
+  </div>
+
+  {# ---- Tabla ---- #}
+  <div class="bg-white shadow rounded-lg overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-100 text-left text-xs uppercase text-slate-600 border-b">
+        <tr>
+          <th class="px-2 py-2 w-8">
+            <input type="checkbox"
+                   :checked="seleccionadosTodosEnPagina()"
+                   @change="toggleSeleccionarTodosEnPagina($event.target.checked)">
+          </th>
+          <th class="px-2 py-2">Código</th>
+          <th class="px-2 py-2">Nombre</th>
+          <th class="px-2 py-2">Categoría</th>
+          <th class="px-2 py-2">Proveedor</th>
+          <th class="px-2 py-2 text-right">Stock</th>
+          <th class="px-2 py-2 text-right">Min</th>
+          <th class="px-2 py-2 text-right">May</th>
+          <th class="px-2 py-2 text-right">Umbral</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="(item, idx) in items" :key="item.id">
+          <tr :class="idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'"
+              class="border-b border-slate-100">
+            <td class="px-2 py-1.5">
+              <input type="checkbox"
+                     :checked="seleccionados.has(item.id)"
+                     @change="toggleSeleccion(item.id, $event.target.checked)">
+            </td>
+            <td class="px-2 py-1.5 font-mono text-xs">
+              <div x-text="item.codigo_interno || item.codigo"></div>
+              <div class="text-slate-400" x-show="item.codigo && item.codigo_interno && item.codigo !== item.codigo_interno"
+                   x-text="item.codigo"></div>
+            </td>
+            <td class="px-2 py-1.5">
+              <div x-text="item.nombre"></div>
+              <div class="text-xs text-slate-500" x-show="item.marca && item.marca !== 'Generico'"
+                   x-text="item.marca"></div>
+            </td>
+            <td class="px-2 py-1.5">
+              <template x-if="item.categoria_id">
+                <span class="inline-block px-2 py-0.5 rounded text-white text-xs font-medium"
+                      :style="'background:' + (item.categoria_color || '#607d8b')"
+                      x-text="item.categoria_nombre"></span>
+              </template>
+              <template x-if="!item.categoria_id">
+                <span class="text-slate-400">—</span>
+              </template>
+            </td>
+            <td class="px-2 py-1.5">
+              <span x-show="item.proveedor_id" x-text="item.proveedor_nombre"></span>
+              <span x-show="!item.proveedor_id" class="text-slate-400">—</span>
+            </td>
+            <td class="px-2 py-1.5 text-right">
+              <input type="number" min="0" step="1"
+                     x-model="item.stock"
+                     @input="marcarCambio(item.id, 'stock', item.stock)"
+                     :class="esCeldaModificada(item.id, 'stock') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
+                     class="w-20 border rounded px-1.5 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
+            </td>
+            <td class="px-2 py-1.5 text-right">
+              <input type="number" min="0" step="0.01"
+                     x-model="item.precio_minorista"
+                     @input="marcarCambio(item.id, 'precio_minorista', item.precio_minorista)"
+                     :class="esCeldaModificada(item.id, 'precio_minorista') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
+                     class="w-24 border rounded px-1.5 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
+            </td>
+            <td class="px-2 py-1.5 text-right">
+              <input type="number" min="0" step="0.01"
+                     x-model="item.precio_mayorista"
+                     @input="marcarCambio(item.id, 'precio_mayorista', item.precio_mayorista)"
+                     :class="esCeldaModificada(item.id, 'precio_mayorista') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
+                     class="w-24 border rounded px-1.5 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
+            </td>
+            <td class="px-2 py-1.5 text-right">
+              <input type="number" min="0" step="1"
+                     x-model="item.cantidad_por_mayor"
+                     @input="marcarCambio(item.id, 'cantidad_por_mayor', item.cantidad_por_mayor)"
+                     :class="esCeldaModificada(item.id, 'cantidad_por_mayor') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
+                     class="w-20 border rounded px-1.5 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
+            </td>
+          </tr>
+        </template>
+        <tr x-show="!cargando && items.length === 0" x-cloak>
+          <td colspan="9" class="px-2 py-8 text-center text-slate-500">
+            No hay artículos con esos filtros.
+          </td>
+        </tr>
+        <tr x-show="cargando" x-cloak>
+          <td colspan="9" class="px-2 py-8 text-center text-slate-500">Cargando…</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  {# ---- Paginación ---- #}
+  <div class="flex items-center justify-between mt-4">
+    <button type="button"
+            @click="cambiarPagina(filtros.page - 1)"
+            :disabled="filtros.page <= 1"
+            class="px-3 py-1.5 bg-white border border-slate-300 rounded text-sm hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">
+      ← Anterior
+    </button>
+    <div class="text-sm text-slate-600">
+      Página <span x-text="filtros.page"></span> de <span x-text="totalPages || 1"></span>
+    </div>
+    <button type="button"
+            @click="cambiarPagina(filtros.page + 1)"
+            :disabled="filtros.page >= totalPages"
+            class="px-3 py-1.5 bg-white border border-slate-300 rounded text-sm hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">
+      Siguiente →
+    </button>
+  </div>
+</div>
+
+{# ---- Botón flotante Guardar ---- #}
+<div class="fixed bottom-6 right-6 z-30">
+  <button type="button"
+          x-data
+          @click="$root.__alpine_root__ || guardar()"
+          {# Trick: el botón está fuera del x-data="grillaPrecios()" para
+             que quede 100% sticky aunque se scrollee, pero necesita
+             acceso al método. Usamos un dispatch a un custom event que
+             el x-data superior escucha. #}
+          onclick="window.dispatchEvent(new CustomEvent('grilla:guardar'))"
+          class="px-5 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 font-semibold flex items-center gap-2">
+    <span>Guardar cambios</span>
+    <span id="badge-cambios" class="hidden bg-white text-blue-700 text-xs font-bold rounded-full px-2 py-0.5">0</span>
+  </button>
+</div>
+
+<script>
+  // CSRF: Django setea la cookie cuando se renderiza {% csrf_token %}.
+  // La leemos en cada POST.
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : '';
+  }
+
+  function grillaPrecios() {
+    return {
+      // ---- Estado ----
+      opcionesCategorias: [],
+      opcionesProveedores: [],
+      filtros: {
+        categoria: '',
+        proveedor: '',
+        q: '',
+        page: 1,
+      },
+      items: [],
+      totalItems: 0,
+      totalPages: 1,
+      cargando: false,
+      guardando: false,
+      errores: [],
+      // `cambios` es la fuente de verdad de los edits pendientes:
+      //   { 4521: {precio_minorista: '1200.00', stock: 50}, ... }
+      // Lo guardamos SEPARADO del array `items` porque los items
+      // se recargan al cambiar de página y `cambios` tiene que
+      // sobrevivir a eso. Cuando el operador vuelve a una página
+      // donde tenía cambios, los volvemos a aplicar sobre los
+      // inputs.
+      cambios: {},
+      seleccionados: new Set(),
+      bulkAjuste: {
+        tipo: 'porcentaje',
+        valor: 0,
+        tocaMinorista: true,
+        tocaMayorista: true,
+      },
+
+      // ---- Init ----
+      init() {
+        const cats = document.getElementById('opt-categorias');
+        if (cats) this.opcionesCategorias = JSON.parse(cats.textContent);
+        const provs = document.getElementById('opt-proveedores');
+        if (provs) this.opcionesProveedores = JSON.parse(provs.textContent);
+
+        // Escuchamos el evento del botón sticky (que vive fuera del
+        // root de Alpine porque queremos que sea fixed independiente
+        // del flujo).
+        window.addEventListener('grilla:guardar', () => this.guardar());
+
+        this.cargar();
+      },
+
+      // ---- Carga ----
+      async cargar() {
+        this.cargando = true;
+        this.errores = [];
+        try {
+          const params = new URLSearchParams();
+          if (this.filtros.categoria !== '') params.set('categoria', this.filtros.categoria);
+          if (this.filtros.proveedor !== '') params.set('proveedor', this.filtros.proveedor);
+          if (this.filtros.q) params.set('q', this.filtros.q);
+          params.set('page', this.filtros.page);
+
+          const r = await fetch('/articulos/api/grilla/?' + params.toString(), {
+            credentials: 'same-origin',
+          });
+          const data = await r.json();
+          this.totalItems = data.total_items || 0;
+          this.totalPages = data.total_pages || 1;
+          // Re-aplicamos los cambios pendientes sobre los items
+          // recién traídos (importante para que el operador vea sus
+          // edits al volver a una página).
+          this.items = (data.items || []).map(it => {
+            const pendientes = this.cambios[it.id] || {};
+            return { ...it, ...pendientes };
+          });
+        } catch (e) {
+          this.errores = [{ mensaje: 'Error al cargar artículos: ' + e.message }];
+        } finally {
+          this.cargando = false;
+        }
+      },
+
+      onFiltroCambia() {
+        // Cambiar filtros NO pierde los cambios pendientes (viven en
+        // `this.cambios` independiente de items). Solo reseteamos a
+        // página 1 porque el set de resultados cambió.
+        this.filtros.page = 1;
+        this.cargar();
+      },
+
+      cambiarPagina(n) {
+        if (n < 1 || n > this.totalPages) return;
+        this.filtros.page = n;
+        this.cargar();
+      },
+
+      // ---- Cambios pendientes ----
+      marcarCambio(id, campo, valor) {
+        // Registrar el cambio. Si el valor coincide con el ORIGINAL
+        // que vino del backend, idealmente lo deselectaríamos —
+        // pero no guardamos el original separado para mantener el
+        // estado simple. Costo: una fila marcada como "modificada"
+        // aunque el operador haya vuelto al valor original. El POST
+        // mandará el campo igual; el backend lo aplica idempotente
+        // (mismo valor → update no-op, pero igual dispara auditlog
+        // con campos sin diff, que es ruido aceptable).
+        if (!this.cambios[id]) this.cambios[id] = {};
+        this.cambios[id][campo] = String(valor);
+        this.refrescarBadge();
+      },
+
+      esCeldaModificada(id, campo) {
+        return !!(this.cambios[id] && campo in this.cambios[id]);
+      },
+
+      cuentaCambios() {
+        // Contamos por FILA con al menos un cambio, no por celda.
+        // Es lo que tiene más sentido en el badge: "X artículos
+        // van a actualizarse".
+        return Object.keys(this.cambios).filter(id => Object.keys(this.cambios[id]).length > 0).length;
+      },
+
+      refrescarBadge() {
+        const badge = document.getElementById('badge-cambios');
+        if (!badge) return;
+        const n = this.cuentaCambios();
+        badge.textContent = String(n);
+        badge.classList.toggle('hidden', n === 0);
+      },
+
+      // ---- Selección ----
+      toggleSeleccion(id, marcar) {
+        if (marcar) this.seleccionados.add(id);
+        else this.seleccionados.delete(id);
+        // Forzamos un re-render del checkbox de header.
+        this.seleccionados = new Set(this.seleccionados);
+      },
+
+      seleccionadosTodosEnPagina() {
+        if (this.items.length === 0) return false;
+        return this.items.every(it => this.seleccionados.has(it.id));
+      },
+
+      toggleSeleccionarTodosEnPagina(marcar) {
+        for (const it of this.items) {
+          if (marcar) this.seleccionados.add(it.id);
+          else this.seleccionados.delete(it.id);
+        }
+        this.seleccionados = new Set(this.seleccionados);
+      },
+
+      limpiarSeleccion() {
+        this.seleccionados = new Set();
+      },
+
+      // ---- Bulk apply ----
+      puedeAplicarBulk() {
+        return (
+          this.seleccionados.size > 0 &&
+          (this.bulkAjuste.tocaMinorista || this.bulkAjuste.tocaMayorista) &&
+          Number(this.bulkAjuste.valor) !== 0
+        );
+      },
+
+      aplicarBulk() {
+        if (!this.puedeAplicarBulk()) return;
+        const valor = Number(this.bulkAjuste.valor);
+        const tipo = this.bulkAjuste.tipo;
+        const campos = [];
+        if (this.bulkAjuste.tocaMinorista) campos.push('precio_minorista');
+        if (this.bulkAjuste.tocaMayorista) campos.push('precio_mayorista');
+
+        // Solo aplicamos sobre las filas seleccionadas que están en
+        // la página actual (los items que vemos). Si el operador
+        // seleccionó filas en otra página y vuelve, el set las
+        // recuerda pero el ajuste se calcula sobre el valor que
+        // tienen en el momento que el item se está visualizando.
+        // Decisión a propósito: aplicar bulk a filas que no están
+        // en el DOM requeriría reconstruir el valor desde "el
+        // original + cambio pendiente" y se complica. La UX que
+        // queda: aplicá bulk por página.
+        for (const item of this.items) {
+          if (!this.seleccionados.has(item.id)) continue;
+          for (const campo of campos) {
+            const actual = Number(item[campo]) || 0;
+            let nuevo;
+            if (tipo === 'monto') {
+              nuevo = actual + valor;
+            } else {
+              nuevo = actual * (1 + valor / 100);
+            }
+            // Redondeo a 2 decimales para que el input no muestre
+            // colas raras tipo 1100.0000000001 por float math.
+            nuevo = Math.round(nuevo * 100) / 100;
+            item[campo] = String(nuevo);
+            this.marcarCambio(item.id, campo, nuevo);
+          }
+        }
+      },
+
+      // ---- Guardar ----
+      async guardar() {
+        if (this.guardando) return;
+        this.errores = [];
+
+        // Armar el payload: una entrada por id, con los campos que
+        // cambiaron.
+        const cambios = [];
+        for (const id of Object.keys(this.cambios)) {
+          const fila = this.cambios[id];
+          if (Object.keys(fila).length === 0) continue;
+          cambios.push({ id: Number(id), ...fila });
+        }
+        if (cambios.length === 0) {
+          this.errores = [{ mensaje: 'No hay cambios para guardar.' }];
+          return;
+        }
+
+        this.guardando = true;
+        try {
+          const r = await fetch('/articulos/api/grilla/guardar/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({ cambios }),
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            this.errores = data.errores || [{ mensaje: 'Error desconocido al guardar.' }];
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+          }
+          // Éxito: limpiamos los cambios pendientes y recargamos la
+          // página actual para reflejar lo que quedó en DB.
+          this.cambios = {};
+          this.refrescarBadge();
+          await this.cargar();
+        } catch (e) {
+          this.errores = [{ mensaje: 'Error de red: ' + e.message }];
+        } finally {
+          this.guardando = false;
+        }
+      },
+    };
+  }
+</script>
+
+<style>
+  [x-cloak] { display: none !important; }
+</style>
+
+</body>
+</html>

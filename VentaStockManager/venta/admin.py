@@ -15,6 +15,7 @@ from venta.forms import ArticuloVentaForm
 import logging
 from django.core import validators
 from django.core.exceptions import ValidationError
+from venta.utils import parse_precio
 
 # import autocomplete_all
 
@@ -82,17 +83,79 @@ class ArticuloVentaInline(admin.TabularInline):
             kwargs["queryset"] = Articulo.objects.filter(stock__gt=0)
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
+class ArchivadaListFilter(admin.SimpleListFilter):
+    """
+    Filter custom para mostrar/ocultar ventas archivadas. Default
+    "Activas" (no archivadas) — las archivadas quedan fuera del flujo
+    normal salvo que el operador las pida explícitamente.
+    """
+    title = 'Estado de archivo'
+    parameter_name = 'archivada'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('activas', 'Activas'),
+            ('archivadas', 'Archivadas'),
+            ('todas', 'Todas'),
+        )
+
+    def queryset(self, request, queryset):
+        # Default: si no hay param, mostrar solo activas.
+        val = self.value() or 'activas'
+        if val == 'archivadas':
+            return queryset.filter(archivada_en__isnull=False)
+        if val == 'todas':
+            return queryset
+        return queryset.filter(archivada_en__isnull=True)
+
+    def choices(self, changelist):
+        # Hacemos que "Activas" aparezca seleccionada cuando no hay
+        # param explícito.
+        value = self.value() or 'activas'
+        for lookup, title in self.lookup_choices:
+            yield {
+                'selected': value == str(lookup),
+                'query_string': changelist.get_query_string(
+                    {self.parameter_name: lookup}, []
+                ),
+                'display': title,
+            }
+
+
 class VentaAdmin(admin.ModelAdmin):
     form = VentaForm
     ordering = ('-fecha_compra',)
     list_display = ['fecha_compra', 'fecha_entrega', 'cliente', 'vendedor', 'total_venta_por_articulo']
-    list_filter = ['fecha_compra', 'fecha_entrega']
+    # Orden de filtros importa: ArchivadaListFilter primero para que
+    # el operador vea el toggle activas/archivadas arriba.
+    list_filter = [ArchivadaListFilter, 'fecha_compra', 'fecha_entrega']
     icon_name = "monetization_on"
     inlines = [ArticuloVentaInline]
-    search_fields = ('cliente__nombre')
+    # Buscador venta por cliente y vendedor (mismas claves que PedidoAdmin).
+    # Antes era ('cliente__nombre') sin coma — una string, no una tupla —
+    # con lo cual Django iteraba carácter por carácter.
+    search_fields = (
+        'cliente__nombre',
+        'vendedor__nombre',
+        'vendedor__apellido',
+        'vendedor__usuario__username',
+    )
     data_hierarchy = "fecha_compra"
     raw_id_fields = ["cliente"]
     autocomplete_fields = ['cliente']
+
+    # Redirigimos add/change a la pantalla custom (Alpine + Tailwind).
+    # Mantenemos list_view, search, list_filter y todo el resto del
+    # admin intactos — la lista del admin sigue siendo la "pantalla de
+    # navegación", y la pantalla custom solo reemplaza el formulario
+    # de carga/edición que era la parte más rota.
+    def add_view(self, request, form_url='', extra_context=None):
+        from django.urls import reverse
+        return HttpResponseRedirect(reverse('venta_nueva'))
+
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        from django.urls import reverse
+        return HttpResponseRedirect(reverse('venta_editar', args=[object_id]))
 
     def save_model(self, request, obj, form, change):
         # Save the main object first to get an ID
@@ -154,8 +217,8 @@ class VentaAdmin(admin.ModelAdmin):
     def total_venta_por_articulo(self, obj):
         total = 0
         for articulo_venta in obj.ventas.all():
-            precio = articulo_venta.precio.replace("'", "").replace(",", "")
-            total += articulo_venta.cantidad * float(precio)
+            cantidad = articulo_venta.cantidad or 0
+            total += cantidad * parse_precio(articulo_venta.precio)
         return total
 
 
@@ -177,9 +240,9 @@ class VentaAdmin(admin.ModelAdmin):
             "classes": ('fw-bold', 'align-right', 'required'),
         }),
     )
-    search_fields = ('cliente__nombre', )
-    data_hierarchy = "fecha_compra"
-            
+    # NOTA: `search_fields` y `data_hierarchy` ya están definidos arriba.
+    # No los volvemos a setear acá para no pisarlos.
+
     def get_form(self, request, obj=None, **kwargs):
         form = super().get_form(request, obj, **kwargs)
         if 'precio_total' in form.base_fields:
@@ -205,11 +268,19 @@ class VentaAdmin(admin.ModelAdmin):
 # admin_site.site.register(Venta, VentaAdmin)
 
 class PedidoAdmin(admin.ModelAdmin):
-    
+
     readonly_fields = ('venta','mostrar_articulos')
     ordering = ('-venta__fecha_compra',)
     list_display = ['id', 'venta_fecha_compra', 'venta_fecha_entrega', 'venta_cliente', 'venta_vendedor', 'total_venta_por_articulo', 'cantidad_articulos_vendidos', 'descargar_pdf']
-    list_filter = ['estado', 'venta__fecha_compra', 'venta__fecha_entrega']  
+    list_filter = ['estado', 'venta__fecha_compra', 'venta__fecha_entrega']
+    # Buscador pedido por nombre de cliente y por vendedor
+    # (nombre/apellido del vendedor o su usuario de login).
+    search_fields = (
+        'venta__cliente__nombre',
+        'venta__vendedor__nombre',
+        'venta__vendedor__apellido',
+        'venta__vendedor__usuario__username',
+    )
     icon_name = "library_books"
     actions = ['generar_pdfs']
 
@@ -224,8 +295,8 @@ class PedidoAdmin(admin.ModelAdmin):
     def total_venta_por_articulo(self, obj):
         total = 0
         for articulo_venta in obj.venta.ventas.all():
-            precio = articulo_venta.precio.replace("'", "").replace(",", "")
-            total += articulo_venta.cantidad * float(precio)
+            cantidad = articulo_venta.cantidad or 0
+            total += cantidad * parse_precio(articulo_venta.precio)
         return total
 
 
@@ -309,3 +380,108 @@ class PedidoAdmin(admin.ModelAdmin):
 
 
 # admin_site.site.register(Pedido, PedidoAdmin)
+
+
+# ---------------------------------------------------------------------------
+# Alertas de stock
+# ---------------------------------------------------------------------------
+from venta.models import AlertaStock
+
+
+class AlertaStockAdmin(admin.ModelAdmin):
+    """
+    Bandeja de entrada de alertas: cada vez que una venta se cargó
+    con stock insuficiente, queda acá. La administración entra,
+    investiga (¿llegó mercadería?, ¿hubo un error de carga?), y
+    marca como revisada con una nota.
+    """
+    icon_name = 'notification_important'
+    list_display = (
+        'created_at',
+        'articulo_nombre',
+        'cantidad_pedida',
+        'cantidad_faltante',
+        'stock_disponible_al_momento',
+        'venta_link',
+        'creado_por',
+        'revisada_badge',
+    )
+    # Por default mostramos solo las sin revisar. El operador puede
+    # cambiar al filter "Sí" para ver las revisadas o "Todas".
+    list_filter = ('revisada', 'created_at', 'articulo__categoria')
+    search_fields = ('articulo__nombre', 'articulo__codigo_interno', 'notas')
+    readonly_fields = (
+        'venta', 'articulo', 'cantidad_pedida', 'stock_disponible_al_momento',
+        'cantidad_faltante', 'creado_por', 'created_at',
+        'revisada_at', 'revisada_por',
+    )
+    fields = (
+        ('articulo', 'venta'),
+        ('cantidad_pedida', 'stock_disponible_al_momento', 'cantidad_faltante'),
+        ('creado_por', 'created_at'),
+        'revisada',
+        'notas',
+        ('revisada_at', 'revisada_por'),
+    )
+    actions = ['accion_marcar_revisadas', 'accion_marcar_no_revisadas']
+    date_hierarchy = 'created_at'
+    list_select_related = ('articulo', 'venta', 'creado_por')
+
+    def articulo_nombre(self, obj):
+        return obj.articulo.nombre[:50]
+    articulo_nombre.short_description = 'Artículo'
+    articulo_nombre.admin_order_field = 'articulo__nombre'
+
+    def venta_link(self, obj):
+        if not obj.venta_id:
+            return format_html('<span style="color: #999;">(venta borrada)</span>')
+        return format_html(
+            '<a href="/venta/{}/editar/" target="_blank">#{}</a>',
+            obj.venta_id, obj.venta_id,
+        )
+    venta_link.short_description = 'Venta'
+
+    def revisada_badge(self, obj):
+        if obj.revisada:
+            return format_html(
+                '<span style="color: #2e7d32; font-weight: bold;">✓ revisada</span>'
+            )
+        return format_html(
+            '<span style="color: #c62828; font-weight: bold;">⚠ pendiente</span>'
+        )
+    revisada_badge.short_description = 'Estado'
+    revisada_badge.admin_order_field = 'revisada'
+
+    def save_model(self, request, obj, form, change):
+        # Si el operador marca/desmarca `revisada` en el form,
+        # firmamos quién lo hizo y cuándo.
+        if change:
+            try:
+                anterior = AlertaStock.objects.get(pk=obj.pk)
+            except AlertaStock.DoesNotExist:
+                anterior = None
+            if anterior and anterior.revisada != obj.revisada:
+                if obj.revisada:
+                    obj.revisada_at = timezone.now()
+                    obj.revisada_por = request.user
+                else:
+                    obj.revisada_at = None
+                    obj.revisada_por = None
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description='Marcar seleccionadas como revisadas')
+    def accion_marcar_revisadas(self, request, queryset):
+        ahora = timezone.now()
+        n = queryset.filter(revisada=False).update(
+            revisada=True,
+            revisada_at=ahora,
+            revisada_por=request.user,
+        )
+        self.message_user(request, f'{n} alertas marcadas como revisadas.', level=messages.SUCCESS)
+
+    @admin.action(description='Marcar seleccionadas como NO revisadas (reabrir)')
+    def accion_marcar_no_revisadas(self, request, queryset):
+        n = queryset.filter(revisada=True).update(
+            revisada=False, revisada_at=None, revisada_por=None,
+        )
+        self.message_user(request, f'{n} alertas reabiertas.', level=messages.WARNING)

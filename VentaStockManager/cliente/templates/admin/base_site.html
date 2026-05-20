@@ -1,0 +1,41 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+{% comment %}
+Override del base_site.html de django-material-admin. Solo agregamos
+un CSS extra (refresh.css) al final del block `extrastyle` para
+refrescar la paleta y el spacing del admin.
+
+Truco no obvio: este archivo se LLAMA `admin/base_site.html` y a la
+vez hace `{% extends "admin/base_site.html" %}`. Django tiene una
+optimización (skip_to=origin en el loader) que detecta que estás
+extendiendo desde un template del mismo nombre y va al SIGUIENTE
+template con ese nombre en el path order, evitando la recursión.
+Es el mismo truco que usa material-admin para extender del admin
+default de Django.
+
+Si en algún momento Django saca esa optimización, esto va a
+explotar con RecursionError. Plan B: copy-pastear el contenido
+completo de material/templates/admin/base_site.html acá y agregar
+el link al final.
+{% endcomment %}
+{% block extrastyle %}
+    {{ block.super }}
+    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/refresh.css' %}">
+{% endblock %}
+
+{% block usertools %}
+    {% comment %}
+    Badge "⚠ N alertas pendientes" arriba a la derecha, al lado de
+    Welcome jairo / Log out. La variable la inyecta `MyAdminSite.
+    each_context` (solo si el usuario es staff). Si no hay alertas,
+    no mostramos nada para no agregar ruido visual.
+    {% endcomment %}
+    {% if alertas_stock_pendientes %}
+        <a href="/admin/venta/alertastock/?revisada__exact=0"
+           class="badge-alertas-stock"
+           title="Hay ventas que se cargaron con stock insuficiente. Click para revisarlas.">
+            ⚠ {{ alertas_stock_pendientes }} alerta{{ alertas_stock_pendientes|pluralize }} de stock
+        </a>
+    {% endif %}
+    {{ block.super }}
+{% endblock %}

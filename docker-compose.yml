@@ -42,6 +42,14 @@ services:
       GOOGLE_CREDENTIALS_PATH: /run/secrets/google-credentials.json
       GOOGLE_SHEET_ID: 1GiKCywO6-6ab_sfUgDXxxbPzvjNXmSYyZBLckh5vtDs
       GOOGLE_SHEET_RANGE: articulos!A1:Z1500
+      # URL del wa-bot dentro de la red de docker-compose. El
+      # service `wa-bot` es resoluble por nombre (DNS interno).
+      WHATSAPP_API_URL: http://wa-bot:3000
+      # Token compartido con el wa-bot. En local lo dejamos vacío
+      # (modo dev sin auth) — el wa-bot loguea un warning al
+      # arrancar pero anda. En producción ambos lados tienen que
+      # tener el MISMO valor.
+      WHATSAPP_API_TOKEN: ""
     ports:
       - "8000:8000"
     volumes:
@@ -50,5 +58,61 @@ services:
       # Montar tus credenciales locales como Secret File (solo lectura)
       - ~/credentials-backup/golosinas-insa-credentials.json:/run/secrets/google-credentials.json:ro
 
+  # Worker de django-q2. Procesa los Schedules (cron) y los
+  # async_task() encolados (envíos de WhatsApp, archivado de ventas
+  # antiguas, sync delete a Sheets). Sin esto los tasks quedan en
+  # la cola y nadie los corre.
+  #
+  # Comparte la misma imagen que el web (mismo código, mismo
+  # entorno). La separación es solo de proceso: el web sirve HTTP,
+  # el qcluster mastica jobs.
+  qcluster:
+    build: .
+    command: python manage.py qcluster
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Tiene que ver la MISMA DB que el web — comparten cola.
+      DATABASE_URL: postgres://ventastock:ventastock_dev@db:5432/ventastock
+      SECRET_KEY: dev-only-not-for-production
+      DEBUG: "True"
+      ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0
+      # Si querés debuggear envíos de WhatsApp desde tasks, el
+      # qcluster necesita poder hablarle al wa-bot.
+      WHATSAPP_API_URL: http://wa-bot:3000
+      WHATSAPP_API_TOKEN: ""
+      # Las credenciales de Sheets se montan abajo, igual que en el web.
+      GOOGLE_CREDENTIALS_PATH: /run/secrets/google-credentials.json
+      GOOGLE_SHEET_ID: 1GiKCywO6-6ab_sfUgDXxxbPzvjNXmSYyZBLckh5vtDs
+      GOOGLE_SHEET_RANGE: articulos!A1:Z1500
+    volumes:
+      - .:/app
+      - ~/credentials-backup/golosinas-insa-credentials.json:/run/secrets/google-credentials.json:ro
+
+  # Bridge Node.js para WhatsApp (open-wa). Levantarlo aparte con
+  # `docker compose up wa-bot` ya que arrastra ~600MB de Chromium y
+  # no siempre lo querés corriendo.
+  wa-bot:
+    build: ./wa-bot
+    environment:
+      WA_BOT_PORT: "3000"
+      WA_BOT_SESSION_DIR: /sessions
+      WA_BOT_SESSION_ID: venta-stock-local
+      # Empty = modo dev sin auth (anda igual, loguea un warning).
+      # Cuando deployemos, esto debe coincidir con
+      # `WHATSAPP_API_TOKEN` en el web service.
+      WA_BOT_TOKEN: ""
+    ports:
+      # Expuesto al host SOLO para poder escanear el QR vía
+      # http://localhost:3000/qr cuando hace falta. En producción
+      # este puerto NO debería estar abierto al mundo.
+      - "3000:3000"
+    volumes:
+      - wa_bot_sessions:/sessions
+
 volumes:
   postgres_data:
+  # Sesión persistente del wa-bot. Si se borra, hay que volver a
+  # escanear el QR.
+  wa_bot_sessions:

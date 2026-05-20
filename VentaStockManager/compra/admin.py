@@ -29,6 +29,23 @@ class ProvedorAdmin(admin.ModelAdmin):
       icon_name = "local_shipping"
       ordering = ['nombre']
       model = Proveedor
+      # Necesario para que `autocomplete_fields = ('proveedor',)` en
+      # ArticuloAdmin pueda buscar proveedores en el dropdown.
+      search_fields = ('nombre',)
+      list_display = ('nombre', 'cantidad_articulos')
+
+      def get_queryset(self, request):
+          # Count anotado para no hacer una query por fila al
+          # renderizar `cantidad_articulos`.
+          from django.db.models import Count
+          return super().get_queryset(request).annotate(
+              _n_articulos=Count('articulos'),
+          )
+
+      def cantidad_articulos(self, obj):
+          return getattr(obj, '_n_articulos', None) or obj.articulos.count()
+      cantidad_articulos.short_description = 'Artículos'
+      cantidad_articulos.admin_order_field = '_n_articulos'
       
 
 # admin_site.site.register(Proveedor, ProvedorAdmin)

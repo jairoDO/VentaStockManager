@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>{% if modo == 'editar' %}Editar venta #{{ venta_id }}{% else %}Nueva venta{% endif %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {# Tailwind por CDN. Suficiente para una pantalla interna (no SEO, #}
+  {# no Core Web Vitals). Si en algún momento esto se vuelve lento o #}
+  {# vemos FOUC molesto, instalamos Tailwind con build step real. #}
+  <script src="https://cdn.tailwindcss.com"></script>
+  {# Alpine se carga en defer para no bloquear el primer paint. Tiene #}
+  {# que estar disponible antes del DOMContentLoaded para que `x-data` #}
+  {# se inicialice. defer cumple eso. #}
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+{# Inyectamos el estado inicial como <script type=application/json> en #}
+{# vez de inline-template — json_script escapa HTML por nosotros y #}
+{# Alpine puede leerlo en init() sin riesgo de XSS. #}
+{% if venta_inicial %}
+  {{ venta_inicial|json_script:"venta-inicial" }}
+{% endif %}
+{# El csrf_token de Django queda como cookie tras el {% csrf_token %} #}
+{# del form oculto; lo leemos al hacer fetch para que pase el middleware. #}
+<form style="display:none">{% csrf_token %}</form>
+
+<div x-data="ventaForm()" x-init="init()" class="max-w-7xl mx-auto p-6">
+
+  <header class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">
+      {% if modo == 'editar' %}Editar venta #{{ venta_id }}{% else %}Nueva venta{% endif %}
+    </h1>
+    <a href="/admin/venta/venta/" class="text-sm text-slate-600 hover:text-slate-900 underline">
+      ← volver al listado
+    </a>
+  </header>
+
+  {# Banner de errores. Solo se muestra si la API devolvió fallas; el #}
+  {# loop adentro del banner las lista textuales. #}
+  <div x-show="errores.length" x-cloak class="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded mb-4">
+    <strong class="block mb-1">Hubo problemas al guardar:</strong>
+    <ul class="list-disc list-inside text-sm">
+      <template x-for="err in errores" :key="err">
+        <li x-text="err"></li>
+      </template>
+    </ul>
+  </div>
+
+  <div class="bg-white shadow rounded-lg p-6 mb-4">
+
+    {# --- Cliente + Vendedor + Fechas --- #}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+      <div class="relative">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Cliente</label>
+        <input type="text"
+               x-model="cliente.query"
+               @input.debounce.300ms="buscarClientes()"
+               @focus="if(cliente.results.length) cliente.dropdownAbierto = true"
+               placeholder="Buscar por nombre o dirección…"
+               class="w-full border border-slate-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-400">
+        <div x-show="cliente.dropdownAbierto && cliente.results.length"
+             x-cloak
+             @click.outside="cliente.dropdownAbierto = false"
+             class="absolute z-10 w-full bg-white border border-slate-200 rounded shadow-lg mt-1 max-h-72 overflow-y-auto">
+          <template x-for="c in cliente.results" :key="c.id">
+            <button type="button"
+                    @click="seleccionarCliente(c)"
+                    class="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-100 last:border-0">
+              <div class="font-medium flex justify-between">
+                <span x-text="c.nombre"></span>
+                <span x-show="Number(c.saldo) !== 0"
+                      x-cloak
+                      :class="Number(c.saldo) > 0 ? 'text-emerald-700' : 'text-red-700'"
+                      class="text-xs font-semibold ml-2"
+                      x-text="(Number(c.saldo) > 0 ? '+' : '') + formatARS(c.saldo)"></span>
+              </div>
+              <div class="text-xs text-slate-500" x-text="c.direccion + (c.telefono ? ' · ' + c.telefono : '')"></div>
+            </button>
+          </template>
+        </div>
+        <p x-show="cliente.id" x-cloak class="text-xs text-emerald-700 mt-1">
+          Seleccionado: <span x-text="cliente.label"></span>
+          <span x-show="Number(cliente.saldo) !== 0"
+                :class="Number(cliente.saldo) > 0 ? 'text-emerald-700' : 'text-red-700'"
+                class="ml-2 font-semibold">
+            (saldo: <span x-text="formatARS(cliente.saldo)"></span><span x-show="Number(cliente.saldo) > 0"> a favor</span><span x-show="Number(cliente.saldo) < 0"> debe</span>)
+          </span>
+          <button type="button" @click="limpiarCliente()" class="ml-2 text-red-600 underline">cambiar</button>
+        </p>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Vendedor</label>
+        <select x-model="vendedorId" class="w-full border border-slate-300 rounded px-3 py-2">
+          <option value="">— seleccionar —</option>
+          {% for v in vendedores %}
+            <option value="{{ v.id }}">
+              {{ v.nombre }} {{ v.apellido }}{% if v.usuario__username %} ({{ v.usuario__username }}){% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Fecha de compra</label>
+        <input type="date" x-model="fechaCompra" class="w-full border border-slate-300 rounded px-3 py-2">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Fecha de entrega</label>
+        <input type="date" x-model="fechaEntrega" class="w-full border border-slate-300 rounded px-3 py-2">
+      </div>
+    </div>
+  </div>
+
+  {# --- Tabla de items --- #}
+  <div class="bg-white shadow rounded-lg p-6 mb-4">
+    <h2 class="text-lg font-semibold mb-3">Artículos</h2>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-600 border-b">
+          <tr>
+            <th class="py-2 pr-3 w-1/3">Artículo</th>
+            <th class="py-2 pr-3 w-20 text-right">Cant.</th>
+            <th class="py-2 pr-3 w-28 text-right">Precio</th>
+            <th class="py-2 pr-3 w-20 text-right">% desc.</th>
+            <th class="py-2 pr-3 w-28 text-right">Subtotal</th>
+            <th class="py-2 w-10"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(item, idx) in items" :key="idx">
+            <tr class="border-b border-slate-100 align-top">
+              <td class="py-2 pr-3 relative">
+                <input type="text"
+                       x-model="item.query"
+                       @input.debounce.300ms="buscarArticulos(idx)"
+                       @focus="if(item.results.length) item.dropdownAbierto = true"
+                       placeholder="Buscar artículo…"
+                       class="w-full border border-slate-300 rounded px-2 py-1">
+                <div x-show="item.dropdownAbierto && item.results.length"
+                     x-cloak
+                     @click.outside="item.dropdownAbierto = false"
+                     class="absolute z-20 w-96 bg-white border border-slate-200 rounded shadow-lg mt-1 max-h-72 overflow-y-auto">
+                  <template x-for="a in item.results" :key="a.id">
+                    <button type="button"
+                            @click="seleccionarArticulo(idx, a)"
+                            :class="a.tiene_precio_pactado ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-blue-50'"
+                            class="w-full text-left px-3 py-2 border-b border-slate-100 last:border-0">
+                      <div class="font-medium flex justify-between items-center">
+                        <span x-text="a.marca + ' — ' + a.nombre"></span>
+                        <span x-show="a.tiene_precio_pactado" x-cloak
+                              class="text-xs px-2 py-0.5 bg-amber-200 text-amber-900 rounded font-semibold">
+                          ⭐ pactado $<span x-text="a.precio_sugerido"></span>
+                        </span>
+                      </div>
+                      <div class="text-xs text-slate-500">
+                        cod <span x-text="a.codigo_interno || a.codigo"></span>
+                        · stock <span x-text="a.stock"></span>
+                        · min $<span x-text="a.precio_minorista"></span>
+                        · may $<span x-text="a.precio_mayorista"></span>
+                        (≥<span x-text="a.umbral"></span>)
+                      </div>
+                    </button>
+                  </template>
+                </div>
+                <div x-show="item.articulo_id" x-cloak class="text-xs text-slate-600 mt-1">
+                  <span x-text="item.articulo_label"></span>
+                  <span class="text-slate-400">· stock <span x-text="item.stock_disponible"></span></span>
+                </div>
+              </td>
+              <td class="py-2 pr-3 text-right">
+                <input type="number" min="1" step="1"
+                       x-model.number="item.cantidad"
+                       @input="onCantidadCambia(idx)"
+                       class="w-20 border border-slate-300 rounded px-2 py-1 text-right">
+              </td>
+              <td class="py-2 pr-3 text-right">
+                <input type="number" min="0" step="0.01"
+                       x-model="item.precio"
+                       :class="item.tiene_precio_pactado ? 'border-amber-400' : 'border-slate-300'"
+                       class="w-28 border rounded px-2 py-1 text-right">
+                <div x-show="item.tiene_precio_pactado" x-cloak
+                     class="text-[10px] text-amber-700 mt-1 leading-tight">
+                  ⭐ pactado
+                  <span x-show="Number(item.precio_default_sin_acuerdo) !== Number(item.precio)" x-cloak>
+                    (lista $<span x-text="item.precio_default_sin_acuerdo"></span>)
+                  </span>
+                </div>
+              </td>
+              <td class="py-2 pr-3 text-right">
+                <input type="number" min="0" max="100" step="0.01"
+                       x-model="item.descuento_porcentaje"
+                       class="w-20 border border-slate-300 rounded px-2 py-1 text-right">
+              </td>
+              <td class="py-2 pr-3 text-right font-mono" x-text="formatARS(subtotalLinea(item))"></td>
+              <td class="py-2 text-right">
+                <button type="button"
+                        @click="quitarLinea(idx)"
+                        class="text-red-600 hover:text-red-800"
+                        title="Quitar línea">✕</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <button type="button"
+            @click="agregarLinea()"
+            class="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded text-sm">
+      + agregar línea
+    </button>
+  </div>
+
+  {# --- Descuento global + totales --- #}
+  <div class="bg-white shadow rounded-lg p-6 mb-4">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">% descuento global</label>
+        <input type="number" min="0" max="100" step="0.01"
+               x-model="descuentoPorcentaje"
+               class="w-full border border-slate-300 rounded px-3 py-2 text-right">
+      </div>
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Motivo</label>
+        <input type="text"
+               x-model="descuentoMotivo"
+               maxlength="255"
+               placeholder="Ej: cliente fiel, queja por demora, etc."
+               class="w-full border border-slate-300 rounded px-3 py-2">
+      </div>
+    </div>
+
+    <div class="mt-6 border-t border-slate-200 pt-4 space-y-1 text-right">
+      <div class="text-sm text-slate-600">
+        Subtotal de ítems: <span class="font-mono ml-2" x-text="formatARS(subtotalItems())"></span>
+      </div>
+      <div class="text-sm text-slate-600">
+        Descuento global: <span class="font-mono ml-2" x-text="'- ' + formatARS(montoDescuentoGlobal())"></span>
+      </div>
+      <div class="text-2xl font-bold mt-1">
+        Total: <span class="font-mono ml-2" x-text="formatARS(totalFinal())"></span>
+      </div>
+    </div>
+  </div>
+
+  {# --- Cobro / cuenta corriente --- #}
+  {# Solo aplicable a ventas NUEVAS. En edits no rehacemos los #}
+  {# movimientos para no pisar pagos posteriores manuales. #}
+  <div x-show="modo === 'crear'" x-cloak class="bg-white shadow rounded-lg p-6 mb-4">
+    <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-3">
+      Cobro / cuenta corriente
+    </h3>
+
+    {# Saldo a favor: checkbox + monto a aplicar. Solo se ofrece si #}
+    {# el cliente tiene saldo POSITIVO (a favor). #}
+    <div x-show="cliente.id && Number(cliente.saldo) > 0"
+         x-cloak
+         class="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded">
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" x-model="aplicarSaldo" class="rounded">
+        <span class="text-sm">
+          Aplicar saldo a favor del cliente
+          (disponible: <span class="font-mono font-semibold" x-text="formatARS(cliente.saldo)"></span>)
+        </span>
+      </label>
+      <div x-show="aplicarSaldo" x-cloak class="mt-2 flex items-center gap-2">
+        <label class="text-sm text-slate-700">Monto a aplicar:</label>
+        <input type="number" min="0" step="0.01"
+               x-model.number="saldoAAplicar"
+               :max="Math.min(Number(cliente.saldo), totalFinal())"
+               class="w-32 border border-slate-300 rounded px-2 py-1 text-right">
+        <button type="button"
+                @click="saldoAAplicar = Math.min(Number(cliente.saldo), totalFinal())"
+                class="text-xs text-blue-600 hover:underline">
+          aplicar máximo
+        </button>
+      </div>
+    </div>
+
+    {# Cuando el cliente DEBE (saldo negativo), banner llamativo y #}
+    {# botón rápido para sumar la venta nueva a la deuda existente. #}
+    <div x-show="cliente.id && Number(cliente.saldo) < 0"
+         x-cloak
+         class="mb-4 p-4 bg-red-50 border-2 border-red-300 rounded">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div class="text-sm text-red-900">
+          <div class="font-semibold text-base mb-1">
+            ⚠ Este cliente ya debe
+            <span class="font-mono" x-text="formatARS(Math.abs(Number(cliente.saldo)))"></span>
+          </div>
+          <div class="text-xs">
+            Si no va a pagar nada ahora, dejá la venta a cuenta corriente
+            y la suma se le va a agregar a la deuda.
+            Para registrar pagos previos andá a
+            <a href="/admin/cliente/cuentacliente/" class="underline font-medium">cuenta corriente</a>.
+          </div>
+        </div>
+        <button type="button"
+                @click="dejarTodoACuenta()"
+                class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded whitespace-nowrap">
+          Dejar todo a cuenta
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+      <div>
+        <label class="block text-slate-700 mb-1">Total a cobrar</label>
+        <div class="px-3 py-2 bg-slate-50 rounded font-mono text-right" x-text="formatARS(totalACobrar())"></div>
+      </div>
+      <div>
+        <label class="block text-slate-700 mb-1">Monto pagado por el cliente</label>
+        <div class="flex gap-1">
+          <input type="number" min="0" step="0.01"
+                 x-model.number="montoPagado"
+                 class="flex-1 border border-slate-300 rounded px-3 py-2 text-right font-mono">
+          <button type="button"
+                  @click="copiarTotalAMonto()"
+                  title="Pago completo: copia el total a cobrar"
+                  class="px-2 text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded border border-emerald-300 whitespace-nowrap">
+            = total
+          </button>
+          <button type="button"
+                  @click="dejarTodoACuenta()"
+                  title="A cuenta: marca el monto en 0 (la venta entera queda como deuda)"
+                  class="px-2 text-xs bg-amber-100 hover:bg-amber-200 text-amber-900 rounded border border-amber-300 whitespace-nowrap">
+            a cuenta
+          </button>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">
+          Si el monto es menor al total, la diferencia se suma a la cuenta corriente del cliente.
+        </p>
+      </div>
+      <div>
+        {# Etiqueta dinámica: cambia entre "Pagada", "Debe X" y "A favor X" #}
+        {# para que no haya confusión sobre qué hacer. #}
+        <label class="block text-slate-700 mb-1">Resultado del cobro</label>
+        <template x-if="quedaEnCuenta() === 0">
+          <div class="px-3 py-2 bg-slate-100 rounded font-bold text-center text-slate-600">
+            ✓ Venta pagada
+          </div>
+        </template>
+        <template x-if="quedaEnCuenta() < 0">
+          <div class="px-3 py-2 bg-red-100 rounded font-bold text-center text-red-800">
+            ⚠ El cliente queda debiendo
+            <div class="font-mono text-lg" x-text="formatARS(Math.abs(quedaEnCuenta()))"></div>
+          </div>
+        </template>
+        <template x-if="quedaEnCuenta() > 0">
+          <div class="px-3 py-2 bg-emerald-100 rounded font-bold text-center text-emerald-800">
+            ✓ Queda a favor del cliente
+            <div class="font-mono text-lg" x-text="formatARS(quedaEnCuenta())"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex items-center justify-end gap-3">
+    <a href="/admin/venta/venta/" class="px-4 py-2 text-slate-600 hover:text-slate-900">Cancelar</a>
+    <button type="button"
+            @click="guardar()"
+            :disabled="guardando"
+            class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+      <span x-show="!guardando">Guardar</span>
+      <span x-show="guardando" x-cloak>Guardando…</span>
+    </button>
+  </div>
+</div>
+
+<script>
+  // CSRF: Django setea la cookie csrftoken cuando el template hace
+  // {% csrf_token %} (o cuando django.middleware.csrf.CsrfViewMiddleware
+  // procesa el GET). La leemos al hacer POST.
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : '';
+  }
+
+  function ventaForm() {
+    return {
+      modo: '{{ modo }}',
+      ventaId: {{ venta_id|default:"null" }},
+      guardando: false,
+      errores: [],
+
+      cliente: {
+        id: null,
+        label: '',
+        query: '',
+        // `saldo` viaja desde el endpoint de búsqueda y se refresca
+        // al seleccionar. En modo editar, lo cargamos vía fetch en
+        // init() porque el contexto inicial no lo trae.
+        saldo: '0',
+        results: [],
+        dropdownAbierto: false,
+      },
+      vendedorId: '{{ vendedor_default_id|default_if_none:"" }}',
+      fechaCompra: '{{ fecha_hoy }}',
+      fechaEntrega: '{{ fecha_hoy }}',
+      descuentoPorcentaje: 0,
+      descuentoMotivo: '',
+      items: [],
+      // Cobro / cuenta corriente. Defaults conservadores: nada de
+      // saldo aplicado, monto pagado por el cliente se autocompleta
+      // al total a cobrar (cuando se confirma la venta) salvo que el
+      // operador lo pise a mano.
+      aplicarSaldo: false,
+      saldoAAplicar: 0,
+      montoPagado: 0,
+
+      init() {
+        const initialNode = document.getElementById('venta-inicial');
+        if (initialNode) {
+          // Modo editar: hidratar el form con el JSON precargado.
+          const data = JSON.parse(initialNode.textContent);
+          this.ventaId = data.id;
+          this.cliente.id = data.cliente_id;
+          this.cliente.label = data.cliente_label;
+          this.cliente.query = data.cliente_label;
+          this.vendedorId = String(data.vendedor_id || '');
+          this.fechaCompra = data.fecha_compra;
+          this.fechaEntrega = data.fecha_entrega;
+          this.descuentoPorcentaje = Number(data.descuento_porcentaje || 0);
+          this.descuentoMotivo = data.descuento_motivo || '';
+          this.items = (data.items || []).map(it => ({
+            id: it.id,
+            articulo_id: it.articulo_id,
+            articulo_label: it.articulo_label,
+            cantidad: Number(it.cantidad),
+            precio: it.precio,
+            descuento_porcentaje: Number(it.descuento_porcentaje || 0),
+            stock_disponible: it.stock_disponible,
+            // En el JSON inicial no traemos el flag — el operador
+            // tendrá que re-buscar el artículo para que se enchufe.
+            // No es bloqueante: al guardar el backend chequea contra
+            // el precio default y crea/actualiza PrecioCliente igual.
+            tiene_precio_pactado: false,
+            precio_default_sin_acuerdo: it.precio,
+            query: it.articulo_label,
+            results: [],
+            dropdownAbierto: false,
+          }));
+          // El JSON inicial no trae saldo (se calcula en vivo). Lo
+          // pedimos por separado para mostrar el badge correctamente.
+          this.refrescarSaldoCliente();
+        } else {
+          // Modo crear: arrancamos con 12 líneas vacías. Replicamos el
+          // comportamiento del admin viejo (`extra = 12` del inline)
+          // porque el operador normalmente carga ventas de muchos
+          // ítems y le pedíamos hacer click en "agregar" 11 veces
+          // estaba molesto. Las líneas vacías no se guardan: el
+          // backend ignora items sin `articulo_id`.
+          for (let i = 0; i < 12; i++) {
+            this.agregarLinea();
+          }
+        }
+      },
+
+      copiarTotalAMonto() {
+        // UX: botón al lado del input "Monto pagado" para autocompletar
+        // con el total a cobrar. Si el operador modificó algo de la
+        // venta y quiere "cobrar todo", un click y listo.
+        this.montoPagado = this.totalACobrar();
+      },
+
+      dejarTodoACuenta() {
+        // UX: la venta entera queda como deuda. El backend, al ver
+        // monto_pagado=0 < total_a_cobrar, crea un MovimientoCuenta
+        // tipo `venta_a_cuenta` por la diferencia. Si el cliente ya
+        // debía, esto SUMA al saldo deudor existente — que es lo
+        // que el operador quiere cuando aprieta el botón rojo.
+        // Si había saldo a favor marcado para aplicar, también lo
+        // destildamos: no tiene sentido aplicar saldo y a la vez
+        // dejarla a cuenta.
+        this.montoPagado = 0;
+        this.aplicarSaldo = false;
+        this.saldoAAplicar = 0;
+      },
+
+      // ---------------- Cliente autocomplete ----------------
+      async buscarClientes() {
+        const q = this.cliente.query.trim();
+        if (q.length < 2) {
+          this.cliente.results = [];
+          this.cliente.dropdownAbierto = false;
+          return;
+        }
+        const r = await fetch(`/venta/api/clientes/buscar/?q=${encodeURIComponent(q)}`, {
+          credentials: 'same-origin',
+        });
+        const data = await r.json();
+        this.cliente.results = data.results || [];
+        this.cliente.dropdownAbierto = true;
+      },
+      seleccionarCliente(c) {
+        this.cliente.id = c.id;
+        this.cliente.label = c.nombre;
+        this.cliente.query = c.nombre;
+        this.cliente.saldo = c.saldo || '0';
+        this.cliente.dropdownAbierto = false;
+        this.cliente.results = [];
+        // Reset de los campos de cobro: si el operador eligió otro
+        // cliente, no queremos arrastrar el saldo aplicado del previo.
+        this.aplicarSaldo = false;
+        this.saldoAAplicar = 0;
+      },
+      limpiarCliente() {
+        this.cliente.id = null;
+        this.cliente.label = '';
+        this.cliente.query = '';
+        this.cliente.saldo = '0';
+        this.cliente.results = [];
+        this.aplicarSaldo = false;
+        this.saldoAAplicar = 0;
+      },
+      async refrescarSaldoCliente() {
+        // En modo editar el contexto inicial no trae el saldo (porque
+        // se carga desde la búsqueda). Hacemos un fetch puntual.
+        if (!this.cliente.id) return;
+        try {
+          const r = await fetch(`/venta/api/clientes/${this.cliente.id}/saldo/`, {
+            credentials: 'same-origin',
+          });
+          const data = await r.json();
+          this.cliente.saldo = data.saldo || '0';
+        } catch (e) {
+          // No bloqueamos la pantalla por un fetch de saldo fallido.
+          console.warn('No se pudo refrescar el saldo:', e);
+        }
+      },
+
+      // ---------------- Artículo autocomplete ----------------
+      async buscarArticulos(idx) {
+        const item = this.items[idx];
+        const q = (item.query || '').trim();
+        if (q.length < 2) {
+          item.results = [];
+          item.dropdownAbierto = false;
+          return;
+        }
+        // Si ya hay cliente seleccionado, mandamos su id para que el
+        // backend devuelva el precio pactado (en vez del minor/mayor).
+        // Cada resultado vendrá con `tiene_precio_pactado` que el
+        // dropdown usa para destacarlo.
+        const clienteParam = this.cliente.id ? `&cliente_id=${this.cliente.id}` : '';
+        const r = await fetch(
+          `/venta/api/articulos/buscar/?q=${encodeURIComponent(q)}&cantidad=${item.cantidad || 1}${clienteParam}`,
+          { credentials: 'same-origin' },
+        );
+        const data = await r.json();
+        item.results = data.results || [];
+        item.dropdownAbierto = true;
+      },
+      seleccionarArticulo(idx, a) {
+        const item = this.items[idx];
+        item.articulo_id = a.id;
+        item.articulo_label = `${a.marca} — ${a.nombre}`;
+        item.query = item.articulo_label;
+        item.precio = a.precio_sugerido;
+        item.stock_disponible = a.stock;
+        // Guardamos los precios crudos para recalcular si cambia la
+        // cantidad sin tener que volver a pegarle al backend.
+        item._precio_minorista = Number(a.precio_minorista);
+        item._precio_mayorista = Number(a.precio_mayorista);
+        item._umbral = Number(a.umbral);
+        // Info del precio pactado: para mostrar el badge debajo del
+        // input y para que `onCantidadCambia` sepa que no debe pisarlo
+        // con el minor/may auto.
+        item.tiene_precio_pactado = !!a.tiene_precio_pactado;
+        item.precio_default_sin_acuerdo = a.precio_default_sin_acuerdo;
+        item.dropdownAbierto = false;
+        item.results = [];
+      },
+      onCantidadCambia(idx) {
+        // Si la cantidad cruza el umbral, autoajustamos el precio al
+        // mayorista (o al minorista si volvió abajo del umbral). El
+        // operador puede pisarlo a mano después: lo respetamos hasta
+        // que vuelva a cambiar la cantidad.
+        //
+        // EXCEPCIÓN: si el artículo tiene precio pactado con este
+        // cliente, NO pisamos — el precio pactado prevalece sobre
+        // la regla minor/may. El operador puede editar a mano igual,
+        // y al guardar se actualiza el PrecioCliente.
+        const item = this.items[idx];
+        if (item.tiene_precio_pactado) return;
+        if (!item._umbral) return;
+        if (item.cantidad >= item._umbral && item._precio_mayorista) {
+          item.precio = String(item._precio_mayorista);
+        } else if (item._precio_minorista) {
+          item.precio = String(item._precio_minorista);
+        }
+      },
+
+      // ---------------- Líneas ----------------
+      agregarLinea() {
+        this.items.push({
+          id: null,
+          articulo_id: null,
+          articulo_label: '',
+          cantidad: 1,
+          precio: '0',
+          descuento_porcentaje: 0,
+          stock_disponible: null,
+          tiene_precio_pactado: false,
+          precio_default_sin_acuerdo: '0',
+          query: '',
+          results: [],
+          dropdownAbierto: false,
+        });
+      },
+      quitarLinea(idx) {
+        // Si la línea ya existía en la DB, marcamos para borrar al
+        // guardar (no la sacamos del array para no perder el id).
+        // Decisión: la sacamos del array y mantenemos los borrados en
+        // un set aparte. Más simple para el render.
+        const it = this.items[idx];
+        if (it.id) {
+          this._borrados = this._borrados || [];
+          this._borrados.push(it.id);
+        }
+        this.items.splice(idx, 1);
+      },
+
+      // ---------------- Cálculos ----------------
+      subtotalLinea(item) {
+        const cant = Number(item.cantidad) || 0;
+        const precio = Number(item.precio) || 0;
+        const desc = Number(item.descuento_porcentaje) || 0;
+        return cant * precio * (1 - desc / 100);
+      },
+      subtotalItems() {
+        return this.items.reduce((acc, it) => acc + this.subtotalLinea(it), 0);
+      },
+      montoDescuentoGlobal() {
+        const desc = Number(this.descuentoPorcentaje) || 0;
+        return this.subtotalItems() * (desc / 100);
+      },
+      totalFinal() {
+        return this.subtotalItems() - this.montoDescuentoGlobal();
+      },
+      saldoAplicado() {
+        // Cantidad efectivamente aplicada del saldo a favor. La
+        // limitamos al min(saldo disponible, total) por defensa: si el
+        // operador escribe 99999 a mano, igual no descontamos más que
+        // lo que tiene a favor o que lo que cuesta la venta.
+        if (!this.aplicarSaldo) return 0;
+        const saldo = Number(this.cliente.saldo) || 0;
+        const pedido = Number(this.saldoAAplicar) || 0;
+        return Math.max(0, Math.min(pedido, saldo, this.totalFinal()));
+      },
+      totalACobrar() {
+        return Math.max(0, this.totalFinal() - this.saldoAplicado());
+      },
+      quedaEnCuenta() {
+        // Positivo: pagó de más, queda saldo a favor del cliente.
+        // Negativo: pagó de menos, queda como deuda en cuenta corriente.
+        return (Number(this.montoPagado) || 0) - this.totalACobrar();
+      },
+      formatARS(n) {
+        const num = Number(n) || 0;
+        return '$' + num.toLocaleString('es-AR', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+      },
+
+      // ---------------- Guardar ----------------
+      async guardar() {
+        this.errores = [];
+        this.guardando = true;
+        try {
+          const items = this.items
+            .filter(it => it.articulo_id)
+            .map(it => ({
+              id: it.id,
+              articulo_id: it.articulo_id,
+              cantidad: Number(it.cantidad),
+              precio: String(it.precio),
+              descuento_porcentaje: String(it.descuento_porcentaje || 0),
+            }));
+          // Agregamos los borrados (líneas que estaban en DB y el
+          // operador removió en pantalla).
+          for (const id of (this._borrados || [])) {
+            items.push({ id, _delete: true });
+          }
+
+          const payload = {
+            id: this.ventaId || null,
+            cliente_id: this.cliente.id,
+            vendedor_id: this.vendedorId ? Number(this.vendedorId) : null,
+            fecha_compra: this.fechaCompra,
+            fecha_entrega: this.fechaEntrega,
+            descuento_porcentaje: String(this.descuentoPorcentaje || 0),
+            descuento_motivo: this.descuentoMotivo || '',
+            // Cobro y cuenta corriente. Solo tienen efecto en creates;
+            // en edits el backend los ignora para no pisar movimientos
+            // ya cargados.
+            aplicar_saldo: this.aplicarSaldo,
+            saldo_a_aplicar: String(this.saldoAplicado()),
+            monto_pagado: String(this.montoPagado || 0),
+            items,
+          };
+
+          const r = await fetch('/venta/api/guardar/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify(payload),
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            this.errores = data.errores || ['Error desconocido al guardar.'];
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+          }
+          // Éxito. Si vinieron warnings (ej. stock insuficiente),
+          // mostramos un alert al operador ANTES de redirigir, así
+          // los lee. Lo hacemos con `alert()` nativo y no banner en
+          // pantalla porque ya nos vamos al listado del admin —
+          // queremos que sea imposible de ignorar.
+          if (data.warnings && data.warnings.length) {
+            const msg = 'La venta se guardó correctamente, pero:\n\n'
+              + data.warnings.map(w => '⚠ ' + w).join('\n\n');
+            alert(msg);
+          }
+          window.location.href = '/admin/venta/venta/';
+        } catch (e) {
+          this.errores = ['Error de red: ' + e.message];
+        } finally {
+          this.guardando = false;
+        }
+      },
+    };
+  }
+</script>
+
+<style>
+  [x-cloak] { display: none !important; }
+</style>
+
+</body>
+</html>

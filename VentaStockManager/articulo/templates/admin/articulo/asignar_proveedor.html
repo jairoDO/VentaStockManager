@@ -1,0 +1,72 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+  <div style="max-width: 700px; margin: 24px auto;">
+    <h1 style="margin-bottom: 8px;">Asignar proveedor</h1>
+    <p style="color: #64748b; margin-bottom: 24px;">
+      Vas a asignar un proveedor a <b>{{ cantidad }} artículo{{ cantidad|pluralize }}</b>.
+      El cambio sobrescribe el proveedor previo (si lo tenían).
+    </p>
+
+    <form method="post" action="">
+      {% csrf_token %}
+
+      {% comment %}
+      Hidden inputs con los IDs seleccionados. Django admin espera
+      que la action mantenga estos para reconstruir el queryset
+      cuando el form se reenvía.
+      {% endcomment %}
+      {% for obj in queryset %}
+        <input type="hidden" name="{{ action_checkbox_name }}" value="{{ obj.pk }}">
+      {% endfor %}
+      <input type="hidden" name="action" value="asignar_proveedor_action">
+      <input type="hidden" name="aplicar" value="1">
+
+      <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-bottom: 16px;">
+        <label for="proveedor_id" style="display: block; font-weight: 600; margin-bottom: 8px;">
+          Proveedor
+        </label>
+        <select name="proveedor_id" id="proveedor_id" required
+                style="width: 100%; padding: 8px 12px; border-radius: 4px; border: 1px solid #cbd5e1; font-size: 14px;">
+          <option value="">— Elegí un proveedor —</option>
+          {% for p in proveedores %}
+            <option value="{{ p.id }}">{{ p.nombre }}</option>
+          {% endfor %}
+          <option value="__sin_proveedor__">(Quitar proveedor: dejar vacío)</option>
+        </select>
+
+        {% if not proveedores %}
+          <p style="color: #c62828; margin-top: 12px; font-size: 13px;">
+            ⚠ No hay proveedores cargados todavía.
+            <a href="{% url 'admin:compra_proveedor_add' %}">Agregar uno</a> y volvé acá.
+          </p>
+        {% endif %}
+      </div>
+
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <a href="{% url 'admin:articulo_articulo_changelist' %}"
+           style="padding: 8px 16px; background: #f1f5f9; color: #475569; border-radius: 4px; text-decoration: none;">
+          Cancelar
+        </a>
+        <button type="submit"
+                {% if not proveedores %}disabled{% endif %}
+                style="padding: 8px 20px; background: #2563eb; color: white; border: none; border-radius: 4px; font-weight: 500; cursor: pointer;">
+          Aplicar a {{ cantidad }} artículo{{ cantidad|pluralize }}
+        </button>
+      </div>
+    </form>
+
+    <details style="margin-top: 32px; color: #64748b;">
+      <summary style="cursor: pointer;">Ver artículos seleccionados</summary>
+      <ul style="margin-top: 8px; font-size: 13px; max-height: 300px; overflow-y: auto;">
+        {% for obj in queryset|slice:":50" %}
+          <li>{{ obj }}</li>
+        {% endfor %}
+        {% if queryset.count > 50 %}
+          <li><i>… y {{ queryset.count|add:"-50" }} más</i></li>
+        {% endif %}
+      </ul>
+    </details>
+  </div>
+{% endblock %}

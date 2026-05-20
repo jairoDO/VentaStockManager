@@ -34,6 +34,7 @@ dj-database-url==2.1.0
 Django==4.2.13
 django-admin-autocomplete-all==0.6.6
 django-admin-material==0.1.0
+django-auditlog==3.0.0
 django-allauth==0.61.1
 django-anymail==10.3
 django-autocomplete-light==3.11.0

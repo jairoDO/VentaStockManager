@@ -81,6 +81,17 @@ INSTALLED_APPS = [
     'compra.apps.CompraConfig',
     'django_q',
     'factura_config.apps.FacturaConfigConfig',
+    # Campañas de WhatsApp. La app habla con un service Node.js
+    # aparte (`wa-bot` en docker-compose) que corre open-wa.
+    'wa_campania.apps.WaCampaniaConfig',
+    # Configuración operativa runtime (singleton). Centraliza
+    # parámetros que el admin necesita poder cambiar sin tocar
+    # variables de entorno (retención de ventas).
+    'configuracion.apps.ConfiguracionConfig',
+    # Audit log: registra create/update/delete sobre los modelos
+    # de negocio (ver venta/apps.py, articulo/apps.py, etc.). Las
+    # entradas se ven en /admin/auditlog/logentry/.
+    'auditlog',
 ]
 
 MIDDLEWARE = [
@@ -92,6 +103,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Captura el request.user para asociar cada cambio en el
+    # AuditLog al usuario que lo hizo. Tiene que ir DESPUÉS del
+    # AuthenticationMiddleware.
+    'auditlog.middleware.AuditlogMiddleware',
 ]
 
 ROOT_URLCONF = 'VentaStockManager.urls'
@@ -182,6 +197,17 @@ MATERIAL_ADMIN_SITE = {
     'TRAY_REVERSE': True,
     'NAVBAR_REVERSE': True,
     'SHOW_COUNTS': True,
+    # Refresh visual: acercar el admin a la paleta de las pantallas
+    # Tailwind (venta nueva, extracto, panel-tareas). Estos colores
+    # del MATERIAL_ADMIN_SITE se inyectan como CSS vars en el :root,
+    # por lo que el header, botones primarios y links cambian sin
+    # tocar templates.
+    #   - bg principal: slate-700 (un gris azulado calmo, no el azul
+    #     material clásico que era muy saturado)
+    #   - hover: blue-600 de Tailwind, mismo del que se usan en los
+    #     botones de la pantalla nueva
+    'MAIN_BG_COLOR': '#334155',
+    'MAIN_HOVER_COLOR': '#2563eb',
 }
 
 
@@ -217,6 +243,41 @@ GOOGLE_SHEET_RANGE = env.str(
     "GOOGLE_SHEET_RANGE",
     default="articulos!A1:Z1500",
 )
+# Sync de borrado (DB → Sheets). OFF por default: si lo prendés en
+# local apuntando al Sheet de producción, un delete accidental ahí
+# es destructivo. En staging/production se prende explícitamente
+# vía variable de entorno.
+# IMPORTANTE: requiere que el service account sea Editor del Sheet,
+# no solo Viewer. Si solo tiene Viewer, el delete falla con 403.
+SHEETS_DELETE_SYNC_ENABLED = env.bool("SHEETS_DELETE_SYNC_ENABLED", default=False)
+
+# Retención de ventas. Las ventas con `fecha_compra` mayor a este
+# umbral se "archivan" (soft archive: se setea `archivada_en`, no se
+# borra nada). El admin las oculta del listado normal salvo que el
+# operador prenda el filtro "Archivadas".
+# Se aplica corriendo `manage.py archivar_ventas_antiguas` (cron).
+VENTAS_RETENCION_MESES = env.int("VENTAS_RETENCION_MESES", default=18)
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp (open-wa)
+# ---------------------------------------------------------------------------
+# URL del service Node.js que corre open-wa. En local apunta al
+# container `wa-bot` de docker-compose. En producción habrá que poner
+# la URL pública/interna del service correspondiente.
+#
+# Si la variable no existe, la app de campañas sigue funcionando
+# (modelos, admin) pero el envío real va a fallar — eso permite usar
+# el admin para preparar campañas aunque el bot esté apagado.
+WHATSAPP_API_URL = env.str("WHATSAPP_API_URL", default="http://wa-bot:3000")
+# Token compartido con el wa-bot. Si está vacío, el wa-bot acepta
+# requests sin auth (modo dev). En producción ambos lados tienen que
+# tener el MISMO valor o el bot va a rechazar todo con 401.
+WHATSAPP_API_TOKEN = env.str("WHATSAPP_API_TOKEN", default="")
+# Rate limit del worker: cuántos segundos esperar entre envíos.
+# Open-WA recomienda al menos 3 segundos; 4-5 es más seguro para no
+# levantar sospechas en WhatsApp.
+WHATSAPP_DELAY_SECONDS = env.int("WHATSAPP_DELAY_SECONDS", default=4)
 
 
 # ---------------------------------------------------------------------------

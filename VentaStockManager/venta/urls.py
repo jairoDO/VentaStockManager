@@ -11,7 +11,31 @@ from venta.views import (
 )
 from .views import ClienteCreateView, ClienteUpdateView
 
+# Vistas de la pantalla nueva de venta (Alpine + JSON APIs). Las
+# importamos aparte para que quede claro al lector qué es "pantalla
+# vieja del admin" vs "pantalla nueva custom".
+from venta.views_nueva import (
+    venta_nueva,
+    venta_editar,
+    api_articulos_buscar,
+    api_clientes_buscar,
+    api_cliente_saldo,
+    api_venta_guardar,
+)
+
 urlpatterns = [
+    # Pantalla nueva de venta (Alpine + Tailwind). Estas rutas tienen
+    # que ir ANTES que las legacy de comprobante para evitar que el
+    # converter <int:venta_id> capture "nueva" — Django lo rechaza
+    # igual por tipo, pero ser explícito acá ahorra debugging si
+    # mañana se agrega una ruta similar.
+    path('venta/nueva/', venta_nueva, name='venta_nueva'),
+    path('venta/<int:id>/editar/', venta_editar, name='venta_editar'),
+    path('venta/api/articulos/buscar/', api_articulos_buscar, name='venta_api_articulos_buscar'),
+    path('venta/api/clientes/buscar/', api_clientes_buscar, name='venta_api_clientes_buscar'),
+    path('venta/api/clientes/<int:cliente_id>/saldo/', api_cliente_saldo, name='venta_api_cliente_saldo'),
+    path('venta/api/guardar/', api_venta_guardar, name='venta_api_guardar'),
+
     re_path(
             r'^venta/(?P<venta_id>\d+)/detalle_de_venta',
             venta_detalle,

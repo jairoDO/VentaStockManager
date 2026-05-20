@@ -38,6 +38,8 @@ urlpatterns = [
     path("", include('articulo.urls')),
     path("", include('venta.urls')),
     path("", include('vendedor.urls')),
+    # Panel de tareas manuales y futuras vistas de la app configuración.
+    path("configuracion/", include('configuracion.urls')),
     path('login/', auth_views.LoginView.as_view(), name='login'),
     path('', RedirectView.as_view(url='/admin/', permanent=True)),  # Redirigir a admin
 ]
