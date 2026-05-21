@@ -1,0 +1,419 @@
+{% comment %}
+Panel de conexión WhatsApp.
+
+UX: una sola pantalla que polea /api/conexion/status/ cada 3 segundos
+y reacciona según el estado:
+
+  - state=CONNECTED → tarjeta verde con número + nombre + botón
+    "Desconectar" (logout, regla del proyecto: confirm en modal).
+
+  - state=UNPAIRED|SCAN_QR|... → tarjeta amarilla con QR. El <img>
+    apunta a /api/conexion/qr.png?_=<timestamp>: el cache-busting
+    hace que cada poll traiga el QR fresco (rotan cada 30s).
+
+  - state=connection_error → tarjeta roja: el wa-bot no responde.
+
+Estilo: Tailwind CDN + Alpine 3. Sin chrome del admin (es una página
+operativa, no de gestión de datos). Mismo patrón que
+configuracion/panel_tareas.html.
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Conexión WhatsApp — VentaStockManager</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>[x-cloak] { display: none !important; }</style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+{% comment %}
+Form vacío para que Django setee la cookie csrftoken (la usamos en
+los POST de logout/restart/test).
+{% endcomment %}
+<form style="display:none">{% csrf_token %}</form>
+
+<div class="max-w-3xl mx-auto p-6" x-data="panelConexion()" x-init="init()">
+
+  {# ---- Header ---- #}
+  <div class="mb-6 flex items-start justify-between gap-3 flex-wrap">
+    <div>
+      <a href="/admin/" class="text-sm text-blue-600 hover:underline">← Volver al admin</a>
+      <h1 class="text-2xl font-bold mt-1 flex items-center gap-2">
+        <span>💬</span>
+        <span>Conexión WhatsApp</span>
+      </h1>
+      <p class="text-sm text-slate-500">
+        Estado de la sesión de WhatsApp del negocio. Si está desconectado,
+        escaneá el QR desde el celular para vincular.
+      </p>
+    </div>
+    <a href="/admin/wa_campania/campania/"
+       class="text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 text-slate-700 font-medium shadow-sm whitespace-nowrap">
+      ➜ Ir a Campañas
+    </a>
+  </div>
+
+  {# ---- Tarjeta principal de estado ---- #}
+  <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mb-4">
+
+    {# Estado: cargando inicial #}
+    <div x-show="!status" class="p-6 text-center text-slate-500">
+      <div class="text-3xl mb-2 animate-pulse">⏳</div>
+      <div>Consultando estado del wa-bot…</div>
+    </div>
+
+    {# Estado: CONECTADO (verde) #}
+    <div x-show="status && status.ok && status.ready" x-cloak class="p-6">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl">✓</div>
+        <div>
+          <div class="font-semibold text-emerald-700">Conectado y listo</div>
+          <div class="text-xs text-slate-500">Podés enviar mensajes desde la app sin más pasos.</div>
+        </div>
+      </div>
+      <div x-show="status.me" class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-3">
+        <div class="text-xs uppercase tracking-wider text-emerald-700 font-medium mb-1">Cuenta conectada</div>
+        <div class="font-semibold text-slate-900" x-text="(status.me && status.me.pushname) || '(sin nombre)'"></div>
+        <div class="text-sm text-slate-600 font-mono" x-text="(status.me && (status.me.id && status.me.id.user || status.me.id)) || ''"></div>
+      </div>
+
+      {# Test de envío #}
+      <details class="mt-4">
+        <summary class="cursor-pointer text-sm text-blue-600 hover:underline">Mandar mensaje de prueba</summary>
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+          <div class="md:col-span-1">
+            <label class="block text-xs text-slate-500 mb-1">Número (con código país)</label>
+            <input type="text" x-model="testPhone"
+                   placeholder="5491155551234"
+                   class="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">Mensaje (opcional)</label>
+            <input type="text" x-model="testMessage"
+                   placeholder="Prueba de conexión…"
+                   class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+          </div>
+        </div>
+        <button type="button"
+                @click="enviarTest()"
+                :disabled="enviandoTest || !testPhone"
+                class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded disabled:opacity-50 disabled:cursor-not-allowed">
+          <span x-show="!enviandoTest">📤 Enviar prueba</span>
+          <span x-show="enviandoTest" x-cloak>Enviando…</span>
+        </button>
+        <div x-show="testResult" x-cloak class="mt-2 text-xs"
+             :class="testResultOk ? 'text-emerald-700' : 'text-red-700'"
+             x-text="testResult"></div>
+      </details>
+
+      <div class="mt-5 pt-4 border-t border-slate-200 flex flex-wrap gap-2">
+        <button type="button" @click="pedirRestart()"
+                class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm rounded border border-slate-300">
+          🔄 Reiniciar bot (sin perder sesión)
+        </button>
+        <button type="button" @click="pedirLogout()"
+                class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded">
+          🚪 Desconectar (pide QR nuevo)
+        </button>
+      </div>
+    </div>
+
+    {# Estado: DESCONECTADO con QR disponible (amarillo) #}
+    <div x-show="status && status.ok && !status.ready" x-cloak class="p-6">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-xl">📱</div>
+        <div>
+          <div class="font-semibold text-amber-700" x-text="estadoLabel(status && status.state)"></div>
+          <div class="text-xs text-slate-500" x-text="estadoAyuda(status && status.state)"></div>
+        </div>
+      </div>
+
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+        <p class="text-sm text-amber-900 mb-2"><b>Cómo vincular WhatsApp:</b></p>
+        <ol class="list-decimal list-inside text-sm text-amber-900 space-y-1">
+          <li>Abrí WhatsApp en el celular.</li>
+          <li>Tocá <b>Configuración → Dispositivos vinculados</b>.</li>
+          <li>Tocá <b>"Vincular un dispositivo"</b>.</li>
+          <li>Escaneá el código de abajo con la cámara.</li>
+        </ol>
+      </div>
+
+      {# QR centrado. El src se cache-bustea con el cycle para captar QR rotados. #}
+      <div class="flex justify-center mb-3">
+        <div class="bg-white p-3 border border-slate-300 rounded-lg inline-block">
+          <template x-if="qrSrc">
+            <img :src="qrSrc" alt="QR de WhatsApp" class="w-64 h-64">
+          </template>
+          <template x-if="!qrSrc">
+            <div class="w-64 h-64 flex items-center justify-center text-slate-400 text-sm">
+              QR aún no generado.<br>Esperá unos segundos…
+            </div>
+          </template>
+        </div>
+      </div>
+      <p class="text-xs text-center text-slate-500 mb-4">
+        El QR se actualiza solo cada pocos segundos. Si no funciona, probá
+        reiniciar el bot abajo.
+      </p>
+
+      <div class="flex flex-wrap gap-2 justify-center">
+        <button type="button" @click="refrescar()"
+                class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm rounded border border-slate-300">
+          🔄 Refrescar
+        </button>
+        <button type="button" @click="pedirRestart()"
+                class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded">
+          ⚡ Reiniciar bot
+        </button>
+      </div>
+    </div>
+
+    {# Estado: ERROR (no se puede contactar al wa-bot) #}
+    <div x-show="status && !status.ok" x-cloak class="p-6">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-10 h-10 rounded-full bg-red-100 text-red-700 flex items-center justify-center text-xl">✗</div>
+        <div>
+          <div class="font-semibold text-red-700">Servicio WhatsApp no responde</div>
+          <div class="text-xs text-slate-500">No pudimos contactar el componente que se conecta a WhatsApp.</div>
+        </div>
+      </div>
+      <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-900">
+        <p class="font-semibold mb-2">Qué probar:</p>
+        <ul class="list-disc list-inside space-y-1">
+          <li>Esperá unos segundos más — el servicio puede estar arrancando.</li>
+          <li>Tocá "Reintentar" abajo para volver a chequear.</li>
+          <li>Si sigue así, contactá a soporte (el servicio interno puede estar caído).</li>
+        </ul>
+        <details class="mt-3">
+          <summary class="cursor-pointer text-xs text-red-700">Ver detalle técnico</summary>
+          <code class="block mt-1 bg-white px-2 py-1 rounded font-mono text-xs" x-text="status && status.error"></code>
+        </details>
+      </div>
+      <button type="button" @click="refrescar()"
+              class="mt-3 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm rounded border border-slate-300">
+        🔄 Reintentar
+      </button>
+    </div>
+  </div>
+
+  <p class="text-xs text-slate-400 text-center">
+    El panel se actualiza solo cada 3 segundos.
+    <span x-show="pollingPaused" class="text-amber-600">(pausado)</span>
+  </p>
+
+  {% include "partials/_modal_alpine.html" %}
+</div>
+
+<script>
+  function getCookie(name) {
+    const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return m ? decodeURIComponent(m[2]) : '';
+  }
+
+  function panelConexion() {
+    return {
+      // Estado de la conexión (lo devuelve /api/conexion/status/).
+      // null = todavía no se consultó (loading inicial).
+      status: null,
+
+      // URL del <img> del QR — incluye cache-bust por timestamp para
+      // que cada refresco traiga el QR último (open-wa los rota).
+      qrSrc: '',
+
+      // Test de envío
+      testPhone: '',
+      testMessage: '',
+      enviandoTest: false,
+      testResult: '',
+      testResultOk: false,
+
+      // Polling
+      pollingPaused: false,
+      _pollTimer: null,
+
+      // Modal (regla del proyecto: nunca confirm/alert nativo).
+      ...modalState(),
+
+      async init() {
+        await this.refrescar();
+        this._scheduleNext();
+      },
+
+      // ---------- Traducción de estados técnicos ----------
+      // El wa-bot expone strings internos del SDK ("CONNECTED",
+      // "UNPAIRED", "client_not_initialized", etc.). El operador no
+      // tiene por qué entender ese vocabulario — los traducimos a
+      // textos en español que comuniquen acción/contexto.
+      estadoLabel(state) {
+        const map = {
+          'CONNECTED': 'Conectado',
+          'UNPAIRED': 'Esperando vinculación',
+          'UNPAIRED_IDLE': 'Esperando vinculación',
+          'UNLAUNCHED': 'Iniciando bot…',
+          'CONFLICT': 'Conflicto con otra sesión',
+          'DEPRECATED_VERSION': 'WhatsApp Web pidió actualización',
+          'OPENING': 'Conectando…',
+          'PAIRING': 'Vinculando dispositivo…',
+          'PROXYBLOCK': 'Conexión bloqueada',
+          'SMB_TOS_BLOCK': 'Bloqueado por política WhatsApp',
+          'TIMEOUT': 'Sin respuesta (timeout)',
+          'TOS_BLOCK': 'Bloqueado por política WhatsApp',
+          'client_not_initialized': 'Iniciando bot… esperá unos segundos',
+          'connection_error': 'Sin conexión con el servicio',
+          'state_error': 'Estado del servicio no disponible',
+          'unauthorized': 'No autorizado (revisar token de servicio)',
+          'unknown': 'Estado desconocido',
+        };
+        return map[state] || 'Esperando vinculación';
+      },
+      estadoAyuda(state) {
+        // Mensaje complementario que explica QUÉ hacer ahora,
+        // según el estado. Más útil que mostrar el código crudo.
+        const map = {
+          'UNPAIRED': 'Escaneá el QR de abajo desde tu celular.',
+          'UNPAIRED_IDLE': 'Escaneá el QR de abajo desde tu celular.',
+          'UNLAUNCHED': 'El servicio está arrancando. En unos segundos aparece el QR.',
+          'client_not_initialized': 'El servicio está arrancando. En unos segundos aparece el QR.',
+          'OPENING': 'Estamos abriendo la conexión, esperá un momento.',
+          'PAIRING': 'Vinculando, ya casi…',
+          'CONFLICT': 'Hay otra sesión abierta en otro lugar. Cerrá esa y volvé.',
+          'DEPRECATED_VERSION': 'Reiniciá el bot abajo — WhatsApp Web actualizó algo.',
+          'TIMEOUT': 'WhatsApp no respondió a tiempo. Probá reiniciar el bot.',
+        };
+        return map[state] || 'Si tarda mucho, probá reiniciar el bot abajo.';
+      },
+
+      _scheduleNext() {
+        if (this._pollTimer) clearTimeout(this._pollTimer);
+        // Si estamos conectados, polea más lento (15s). Si NO,
+        // más rápido (3s) para captar el QR apenas aparece.
+        const delay = (this.status && this.status.ready) ? 15000 : 3000;
+        this._pollTimer = setTimeout(() => this.refrescar(), delay);
+      },
+
+      async refrescar() {
+        if (this.pollingPaused) {
+          this._scheduleNext();
+          return;
+        }
+        try {
+          const r = await fetch('/wa-campania/api/conexion/status/', {
+            credentials: 'same-origin',
+          });
+          this.status = await r.json();
+          // Si no está conectado, actualizar el src del QR con cache-bust.
+          if (this.status && this.status.ok && !this.status.ready) {
+            this.qrSrc = '/wa-campania/api/conexion/qr.png?_=' + Date.now();
+          } else {
+            this.qrSrc = '';
+          }
+        } catch (e) {
+          this.status = {
+            ok: false,
+            ready: false,
+            state: 'fetch_failed',
+            me: null,
+            error: String(e),
+          };
+        } finally {
+          this._scheduleNext();
+        }
+      },
+
+      pedirLogout() {
+        this.abrirModal({
+          tipo: 'confirm',
+          titulo: 'Desconectar WhatsApp',
+          mensaje:
+            '¿Seguro? Va a cerrar la sesión actual. Para volver a usar campañas '
+            + 'vas a tener que escanear un QR nuevo desde el celular.',
+          okLabel: 'Sí, desconectar',
+          cancelLabel: 'No, cancelar',
+          callback: () => this._ejecutarLogout(),
+        });
+      },
+
+      async _ejecutarLogout() {
+        // Pausamos polling porque el bot se va a reiniciar y vamos a
+        // ver respuestas raras por unos segundos.
+        this.pollingPaused = true;
+        try {
+          await fetch('/wa-campania/api/conexion/logout/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRFToken': getCookie('csrftoken') },
+          });
+        } catch (e) { /* ignoramos: el container se reinicia */ }
+        // Esperar 4 segundos y reanudar.
+        setTimeout(() => {
+          this.pollingPaused = false;
+          this.refrescar();
+        }, 4000);
+      },
+
+      pedirRestart() {
+        this.abrirModal({
+          tipo: 'confirm',
+          titulo: 'Reiniciar bot',
+          mensaje:
+            'Reinicia el proceso de WhatsApp sin perder la sesión actual. '
+            + 'Útil si quedó pegado. Demora ~10 segundos en estar disponible de nuevo.',
+          okLabel: 'Sí, reiniciar',
+          cancelLabel: 'No, cancelar',
+          callback: () => this._ejecutarRestart(),
+        });
+      },
+
+      async _ejecutarRestart() {
+        this.pollingPaused = true;
+        try {
+          await fetch('/wa-campania/api/conexion/restart/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRFToken': getCookie('csrftoken') },
+          });
+        } catch (e) { /* ignoramos */ }
+        setTimeout(() => {
+          this.pollingPaused = false;
+          this.refrescar();
+        }, 4000);
+      },
+
+      async enviarTest() {
+        if (!this.testPhone) return;
+        this.enviandoTest = true;
+        this.testResult = '';
+        try {
+          const r = await fetch('/wa-campania/api/conexion/test/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+              phone: this.testPhone.replace(/\D/g, ''),
+              message: this.testMessage || '',
+            }),
+          });
+          const data = await r.json();
+          this.testResultOk = !!data.ok;
+          this.testResult = data.ok
+            ? '✓ Mensaje enviado. Revisá el celular destino.'
+            : '✗ ' + (data.error || 'Error desconocido');
+        } catch (e) {
+          this.testResultOk = false;
+          this.testResult = '✗ Error de red: ' + e.message;
+        } finally {
+          this.enviandoTest = false;
+        }
+      },
+    };
+  }
+</script>
+
+</body>
+</html>

@@ -1,14 +1,17 @@
 {
   "name": "wa-bot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Bridge HTTP entre VentaStockManager (Django) y WhatsApp Web via @open-wa/wa-automate.",
+  "description": "Bridge HTTP entre VentaStockManager (Django) y WhatsApp via @whiskeysockets/baileys. Migrado de @open-wa/wa-automate (discontinuada).",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@open-wa/wa-automate": "^4.74.0",
-    "express": "^4.19.2"
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.18",
+    "express": "^4.19.2",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4"
   }
 }

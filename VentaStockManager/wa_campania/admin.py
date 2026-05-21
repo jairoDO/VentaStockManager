@@ -15,12 +15,14 @@ Diseño:
 from __future__ import annotations
 
 from django.contrib import admin, messages
+from django.db import models as django_models
 from django.utils.html import format_html
 from django_q.tasks import async_task
 
 from wa_campania.audiencia import resolver_clientes
 from wa_campania.models import Campania, EnvioWhatsapp
 from wa_campania.tasks import crear_envios_pendientes
+from wa_campania.widgets import AudienciaFiltroWidget
 
 
 class _SuperuserOnlyMixin:
@@ -47,15 +49,16 @@ class _SuperuserOnlyMixin:
 
 class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
     icon_name = 'campaign'
+    # Compactado de 8 a 5 columnas. Combinamos los 3 contadores
+    # (total/ok/fallidos) en una sola celda visual con códigos de
+    # color, y sacamos `enviada_at` (es ruido para el changelist —
+    # se ve en el detalle). `creado_por` también lo movemos al detalle.
     list_display = (
         'nombre',
-        'estado',
-        'total_envios_display',
-        'enviados_ok_display',
-        'fallidos_display',
-        'creado_por',
+        'estado_badge',
+        'progreso_display',
         'created_at',
-        'enviada_at',
+        'acciones',
     )
     list_filter = ('estado', 'created_at')
     search_fields = ('nombre', 'mensaje')
@@ -67,6 +70,19 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
         'preview_audiencia',
         'resumen_envios',
     )
+    # JSONField default = textarea con JSON crudo (no se entiende).
+    # Reemplazamos con el widget custom de checkboxes/selects.
+    formfield_overrides = {
+        django_models.JSONField: {'widget': AudienciaFiltroWidget},
+    }
+
+    class Media:
+        # Override de CSS para fixear el encimado de labels readonly
+        # con sus valores (bug de material-admin). Ver el archivo
+        # para detalles. Solo aplica en esta página del admin.
+        css = {
+            'all': ('admin/wa_campania/admin_fixes.css',),
+        }
     fieldsets = (
         ('Mensaje', {
             'fields': ('nombre', 'mensaje', 'adjunto'),
@@ -79,11 +95,9 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
         ('Audiencia', {
             'fields': ('audiencia_filtro', 'preview_audiencia'),
             'description': (
-                'JSON con los filtros. Ejemplo: <pre>'
-                '{"compraron_ultimos_dias": 30, "solo_con_whatsapp_valido": true}'
-                '</pre>'
-                'Marcar <code>"todos": true</code> para enviar a TODOS '
-                'los clientes con WhatsApp válido.'
+                'Elegí a quién le llega la campaña. Si tildás "todos", '
+                'los filtros de abajo se ignoran. El opt-in (consentimiento '
+                'del cliente) SIEMPRE se respeta.'
             ),
         }),
         ('Estado', {
@@ -92,29 +106,53 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
     )
     actions = ['accion_enviar_campania']
 
-    def total_envios_display(self, obj):
-        return obj.total_envios
-    total_envios_display.short_description = 'Envíos'
+    # ---------- Columnas custom del changelist ----------
 
-    def enviados_ok_display(self, obj):
-        n = obj.total_enviados_ok
-        if n == 0:
-            return '-'
+    def estado_badge(self, obj):
+        """Badge coloreado según estado, mucho más legible que el texto pelado."""
+        colors = {
+            'borrador': ('#64748b', '#f1f5f9'),
+            'enviando': ('#1d4ed8', '#dbeafe'),
+            'finalizada': ('#047857', '#d1fae5'),
+            'cancelada': ('#b91c1c', '#fee2e2'),
+        }
+        fg, bg = colors.get(obj.estado, ('#475569', '#e2e8f0'))
         return format_html(
-            '<span style="color: #2e7d32; font-weight: bold;">{}</span>',
-            n,
+            '<span style="background:{}; color:{}; padding:3px 10px; '
+            'border-radius:12px; font-size:11px; font-weight:600; '
+            'text-transform:uppercase;">{}</span>',
+            bg, fg, obj.get_estado_display(),
         )
-    enviados_ok_display.short_description = 'Enviados ✓'
+    estado_badge.short_description = 'Estado'
+    estado_badge.admin_order_field = 'estado'
 
-    def fallidos_display(self, obj):
-        n = obj.total_fallidos
-        if n == 0:
-            return '-'
+    def progreso_display(self, obj):
+        """
+        Una sola celda que combina total + OK + fallidos. Usa íconos
+        en lugar de columnas separadas — mismo dato, menos ruido visual.
+        Ejemplo: "✓ 45 · ✗ 3 / 50".
+        """
+        total = obj.total_envios
+        if total == 0:
+            return format_html('<span style="color:#94a3b8;">—</span>')
+        ok = obj.total_enviados_ok
+        ko = obj.total_fallidos
         return format_html(
-            '<span style="color: #c62828; font-weight: bold;">{}</span>',
-            n,
+            '<span style="color:#047857; font-weight:600;">✓ {}</span>'
+            '<span style="color:#94a3b8;"> · </span>'
+            '<span style="color:#b91c1c; font-weight:600;">✗ {}</span>'
+            '<span style="color:#64748b;"> / {}</span>',
+            ok, ko, total,
         )
-    fallidos_display.short_description = 'Fallidos'
+    progreso_display.short_description = 'Envíos'
+
+    def acciones(self, obj):
+        """Atajo visual para abrir la campaña en una nueva pestaña."""
+        return format_html(
+            '<a href="{}/change/" style="color:#2563eb; font-size:12px;">Abrir →</a>',
+            obj.id,
+        )
+    acciones.short_description = ''
 
     def preview_audiencia(self, obj):
         # Mostramos cuántos clientes va a alcanzar la campaña según
@@ -203,6 +241,13 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
 class EnvioWhatsappAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
     """Read-only. Para auditar y debuggear, no para editar."""
     icon_name = 'forward_to_inbox'
+
+    class Media:
+        # Mismo fix de overlap que CampaniaAdmin (todos sus campos son
+        # readonly, así que el bug se ve aún peor acá).
+        css = {
+            'all': ('admin/wa_campania/admin_fixes.css',),
+        }
     list_display = (
         'campania',
         'cliente',

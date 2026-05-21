@@ -1,64 +1,42 @@
 # Imagen para correr el bridge wa-bot.
 #
-# Por qué `node:20-bookworm-slim` y no `alpine`: @open-wa/wa-automate
-# arrastra Puppeteer + Chromium, y Chromium en Alpine requiere builds
-# musl que históricamente no son confiables. Debian slim es 200MB más
-# pesado pero anda sin sorpresas.
+# Stack: Node.js 20 + @whiskeysockets/baileys.
+#
+# Baileys conecta directo al protocolo de WhatsApp por WebSocket +
+# Signal Protocol, sin Puppeteer ni Chromium. Esto resuelve dos
+# problemas que teníamos con la implementación anterior basada en
+# @open-wa/wa-automate:
+#
+#   1. Apple Silicon: no necesitamos rosetta porque no corremos
+#      Chromium x86_64 (ni Chromium en general).
+#   2. Maintenance: open-wa quedó incompatible con el WA Web actual y
+#      ya no se mantiene. Baileys está activo (1.3M downloads/mes).
+#
+# Resultado: imagen mucho más liviana (~200MB → ~80MB), arranque
+# rápido (~5s vs ~30s del browser headless), sin dependencias gráficas.
 FROM node:20-bookworm-slim
 
-# Dependencias del sistema para que Chromium headless arranque dentro
-# del container. Esta lista sale de la documentación oficial de
-# Puppeteer (https://pptr.dev/troubleshooting#chrome-headless-doesnt-launch).
+# Baileys solo necesita Node y libs estándar. Las únicas deps de
+# sistema son las que algunos sub-paquetes (sharp para procesamiento
+# de imágenes en `sendMessage`, etc.) podrían querer. Las dejamos
+# mínimas y agregamos solo si se detecta una falla.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libc6 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgbm1 \
-    libgcc1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libstdc++6 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    lsb-release \
-    wget \
-    xdg-utils \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copiamos solo el package.json primero para aprovechar la cache de
-# layers cuando el code change pero las deps no.
+# layers cuando el code cambia pero las deps no.
 COPY package.json ./
 RUN npm install --omit=dev
 
 COPY index.js ./
 
-# Volume para persistir la sesión de WhatsApp. Si se borra, hay que
-# re-escanear el QR.
+# Volume para persistir credenciales de Baileys (`useMultiFileAuthState`).
+# Si se borra, hay que re-escanear el QR. Sobrevive a restarts del
+# container con la misma sesión.
 VOLUME ["/sessions"]
 
 ENV WA_BOT_PORT=3000

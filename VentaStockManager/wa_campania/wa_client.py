@@ -66,6 +66,155 @@ def is_ready() -> tuple[bool, str]:
         return False, f'connection_error: {exc}'
 
 
+def get_status_detail() -> dict:
+    """
+    Variante "completa" de `is_ready()`. Devuelve TODO el JSON que
+    expone el wa-bot, normalizado al shape que consume el panel admin:
+
+      {
+        ok: True|False,         # si pudimos hablar con el bot
+        ready: bool,
+        state: str,             # CONNECTED, UNPAIRED, ... o reason
+        me: {id, pushname, ...} | None,
+        error: str | None,
+      }
+
+    En caso de fallo de red devuelve `ok=False` con el mensaje en
+    `error` — el caller renderiza "wa-bot no disponible" en la UI.
+    """
+    try:
+        r = requests.get(
+            f'{_base_url()}/status',
+            headers=_auth_headers(),
+            timeout=5,
+        )
+        if r.status_code == 401:
+            return {
+                'ok': False,
+                'ready': False,
+                'state': 'unauthorized',
+                'me': None,
+                'error': 'unauthorized (revisar WHATSAPP_API_TOKEN)',
+            }
+        data = r.json()
+        return {
+            'ok': True,
+            'ready': bool(data.get('ready')),
+            'state': data.get('state') or data.get('reason') or 'unknown',
+            'me': data.get('me'),
+            'error': None,
+        }
+    except requests.RequestException as exc:
+        return {
+            'ok': False,
+            'ready': False,
+            'state': 'connection_error',
+            'me': None,
+            'error': str(exc),
+        }
+
+
+def get_qr_bytes() -> tuple[bytes | None, str]:
+    """
+    Devuelve los bytes PNG del último QR generado, o (None, motivo)
+    si no hay QR disponible (ej. la sesión ya está activa, o el bot
+    todavía no inicializó).
+
+    Pensado para que el panel admin proxy-ee el PNG sin exponer el
+    puerto del wa-bot al browser del operador (más seguro: el browser
+    solo conoce localhost:8000).
+    """
+    try:
+        r = requests.get(
+            f'{_base_url()}/qr',
+            headers=_auth_headers(),
+            timeout=5,
+        )
+        if r.status_code == 204:
+            return None, 'no_qr_available'
+        if r.status_code == 401:
+            return None, 'unauthorized'
+        if r.status_code != 200:
+            return None, f'http_{r.status_code}'
+        return r.content, 'ok'
+    except requests.RequestException as exc:
+        return None, f'connection_error: {exc}'
+
+
+def logout() -> dict:
+    """
+    Pide al wa-bot que cierre la sesión actual. El bot va a hacer
+    `client.logout()` (borra archivos de sesión) + `process.exit(0)`
+    para forzar un arranque limpio. docker-compose lo reinicia
+    gracias a `restart: unless-stopped`.
+
+    Devuelve `{ok: True}` (el container se está reiniciando) o
+    `{ok: False, error}` si no se pudo contactar.
+    """
+    try:
+        r = requests.post(
+            f'{_base_url()}/logout',
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if r.status_code == 401:
+            return {'ok': False, 'error': 'unauthorized'}
+        return r.json()
+    except requests.RequestException as exc:
+        log.warning('wa-bot logout falló: %s', exc)
+        return {'ok': False, 'error': f'connection_error: {exc}'}
+
+
+def restart() -> dict:
+    """
+    Reinicia el proceso del wa-bot SIN borrar la sesión. Útil cuando
+    el bot quedó en un estado raro pero todavía tiene la sesión
+    válida en el volume — al reiniciar se reconecta sin pedir QR.
+    """
+    try:
+        r = requests.post(
+            f'{_base_url()}/restart',
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if r.status_code == 401:
+            return {'ok': False, 'error': 'unauthorized'}
+        return r.json()
+    except requests.RequestException as exc:
+        log.warning('wa-bot restart falló: %s', exc)
+        return {'ok': False, 'error': f'connection_error: {exc}'}
+
+
+def exists(phone: str) -> dict:
+    """
+    Verifica si un número está registrado en WhatsApp. Devuelve:
+      - {'ok': True, 'exists': True, 'jid': '...'}   → existe, podemos mandarle
+      - {'ok': True, 'exists': False}                → NO existe en WhatsApp
+      - {'ok': False, 'error': '...'}                → no pudimos chequear
+
+    Por qué importa: `send_text/send_media` aceptan cualquier número
+    formalmente válido y devuelven `ok: True` aunque WhatsApp NO entregue
+    el mensaje (silently dropped si el JID no está registrado). Este
+    check previo evita "envíos a la nada" — la task de difusión lo usa
+    para marcar el envío como `fallido` con motivo claro.
+    """
+    if not phone:
+        return {'ok': False, 'error': 'phone es requerido'}
+    try:
+        r = requests.get(
+            f'{_base_url()}/exists',
+            params={'phone': phone},
+            headers=_auth_headers(),
+            timeout=10,
+        )
+        if r.status_code == 401:
+            return {'ok': False, 'error': 'unauthorized'}
+        return r.json()
+    except requests.RequestException as exc:
+        log.warning('wa-bot exists() falló: %s', exc)
+        return {'ok': False, 'error': f'connection_error: {exc}'}
+
+
 def send_text(phone: str, message: str) -> dict:
     """
     Manda un mensaje de texto. Devuelve `{ok: True, id}` o

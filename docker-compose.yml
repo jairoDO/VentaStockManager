@@ -95,6 +95,11 @@ services:
   # no siempre lo querés corriendo.
   wa-bot:
     build: ./wa-bot
+    # unless-stopped: el container se reinicia automáticamente si el
+    # proceso muere (típicamente por nuestro POST /logout o /restart,
+    # que hacen process.exit(0) para forzar un arranque limpio de
+    # Chromium). NO se reinicia si vos hacés `docker compose stop`.
+    restart: unless-stopped
     environment:
       WA_BOT_PORT: "3000"
       WA_BOT_SESSION_DIR: /sessions

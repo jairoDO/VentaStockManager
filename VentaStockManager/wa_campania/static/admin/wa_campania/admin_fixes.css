@@ -1,0 +1,62 @@
+/*
+ * Fixes visuales para django-material-admin en el admin de wa_campania.
+ *
+ * Problema #1 — labels encimados con valores readonly:
+ *   El theme usa Materialize.css que pone los labels en
+ *   position:absolute con CSS transforms. Cuando el "input" del campo
+ *   es readonly (texto, no <input>), el valor se renderiza sin
+ *   reservar espacio vertical y termina encimado con su label.
+ *   Esto pasa en `estado`, `creado_por`, `created_at`, `enviada_at`,
+ *   `preview_audiencia`, `resumen_envios`.
+ *
+ *   Fix: forzar margin-top a los valores readonly + bajar el label
+ *   a flujo normal (position:relative) para que ocupe altura real.
+ *
+ * Problema #2 — alineación pelada del fieldset que sigue al widget
+ *   de audiencia:
+ *   Como el widget custom tiene su propio padding/background, el
+ *   `preview_audiencia` que viene justo después queda sin separación.
+ *   Le sumamos margin-top extra al .field-box que lo contiene.
+ */
+
+/* ---- Fix #1: labels encimados con readonly values ---- */
+.form-row .readonly,
+.field-box .readonly,
+.field-box > p,
+.field-box .vTextField,
+fieldset.module .form-row .readonly,
+fieldset.module .field-box .readonly {
+    display: block !important;
+    margin-top: 1.4rem !important;
+    padding-top: 0.2rem;
+    line-height: 1.6;
+    font-size: 14px;
+}
+
+/* En Materialize, los labels son position:absolute y se "flotan" sobre
+   el input. Cuando NO hay input (readonly), no hay nada que reserve
+   espacio y el label cae sobre el valor. Los traemos al flujo normal
+   solo para los .field-box de readonly. */
+.field-box label,
+.form-row label {
+    position: relative !important;
+    transform: none !important;
+    color: #475569 !important;
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    display: block;
+    margin-bottom: 6px;
+}
+
+/* Para que el widget de audiencia (que ya tiene su propio fondo) no
+   se pegue contra el field-box siguiente. */
+.audiencia-filtro-widget {
+    margin-bottom: 16px !important;
+}
+
+/* Espacio entre campos del fieldset Estado (estado, creado_por, etc.) */
+fieldset .form-row + .form-row {
+    margin-top: 12px;
+}
