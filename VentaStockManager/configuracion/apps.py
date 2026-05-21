@@ -14,3 +14,10 @@ class ConfiguracionConfig(AppConfig):
         from auditlog.registry import auditlog
         from configuracion.models import ConfiguracionGeneral
         auditlog.register(ConfiguracionGeneral)
+
+        # Cargar el system check que detecta comentarios {# ... #}
+        # multi-línea (bug recurrente — ya pasó 5 veces). Importar el
+        # módulo es suficiente: el decorador `@checks.register` adentro
+        # del archivo lo deja registrado en Django global.
+        # Ver `configuracion/checks.py` para detalles.
+        from configuracion import checks as _checks  # noqa: F401
