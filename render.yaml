@@ -138,11 +138,18 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
       # ---- WhatsApp (Baileys, servicio `wa-bot` definido más abajo) ----
-      # Render expone los Private Services al resto del Blueprint por
-      # NOMBRE — el DNS interno `wa-bot` resuelve al pserv. NO usar
-      # https ni dominio público: el pserv no tiene URL externa.
+      # IMPORTANTE: Render le agrega un sufijo aleatorio al hostname
+      # interno del pserv (ej. `wa-bot-ekwy`), NO es el nombre literal
+      # `wa-bot`. Eso impide hardcodearlo acá — cada vez que se recrea
+      # el pserv, el sufijo cambia. Por eso queda como `sync: false`:
+      # vos lo seteás a mano en el dashboard con el valor que muestra
+      # el campo "Service Address" del servicio wa-bot (algo tipo
+      # `http://wa-bot-XXXX:3000`).
+      #
+      # NO usar https ni dominio público: el pserv solo es accesible
+      # internamente via el DNS privado del project.
       - key: WHATSAPP_API_URL
-        value: http://wa-bot:3000
+        sync: false
       # Token compartido entre Django ↔ wa-bot. Tiene que matchear con
       # `WA_BOT_TOKEN` del pserv (el bot usa el MISMO token tanto para
       # validar requests entrantes como para autenticar el webhook que
