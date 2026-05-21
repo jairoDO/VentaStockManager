@@ -27,6 +27,7 @@ services:
       pip install -r ../requirements.txt
       python manage.py collectstatic --no-input
       python manage.py migrate --no-input
+      python manage.py ensure_admin
     # honcho start ejecuta `web` y `worker` del Procfile como hijos del
     # mismo proceso. Si uno cae, los dos se reinician (Render relanza
     # el dyno). Reemplaza al servicio "type: worker" separado, que
@@ -63,6 +64,14 @@ services:
         generateValue: true
       - key: DATABASE_URL
         sync: false  # pegar manualmente la de Neon staging
+      # Bootstrap del superuser admin sin necesidad de Render Shell.
+      # El management command `ensure_admin` (corre en buildCommand)
+      # crea o actualiza el usuario "admin" con este password. Si la
+      # var está vacía o sin definir, el command es no-op.
+      # Para resetear el password: cambiás esta var y redeploy.
+      # Opcionales: ADMIN_USERNAME (default "admin"), ADMIN_EMAIL.
+      - key: ADMIN_PASSWORD
+        sync: false
 
   # -------------------------------------------------------------------
   # Web service — PRODUCTION (rama: production)
@@ -91,6 +100,7 @@ services:
       pip install -r ../requirements.txt
       python manage.py collectstatic --no-input
       python manage.py migrate --no-input
+      python manage.py ensure_admin
     # honcho lee VentaStockManager/Procfile y levanta `web` (gunicorn)
     # + `worker` (qcluster) como hijos. Ver Procfile para detalles.
     # `python -m honcho` en vez de `honcho` por el problema de PATH
@@ -120,6 +130,13 @@ services:
         generateValue: true
       - key: DATABASE_URL
         sync: false  # pegar manualmente la de Neon production
+      # Bootstrap del superuser admin sin Render Shell (que requiere
+      # plan superior). El management command `ensure_admin` corre en
+      # buildCommand y crea/actualiza el usuario "admin" usando esta
+      # var. Idempotente: si rotás el password, redeploy y listo.
+      # Opcionales: ADMIN_USERNAME (default "admin"), ADMIN_EMAIL.
+      - key: ADMIN_PASSWORD
+        sync: false
       # ---- WhatsApp (Baileys, servicio `wa-bot` definido más abajo) ----
       # Render expone los Private Services al resto del Blueprint por
       # NOMBRE — el DNS interno `wa-bot` resuelve al pserv. NO usar
