@@ -9,14 +9,47 @@ para evitar que un vendedor cambie la retención por accidente.
 from __future__ import annotations
 
 from django.contrib import admin
+from django.http import HttpResponseRedirect
+from django.urls import reverse
 
-from configuracion.models import ConfiguracionGeneral
+from configuracion.models import ConfiguracionGeneral, get_config
 
 
 class ConfiguracionGeneralAdmin(admin.ModelAdmin):
     icon_name = 'tune'
+
+    class Media:
+        # Reusamos el CSS de wa_campania (mismo bug: labels readonly
+        # encimados en material-admin) + nuestro propio fix para que
+        # los fieldsets se vean como cards modernos consistentes con
+        # las pantallas custom (grilla, lista precios, panel tareas).
+        # Ver `configuracion_admin_polish.css` para los detalles.
+        css = {
+            'all': (
+                'admin/wa_campania/admin_fixes.css',
+                'admin/configuracion/polish.css',
+            ),
+        }
+
+    # Singleton: como hay UNA sola fila, no tiene sentido que el operador
+    # pase por el changelist. `changelist_view` redirige al detalle
+    # (creándolo con defaults si la fila aún no existe).
+    def changelist_view(self, request, extra_context=None):
+        # Asegurar que la fila existe (1ra vez después del bootstrap).
+        # `get_config` hace get_or_create con defaults razonables.
+        cfg = get_config()
+        return HttpResponseRedirect(
+            reverse('admin:configuracion_configuraciongeneral_change', args=[cfg.pk])
+        )
+
     list_display = ('__str__', 'updated_at')
-    readonly_fields = ('updated_at', 'link_panel_tareas')
+    readonly_fields = (
+        'updated_at',
+        'link_panel_tareas',
+        'link_panel_whatsapp',
+        'recordatorios_saldo_ultima_corrida_at',
+        'recordatorios_saldo_preview',
+    )
     fieldsets = (
         ('Retención de ventas', {
             'fields': ('ventas_retencion_meses',),
@@ -27,12 +60,74 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
                 'en la DB y se puede consultar con el filtro "Archivadas".'
             ),
         }),
+        ('Listas de precios', {
+            'fields': ('lista_precios_link_dias',),
+            'description': (
+                'Configuración del link público compartible de las listas '
+                'de precios. El operador puede generar un link por lista, '
+                'con vencimiento automático para que no quede expuesto '
+                'indefinidamente. Cambiar este valor NO afecta a links '
+                'ya emitidos — solo a los que se generen de acá en más.'
+            ),
+        }),
+        ('Integración con Google Sheets', {
+            'fields': ('sheets_sync_habilitado', 'sheets_delete_sync_habilitado'),
+            'description': (
+                '<b>Master switch</b> de la integración con la planilla. '
+                'Si la primera está apagada, la app NO sincroniza con '
+                'Sheets en ninguna dirección — útil mientras migramos '
+                'fuente de verdad de Sheets a la app. Cambiar acá NO '
+                'requiere redeploy, toma efecto inmediato.'
+                '<br><br>'
+                'La opción de "delete sync" controla específicamente el '
+                'borrado bidireccional (cuando borrás un artículo en la '
+                'app, vacía la fila en el Sheet). Requiere que el master '
+                'switch también esté prendido + que el service-account '
+                'sea <b>Editor</b> del Sheet (no Viewer).'
+            ),
+        }),
         ('Tareas automáticas', {
             'fields': ('link_panel_tareas',),
             'description': (
                 'Las tareas asíncronas (archivado, sync de Sheets, etc.) '
                 'corren periódicamente por cron, pero también podés '
                 'dispararlas a mano cuando lo necesites.'
+            ),
+        }),
+        ('WhatsApp', {
+            'fields': ('link_panel_whatsapp', 'auto_responder_habilitado'),
+            'description': (
+                'Conexión con WhatsApp para las campañas. Acá ves si el '
+                'bot está vinculado a una cuenta, escaneás el QR para '
+                'vincular una nueva, o desconectás la actual. Antes de '
+                'cualquier envío masivo conviene pasar por acá y '
+                'confirmar que dice "Conectado".<br><br>'
+                '<b>Auto-responder</b>: si está prendido, cuando un cliente '
+                'le manda al bot palabras como "lista", "precios", "saldo" '
+                'le respondemos automáticamente con su lista o saldo. '
+                'Solo responde a clientes registrados — números desconocidos '
+                'NO reciben respuesta automática (los ves en WhatsApp Web '
+                'normal para contestar a mano).'
+            ),
+        }),
+        ('Recordatorios de saldo deudor', {
+            'fields': (
+                'recordatorios_saldo_habilitado',
+                'recordatorios_saldo_preview',
+                'recordatorios_saldo_dias_inactividad',
+                'recordatorios_saldo_monto_minimo',
+                'recordatorios_saldo_frecuencia_dias',
+                'recordatorios_saldo_template',
+                'recordatorios_saldo_ultima_corrida_at',
+            ),
+            'description': (
+                'Recordatorios automáticos por WhatsApp a clientes con '
+                'saldo deudor + sin compras recientes. El cron corre todos '
+                'los días pero respeta la frecuencia: si ya le mandamos a '
+                'un cliente hace menos de N días, lo saltea. <br><br>'
+                '<b>Preview</b>: muestra cuántos clientes serían contactados '
+                '<i>ahora mismo</i> con la config actual. Es el chequeo más '
+                'rápido para validar antes de prender el master switch.'
             ),
         }),
         ('Estado', {
@@ -51,6 +146,91 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
             '⚙ Abrir panel de tareas</a>'
         )
     link_panel_tareas.short_description = 'Ejecutar tareas a mano'
+
+    def recordatorios_saldo_preview(self, obj):
+        """
+        Muestra cuántos clientes son candidatos AHORA MISMO con la
+        config guardada. Es un read-only field — se calcula cada vez
+        que se abre el form. Devuelve HTML con un número grande, un
+        breakdown y un sample de los primeros 5 nombres.
+
+        OJO: usa la config persistida (`obj`), no los valores del form
+        que el operador puede estar editando. Para ver el efecto de
+        cambios todavía sin guardar, hay que guardar primero. Esto es
+        una limitación aceptable — la alternativa (refresh AJAX en vivo)
+        es mucho más laburo para poco beneficio.
+        """
+        from django.utils.html import format_html
+        from cliente.tasks_recordatorios import _clientes_elegibles
+
+        # Materializo el iterator a una lista cortada a 5 + count total.
+        # `_clientes_elegibles` aplica TODOS los filtros (puede_recibir,
+        # whatsapp, saldo deudor, monto_minimo, inactividad) — la
+        # única condición que NO chequea es "ya recibió uno hace poco"
+        # (esa depende del histórico y la mostramos aparte).
+        candidatos = list(_clientes_elegibles(obj))
+        total = len(candidatos)
+
+        if total == 0:
+            return format_html(
+                '<div style="padding: 12px; background: #f1f5f9; border-radius: 6px;">'
+                '<div style="font-size: 24px; font-weight: 700; color: #475569;">0</div>'
+                '<div style="color: #64748b; font-size: 13px;">candidatos con la config actual.</div>'
+                '<div style="margin-top: 6px; font-size: 12px; color: #94a3b8;">'
+                'Probá bajar "días de inactividad" o "monto mínimo", o destildar opt-in'
+                ' (no recomendado).'
+                '</div>'
+                '</div>'
+            )
+
+        sample_html = ''.join(
+            f'<li style="margin-bottom: 2px;">'
+            f'{c.nombre_completo()} '
+            f'<span style="color: #94a3b8; font-size: 11px;">'
+            f'(saldo ${c.saldo_calc:.2f}, '
+            f'última compra {c.ultima_compra or "—"})'
+            f'</span>'
+            f'</li>'
+            for c in candidatos[:5]
+        )
+        mas_html = ''
+        if total > 5:
+            mas_html = f'<li style="color: #64748b;"><i>… y {total - 5} más</i></li>'
+
+        return format_html(
+            '<div style="padding: 12px; background: #ecfeff; border: 1px solid #67e8f9; '
+            'border-radius: 6px;">'
+            '<div style="font-size: 24px; font-weight: 700; color: #0e7490;">{}</div>'
+            '<div style="color: #155e75; font-size: 13px;">candidatos con la config actual.</div>'
+            '<details style="margin-top: 8px;">'
+            '<summary style="cursor: pointer; color: #0e7490;">Ver muestra</summary>'
+            '<ul style="margin: 6px 0 0 0; padding-left: 20px; font-size: 12px;">{}{}</ul>'
+            '</details>'
+            '<div style="margin-top: 8px; padding: 8px; background: #fefce8; '
+            'border-radius: 4px; font-size: 11px; color: #854d0e;">'
+            '⚠ El "preview" usa los valores <b>guardados</b>. Para ver el efecto de '
+            'cambios en este form, guardalos primero y volvé a entrar.'
+            '</div>'
+            '</div>',
+            total, format_html(sample_html), format_html(mas_html),
+        )
+    recordatorios_saldo_preview.short_description = '👁 Preview de candidatos'
+
+    def link_panel_whatsapp(self, obj):
+        """
+        Link al panel de conexión WhatsApp. Va en `target="_blank"`
+        para que el operador pueda dejarlo abierto en una pestaña
+        mientras escanea el QR desde el celular.
+        """
+        from django.utils.html import format_html
+        return format_html(
+            '<a href="/wa-campania/conexion/" target="_blank" '
+            'style="display: inline-block; padding: 6px 14px; '
+            'background: #16a34a; color: white; border-radius: 4px; '
+            'text-decoration: none; font-weight: 500;">'
+            '💬 Abrir panel WhatsApp</a>'
+        )
+    link_panel_whatsapp.short_description = 'Conexión WhatsApp'
 
     def has_module_permission(self, request):
         return request.user.is_authenticated and request.user.is_superuser

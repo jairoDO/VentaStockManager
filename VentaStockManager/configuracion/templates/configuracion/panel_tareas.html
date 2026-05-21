@@ -16,9 +16,20 @@ sea un dashboard claro y al grano.
   <meta charset="utf-8">
   <title>Panel de tareas — VentaStockManager</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen">
-  <div class="max-w-5xl mx-auto p-6">
+  <div class="max-w-5xl mx-auto p-6"
+       x-data="panelTareas()">
+    {% comment %}
+    Form oculto que se submite cuando el operador confirma el modal.
+    Tiene que estar fuera de la tabla (un form por tarea) y lo
+    manipulamos via referencia desde el botón "Ejecutar ahora".
+    {% endcomment %}
+    <form method="post" action="" x-ref="formEjecutar" class="hidden">
+      {% csrf_token %}
+      <input type="hidden" name="tarea_id" x-bind:value="tareaIdSeleccionada">
+    </form>
 
     <div class="mb-6 flex items-center justify-between">
       <div>
@@ -89,15 +100,19 @@ sea un dashboard claro y al grano.
                 {% endif %}
               </td>
               <td class="px-4 py-4 text-right">
-                <form method="post" action="" class="inline">
-                  {% csrf_token %}
-                  <input type="hidden" name="tarea_id" value="{{ f.id }}">
-                  <button type="submit"
-                          onclick="return confirm('¿Ejecutar &quot;{{ f.titulo|escapejs }}&quot; ahora?');"
-                          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded">
-                    Ejecutar ahora
-                  </button>
-                </form>
+                {% comment %}
+                Cambiamos el form-por-tarea + confirm() nativo por
+                un solo form oculto manipulable (definido arriba).
+                El botón abre el modal Alpine; al confirmar, el
+                modal hace submit del form. Regla del proyecto:
+                NUNCA confirm/alert nativo, ver
+                partials/_modal_alpine.html.
+                {% endcomment %}
+                <button type="button"
+                        @click="pedirConfirmacion('{{ f.id|escapejs }}', '{{ f.titulo|escapejs }}')"
+                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded">
+                  Ejecutar ahora
+                </button>
               </td>
             </tr>
           {% empty %}
@@ -127,6 +142,40 @@ sea un dashboard claro y al grano.
       </p>
     </div>
 
+    {% include "partials/_modal_alpine.html" %}
   </div>
+
+  <script>
+    function panelTareas() {
+      return {
+        ...modalState(),
+
+        // ID de la tarea que va a ejecutarse al confirmar. Lo seteamos
+        // antes de submit-ear el form oculto (que toma el valor via
+        // x-bind:value="tareaIdSeleccionada").
+        tareaIdSeleccionada: '',
+
+        pedirConfirmacion(tareaId, tareaTitulo) {
+          // Regla del proyecto: NUNCA confirm() nativo. Modal Alpine
+          // del partial.
+          this.abrirModal({
+            tipo: 'confirm',
+            titulo: 'Ejecutar tarea',
+            mensaje: `¿Disparar "${tareaTitulo}" ahora?\n\nEl worker la procesa en segundos. Refrescá esta página para ver el resultado.`,
+            okLabel: 'Sí, ejecutar',
+            cancelLabel: 'No, cancelar',
+            callback: () => {
+              this.tareaIdSeleccionada = tareaId;
+              // Esperamos un tick para que Alpine propague el valor
+              // del input antes de hacer submit del form.
+              this.$nextTick(() => {
+                this.$refs.formEjecutar.submit();
+              });
+            },
+          });
+        },
+      };
+    }
+  </script>
 </body>
 </html>

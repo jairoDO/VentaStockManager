@@ -49,9 +49,11 @@ CATALOGO_TAREAS: list[Tarea] = [
         'titulo': 'Sincronizar artículos desde Google Sheets',
         'descripcion': (
             'Descarga la planilla de Google Sheets y actualiza '
-            'precios/stock de los artículos en la DB. Útil después de '
-            'que Osvaldo modificó precios en la planilla y querés '
-            'reflejarlos sin esperar al próximo cron.'
+            'precios/stock de los artículos en la DB. El sync se '
+            'prende/apaga desde el admin: '
+            '/admin/configuracion/configuraciongeneral/ → "Sheets sync '
+            'habilitado". Si está apagado, ejecutar esta tarea devuelve '
+            'un mensaje "sync desactivado" sin hacer nada.'
         ),
         'func_path': 'articulo.task.actualizar_precios_articulos_desde_drive',
         'icono': '📊',
@@ -68,6 +70,34 @@ CATALOGO_TAREAS: list[Tarea] = [
         ),
         'func_path': 'articulo.tasks.aplicar_reglas_categoria_scheduled',
         'icono': '🏷️',
+    },
+    {
+        'id': 'recordatorios_saldo',
+        'titulo': 'Recordatorios de saldo deudor',
+        'descripcion': (
+            'Manda WhatsApp a clientes con saldo deudor + sin compras '
+            'recientes, según la configuración en '
+            '/admin/configuracion/configuraciongeneral/. Respeta la '
+            'frecuencia (no spamea: si ya le mandamos al mismo cliente '
+            'en los últimos N días, lo salta). Si el master switch está '
+            'apagado, devuelve NO-OP. Útil para correrlo a mano después '
+            'de cambiar la config o forzar antes del fin de mes.'
+        ),
+        'func_path': 'cliente.tasks_recordatorios.recordatorios_saldo_scheduled',
+        'icono': '💸',
+    },
+    {
+        'id': 'backfill_whatsapp_number',
+        'titulo': 'Completar WhatsApp desde teléfono',
+        'descripcion': (
+            'Recorre los clientes con `whatsapp_number` vacío e intenta '
+            'derivarlo desde el campo `telefono` (formato AR). Idempotente: '
+            'solo completa vacíos, nunca pisa lo cargado a mano. NO cambia '
+            'el opt-in (puede_recibir_whatsapp). Útil si en la pantalla '
+            '"Difundir" no aparecen clientes que sí tienen teléfono.'
+        ),
+        'func_path': 'cliente.tasks.backfill_whatsapp_number_scheduled',
+        'icono': '📱',
     },
 ]
 

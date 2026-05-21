@@ -1,0 +1,189 @@
+/*
+ * Polish visual del admin de ConfiguracionGeneral.
+ *
+ * Objetivo: que el form del singleton se vea CONSISTENTE con las
+ * pantallas custom Tailwind (grilla, lista precios, panel tareas,
+ * panel WhatsApp). Material-admin renderiza por default un form
+ * apretado con labels chiquitos y poca separación visual entre
+ * fieldsets — apretamos un poco de CSS para que parezca "moderno"
+ * sin reescribir la pantalla a mano.
+ *
+ * Reglas que aplicamos:
+ *   1. Body del admin con bg gris claro (matching `bg-slate-50` de
+ *      las pantallas Tailwind, en vez del blanco puro del material).
+ *   2. Cada fieldset (`<fieldset class="module">`) se renderiza como
+ *      una "card" blanca con sombra suave + borde claro + padding
+ *      generoso. Igual look que las cards de `panel_tareas.html`.
+ *   3. El "h2" del fieldset (título de sección) en uppercase tracking
+ *      con barra de color al costado — similar al "BLOQUE 1/2/3" del
+ *      template de difundir.
+ *   4. Description del fieldset (texto antes de los inputs) con
+ *      fondo azul tenue, como una "nota informativa".
+ *   5. Spacing entre fieldsets aumentado.
+ *
+ * Solo aplica en /admin/configuracion/ porque el CSS se carga via la
+ * Media de ConfiguracionGeneralAdmin. NO afecta otros admins.
+ */
+
+/* Layout general — un poco de aire al body */
+.app-configuracion .content,
+.app-configuracion #content {
+    background-color: #f8fafc;  /* slate-50 */
+}
+
+/* Cada fieldset como card blanca elevada */
+.app-configuracion fieldset.module {
+    background: white;
+    border: 1px solid #e2e8f0;     /* slate-200 */
+    border-radius: 10px;
+    margin: 0 0 18px 0;
+    padding: 0;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06),
+                0 1px 2px rgba(15, 23, 42, 0.04);
+    overflow: hidden;
+}
+
+/* Header de cada card (título del fieldset) */
+.app-configuracion fieldset.module > h2,
+.app-configuracion fieldset.module > .form-row:first-child {
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    margin: 0;
+    padding: 14px 22px;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 12px;
+    font-weight: 700;
+    color: #334155;                 /* slate-700 */
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    line-height: 1.4;
+    position: relative;
+}
+
+/* Barra azul vertical al lado del título — pista visual de sección */
+.app-configuracion fieldset.module > h2::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 12px;
+    bottom: 12px;
+    width: 3px;
+    background: #2563eb;            /* blue-600 — accent color del proyecto */
+    border-radius: 2px;
+}
+
+/* Description del fieldset (cuando existe) como nota tenue azul */
+.app-configuracion fieldset.module .description,
+.app-configuracion fieldset.module > .description {
+    background: #eff6ff;            /* blue-50 */
+    border-left: 3px solid #bfdbfe; /* blue-200 */
+    margin: 16px 22px 4px 22px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: #1e3a8a;                 /* blue-900 */
+    line-height: 1.6;
+    border-radius: 4px;
+}
+
+.app-configuracion fieldset.module .description code {
+    background: white;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
+/* Padding interno del cuerpo del fieldset */
+.app-configuracion fieldset.module > .form-row,
+.app-configuracion fieldset.module > div.form-row {
+    padding-left: 22px;
+    padding-right: 22px;
+}
+
+/* Padding extra para el último row (queda muy pegado al borde sino) */
+.app-configuracion fieldset.module > .form-row:last-child {
+    padding-bottom: 14px;
+}
+
+/* Labels y fields con respiración */
+.app-configuracion fieldset.module .form-row {
+    padding-top: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #f1f5f9;  /* slate-100 */
+}
+
+.app-configuracion fieldset.module .form-row:last-child {
+    border-bottom: none;
+}
+
+/* Inputs un poco más elegantes */
+.app-configuracion fieldset.module input[type="text"],
+.app-configuracion fieldset.module input[type="number"],
+.app-configuracion fieldset.module input[type="email"],
+.app-configuracion fieldset.module textarea,
+.app-configuracion fieldset.module select {
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 6px !important;
+    padding: 8px 12px !important;
+    font-size: 14px !important;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.app-configuracion fieldset.module input[type="text"]:focus,
+.app-configuracion fieldset.module input[type="number"]:focus,
+.app-configuracion fieldset.module textarea:focus,
+.app-configuracion fieldset.module select:focus {
+    border-color: #2563eb !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    outline: none;
+}
+
+/* Help text más liviano */
+.app-configuracion fieldset.module .help,
+.app-configuracion fieldset.module p.help {
+    color: #64748b;                 /* slate-500 */
+    font-size: 12px;
+    line-height: 1.5;
+    margin-top: 4px;
+    font-style: normal;
+}
+
+/* Submit row al fondo de la página, sticky a la derecha */
+.app-configuracion .submit-row {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px 18px;
+    margin-top: 18px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.app-configuracion .submit-row input[type="submit"] {
+    background: #2563eb !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 6px !important;
+    padding: 10px 22px !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.app-configuracion .submit-row input[type="submit"]:hover {
+    background: #1d4ed8 !important;
+}
+
+/* Para los campos readonly que renderizan HTML custom (botones,
+   preview de candidatos): asegurar que tengan espacio propio.
+   Esto refuerza el fix general de admin_fixes.css. */
+.app-configuracion .field-box .readonly {
+    min-height: 28px;
+}
+
+/* Título de la página un poco más prominente */
+.app-configuracion #content h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #0f172a;                 /* slate-900 */
+    margin-bottom: 6px;
+}
