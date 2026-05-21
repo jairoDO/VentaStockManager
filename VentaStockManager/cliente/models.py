@@ -46,6 +46,75 @@ class Cliente(models.Model):
     direccion = models.CharField(max_length=50, default='direccion', blank=True, null=True)
     codigo_interno = models.CharField(max_length=50, default='no-codigo', blank=True, null=True)
 
+    # Cómo prefiere ESTE cliente recibir la lista de precios. Si está
+    # en NULL (default), se aplica el modo global de
+    # `ConfiguracionGeneral.formato_default_lista_precios`. El operador
+    # puede pisar este default por envío particular desde la pantalla
+    # de difundir. Tres niveles en cascada: global → cliente → envío.
+    FORMATO_LISTA_LINK = 'link'
+    FORMATO_LISTA_PDF = 'pdf'
+    FORMATO_LISTA_AMBOS = 'ambos'
+    FORMATO_LISTA_TEXTO = 'texto'
+    FORMATO_LISTA_CHOICES = [
+        (FORMATO_LISTA_TEXTO, 'Solo texto (lista pegada en el mensaje)'),
+        (FORMATO_LISTA_LINK, 'Solo link público (siempre actualizado)'),
+        (FORMATO_LISTA_PDF, 'Solo PDF adjunto (queda en el chat)'),
+        (FORMATO_LISTA_AMBOS, 'Ambos: PDF + link debajo'),
+    ]
+    formato_preferido_lista_precios = models.CharField(
+        max_length=10,
+        choices=FORMATO_LISTA_CHOICES,
+        blank=True,
+        default='',
+        help_text=(
+            'Cómo prefiere este cliente recibir la lista de precios. '
+            'Si queda vacío, se usa el default global de Configuración. '
+            'Si elegís uno acá, se aplica salvo que el operador lo pise '
+            'al difundir.'
+        ),
+    )
+
+    def save(self, *args, **kwargs):
+        # Auto-derivar / normalizar `whatsapp_number`.
+        #
+        # Caso 1 — vacío: derivarlo de `telefono`.
+        #   El operador típicamente carga el cliente con `telefono` y se
+        #   olvida del `whatsapp_number`. Resultado: el cliente no
+        #   aparece en Difundir (filtra por whatsapp_number no vacío).
+        #
+        # Caso 2 — incompleto (formato AR sin código país, ej '3513452496'
+        #   en vez de '5493513452496'): re-normalizar.
+        #   El bot manda al JID `<numero>@s.whatsapp.net`; sin código
+        #   país, ese JID no existe en WhatsApp y el envío se pierde
+        #   silenciosamente (WhatsApp acepta el packet pero no entrega).
+        #   Es el bug que reportó el usuario en mayo 2026 — un cliente
+        #   "jairo Testing" cargado con `3513452496` recibía "enviado"
+        #   en las difusiones pero el mensaje nunca llegaba.
+        #
+        # Esto NO toca `puede_recibir_whatsapp` (opt-in explícito, regla
+        # legal). Solo el formato del número.
+        from .phone_utils import normalizar_telefono_ar
+
+        # Caso 1: vacío + tiene telefono.
+        if not self.whatsapp_number and self.telefono:
+            normalizado = normalizar_telefono_ar(self.telefono)
+            if normalizado:
+                self.whatsapp_number = normalizado
+
+        # Caso 2: tiene whatsapp_number pero le falta código país.
+        # `normalizar_telefono_ar` agrega `549` cuando ve 10 dígitos
+        # (móvil AR sin internacional). Si el resultado difiere del
+        # original Y es más largo, asumimos que estaba incompleto.
+        if self.whatsapp_number:
+            normalizado = normalizar_telefono_ar(self.whatsapp_number)
+            if normalizado and normalizado != self.whatsapp_number:
+                # Defensivo: solo "promovemos" hacia más largo (agregar
+                # código país). Nunca lo recortamos.
+                if len(normalizado) > len(self.whatsapp_number):
+                    self.whatsapp_number = normalizado
+
+        super().save(*args, **kwargs)
+
     def nombre_completo(self):
         return f"{self.nombre} {self.apellido}"
     
@@ -103,6 +172,61 @@ class Cliente(models.Model):
 # ---------------------------------------------------------------------------
 # Cuenta corriente
 # ---------------------------------------------------------------------------
+class RecordatorioSaldoEnviado(models.Model):
+    """
+    Trace de cada recordatorio de saldo deudor mandado por WhatsApp
+    a un cliente. Existe por dos razones:
+
+      1. Auditoría: saber a quién se le mandó y cuándo, para resolver
+         disputas ("nunca me avisaste") o medir efectividad del feature.
+      2. Anti-spam: la task lee la fila más reciente por cliente y
+         compara con `frecuencia_dias` del singleton — si pasó menos
+         tiempo, NO le manda de nuevo.
+
+    Si el feature se apaga y se vuelve a prender, la historia queda.
+    El monto/dias se snapshotean al enviar — son útiles para entender
+    a posteriori qué umbral activó el envío.
+    """
+
+    STATUS_ENVIADO = 'enviado'
+    STATUS_FALLIDO = 'fallido'
+    STATUS_CHOICES = [
+        (STATUS_ENVIADO, 'Enviado'),
+        (STATUS_FALLIDO, 'Fallido'),
+    ]
+
+    cliente = models.ForeignKey(
+        'Cliente',
+        related_name='recordatorios_saldo',
+        on_delete=models.CASCADE,
+    )
+    saldo_snapshot = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='Monto del saldo al momento del recordatorio (negativo = debe).',
+    )
+    dias_desde_ultima_compra = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Días desde la última compra del cliente al momento del recordatorio.',
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_ENVIADO)
+    error_msg = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'recordatorio de saldo enviado'
+        verbose_name_plural = 'recordatorios de saldo enviados'
+        indexes = [
+            # Query típica: WHERE cliente_id=? ORDER BY created_at DESC LIMIT 1
+            models.Index(fields=['cliente', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.cliente.nombre_completo()} · {self.status} · {self.created_at:%d/%m/%Y %H:%M}'
+
+
 class CuentaCliente(models.Model):
     """
     Cuenta corriente de un cliente. Hay una sola por cliente (OneToOne).
