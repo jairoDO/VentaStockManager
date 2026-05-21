@@ -115,6 +115,37 @@
     </div>
   </div>
 
+  {% comment %}
+  Banner de listas de precios vigentes del cliente con descuento > 0.
+  Aparece SOLO si el cliente tiene listas aplicables. El operador
+  decide si aplicar el descuento — no es automático. Si ya hay
+  descuento cargado, pedimos confirmación para reemplazar.
+  {% endcomment %}
+  <div x-show="cliente.id && cliente.listas_activas.length"
+       x-cloak
+       class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-4">
+    <div class="flex items-center gap-2 text-blue-900 font-semibold text-sm mb-2">
+      💡 Este cliente tiene <span x-text="cliente.listas_activas.length"></span>
+      lista<span x-show="cliente.listas_activas.length > 1">s</span> con descuento
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <template x-for="lista in cliente.listas_activas" :key="lista.id">
+        <button type="button"
+                @click="aplicarDescuentoDeLista(lista)"
+                class="px-3 py-2 bg-white border border-blue-300 hover:bg-blue-100 text-blue-900 rounded text-sm flex items-center gap-2 shadow-sm">
+          <span class="font-mono font-bold" x-text="lista.descuento_porcentaje + '%'"></span>
+          <span x-text="lista.nombre"></span>
+          <span class="text-xs text-blue-600" x-text="'(' + lista.n_items + ' items)'"></span>
+        </button>
+      </template>
+      <a :href="'/admin/articulo/listaprecios/?cliente__id__exact=' + cliente.id"
+         target="_blank"
+         class="px-3 py-2 text-xs text-blue-700 hover:underline self-center">
+        Ver todas las listas →
+      </a>
+    </div>
+  </div>
+
   {# --- Tabla de items --- #}
   <div class="bg-white shadow rounded-lg p-6 mb-4">
     <h2 class="text-lg font-semibold mb-3">Artículos</h2>
@@ -152,13 +183,31 @@
                             class="w-full text-left px-3 py-2 border-b border-slate-100 last:border-0">
                       <div class="font-medium flex justify-between items-center">
                         <span x-text="a.marca + ' — ' + a.nombre"></span>
-                        <span x-show="a.tiene_precio_pactado" x-cloak
-                              class="text-xs px-2 py-0.5 bg-amber-200 text-amber-900 rounded font-semibold">
-                          ⭐ pactado $<span x-text="a.precio_sugerido"></span>
-                        </span>
+                        {% comment %}
+                          Badges en el dropdown: SOLO informativos (avisan que
+                          hay acuerdo y/o que el artículo está en la lista del
+                          cliente). El precio que se carga al elegir es el
+                          normal — el operador aplica pactado o lista a mano
+                          con un click en la línea correspondiente.
+                        {% endcomment %}
+                        <div class="flex gap-1 flex-wrap">
+                          <span x-show="a.tiene_precio_pactado" x-cloak
+                                class="text-xs px-2 py-0.5 bg-amber-200 text-amber-900 rounded font-semibold">
+                            ⭐ pactado $<span x-text="a.precio_pactado"></span>
+                          </span>
+                          <span x-show="a.tiene_precio_lista" x-cloak
+                                class="text-xs px-2 py-0.5 bg-indigo-200 text-indigo-900 rounded font-semibold"
+                                :title="'En la lista: ' + a.lista_nombre">
+                            📋 lista $<span x-text="a.precio_lista"></span>
+                          </span>
+                        </div>
                       </div>
                       <div class="text-xs text-slate-500">
-                        cod <span x-text="a.codigo_interno || a.codigo"></span>
+                        {% comment %}
+                          `codigo_interno` autogenerado se oculta deliberadamente — Osvaldo no lo
+                          usa, solo agrega ruido. Mostramos solo el código real del artículo.
+                        {% endcomment %}
+                        cod <span x-text="a.codigo"></span>
                         · stock <span x-text="a.stock"></span>
                         · min $<span x-text="a.precio_minorista"></span>
                         · may $<span x-text="a.precio_mayorista"></span>
@@ -183,12 +232,52 @@
                        x-model="item.precio"
                        :class="item.tiene_precio_pactado ? 'border-amber-400' : 'border-slate-300'"
                        class="w-28 border rounded px-2 py-1 text-right">
-                <div x-show="item.tiene_precio_pactado" x-cloak
-                     class="text-[10px] text-amber-700 mt-1 leading-tight">
-                  ⭐ pactado
-                  <span x-show="Number(item.precio_default_sin_acuerdo) !== Number(item.precio)" x-cloak>
-                    (lista $<span x-text="item.precio_default_sin_acuerdo"></span>)
-                  </span>
+                {% comment %}
+                  Display de pactado INVERTIDO (pedido del usuario 2026-05):
+                  antes: precio pactado se cargaba en el input y el precio "lista" iba debajo.
+                  ahora: precio NORMAL va al input y el pactado va debajo como
+                         label/badge clickeable. Click → reemplaza el valor del input
+                         por el pactado (y marca la línea como `pactado_aplicado` para
+                         que `onCantidadCambia` no lo pise al cambiar la cantidad).
+                  Una segunda interacción (click en "volver al normal") restaura el
+                  precio según la cantidad — útil si Osvaldo se equivocó.
+                {% endcomment %}
+                <div x-show="item.tiene_precio_pactado" x-cloak class="text-[10px] mt-1 leading-tight">
+                  <button type="button" @click="aplicarPactado(idx)"
+                          x-show="!item.pactado_aplicado"
+                          :title="'Click para aplicar el precio pactado: $' + item.precio_pactado"
+                          class="text-amber-700 underline decoration-dotted hover:text-amber-900 hover:bg-amber-50 rounded px-1 transition">
+                    ⭐ Pactado $<span x-text="item.precio_pactado"></span> · click para aplicar
+                  </button>
+                  <button type="button" @click="quitarPactado(idx)"
+                          x-show="item.pactado_aplicado" x-cloak
+                          title="Click para volver al precio normal (según cantidad)"
+                          class="text-emerald-700 font-semibold hover:text-emerald-900 hover:bg-emerald-50 rounded px-1 transition">
+                    ✓ Pactado aplicado · volver al normal
+                  </button>
+                </div>
+                {% comment %}
+                  Badge de precio de LISTA del cliente. Aparece si el
+                  artículo está en alguna ListaPrecios asociada al
+                  cliente (la más reciente). Mismo patrón que pactado:
+                  el operador clickea para aplicarlo, no se auto-carga.
+                  Es paralelo al pactado: pueden coexistir ambos badges
+                  para un mismo artículo si el cliente tiene tanto
+                  acuerdo individual como lista.
+                {% endcomment %}
+                <div x-show="item.tiene_precio_lista" x-cloak class="text-[10px] mt-1 leading-tight">
+                  <button type="button" @click="aplicarPrecioLista(idx)"
+                          x-show="!item.lista_aplicada"
+                          :title="'Click para aplicar el precio de la lista: $' + item.precio_lista"
+                          class="text-indigo-700 underline decoration-dotted hover:text-indigo-900 hover:bg-indigo-50 rounded px-1 transition">
+                    📋 Lista (<span x-text="item.lista_nombre"></span>) $<span x-text="item.precio_lista"></span> · click para aplicar
+                  </button>
+                  <button type="button" @click="quitarPrecioLista(idx)"
+                          x-show="item.lista_aplicada" x-cloak
+                          title="Click para volver al precio normal (según cantidad)"
+                          class="text-emerald-700 font-semibold hover:text-emerald-900 hover:bg-emerald-50 rounded px-1 transition">
+                    ✓ Lista aplicada · volver al normal
+                  </button>
                 </div>
               </td>
               <td class="py-2 pr-3 text-right">
@@ -371,6 +460,8 @@
       <span x-show="guardando" x-cloak>Guardando…</span>
     </button>
   </div>
+
+  {% include "partials/_modal_alpine.html" %}
 </div>
 
 <script>
@@ -389,6 +480,11 @@
       guardando: false,
       errores: [],
 
+      // Modal Alpine — mergeamos el state del partial
+      // (partials/_modal_alpine.html). Ver REGLA del proyecto:
+      // NUNCA usar alert/confirm/prompt, siempre `this.abrirModal(...)`.
+      ...modalState(),
+
       cliente: {
         id: null,
         label: '',
@@ -397,6 +493,10 @@
         // al seleccionar. En modo editar, lo cargamos vía fetch en
         // init() porque el contexto inicial no lo trae.
         saldo: '0',
+        // Listas de precios del cliente con descuento > 0. El banner
+        // de "aplicar descuento de lista" las muestra como botones.
+        // Se llena en `refrescarSaldoCliente`.
+        listas_activas: [],
         results: [],
         dropdownAbierto: false,
       },
@@ -436,11 +536,18 @@
             precio: it.precio,
             descuento_porcentaje: Number(it.descuento_porcentaje || 0),
             stock_disponible: it.stock_disponible,
-            // En el JSON inicial no traemos el flag — el operador
-            // tendrá que re-buscar el artículo para que se enchufe.
-            // No es bloqueante: al guardar el backend chequea contra
-            // el precio default y crea/actualiza PrecioCliente igual.
+            // En el JSON inicial no traemos los flags de pactado/lista —
+            // el operador tendrá que re-buscar el artículo si quiere ver
+            // los badges clickeables. No es bloqueante: al guardar el
+            // backend chequea contra el precio default y crea/actualiza
+            // PrecioCliente igual.
             tiene_precio_pactado: false,
+            precio_pactado: '',
+            pactado_aplicado: false,
+            tiene_precio_lista: false,
+            precio_lista: '',
+            lista_nombre: '',
+            lista_aplicada: false,
             precio_default_sin_acuerdo: it.precio,
             query: it.articulo_label,
             results: [],
@@ -483,6 +590,10 @@
         this.saldoAAplicar = 0;
       },
 
+      // Las funciones del modal (abrirModal, confirmarModal,
+      // cancelarModal) vienen del spread `...modalState()` arriba.
+      // Definirlas en partials/_modal_alpine.html.
+
       // ---------------- Cliente autocomplete ----------------
       async buscarClientes() {
         const q = this.cliente.query.trim();
@@ -503,12 +614,16 @@
         this.cliente.label = c.nombre;
         this.cliente.query = c.nombre;
         this.cliente.saldo = c.saldo || '0';
+        this.cliente.listas_activas = [];  // se completa en refrescarSaldoCliente
         this.cliente.dropdownAbierto = false;
         this.cliente.results = [];
         // Reset de los campos de cobro: si el operador eligió otro
         // cliente, no queremos arrastrar el saldo aplicado del previo.
         this.aplicarSaldo = false;
         this.saldoAAplicar = 0;
+        // Refrescamos saldo + listas_activas en un solo fetch al
+        // endpoint /saldo/. Más simple que dos requests.
+        this.refrescarSaldoCliente();
       },
       limpiarCliente() {
         this.cliente.id = null;
@@ -522,6 +637,9 @@
       async refrescarSaldoCliente() {
         // En modo editar el contexto inicial no trae el saldo (porque
         // se carga desde la búsqueda). Hacemos un fetch puntual.
+        // Aprovechamos para traer también las listas activas del
+        // cliente (con descuento), que el banner ofrece aplicar a
+        // la venta actual.
         if (!this.cliente.id) return;
         try {
           const r = await fetch(`/venta/api/clientes/${this.cliente.id}/saldo/`, {
@@ -529,9 +647,36 @@
           });
           const data = await r.json();
           this.cliente.saldo = data.saldo || '0';
+          this.cliente.listas_activas = data.listas_activas || [];
         } catch (e) {
           // No bloqueamos la pantalla por un fetch de saldo fallido.
           console.warn('No se pudo refrescar el saldo:', e);
+        }
+      },
+
+      aplicarDescuentoDeLista(lista) {
+        // Setea descuento global de la venta con el de la lista.
+        // Si ya había uno cargado, pedimos confirmación con modal
+        // para no pisarlo silenciosamente.
+        const yaHabiaDescuento = Number(this.descuentoPorcentaje) > 0;
+        const aplicar = () => {
+          this.descuentoPorcentaje = lista.descuento_porcentaje;
+          this.descuentoMotivo = lista.descuento_motivo
+            ? `${lista.nombre} (${lista.descuento_motivo})`
+            : lista.nombre;
+        };
+        if (yaHabiaDescuento) {
+          this.abrirModal({
+            tipo: 'confirm',
+            titulo: 'Pisar el descuento actual',
+            mensaje: `Ya hay un descuento del ${this.descuentoPorcentaje}% cargado. `
+                   + `¿Reemplazarlo por el ${lista.descuento_porcentaje}% de "${lista.nombre}"?`,
+            okLabel: 'Sí, reemplazar',
+            cancelLabel: 'No, mantener',
+            callback: aplicar,
+          });
+        } else {
+          aplicar();
         }
       },
 
@@ -562,6 +707,8 @@
         item.articulo_id = a.id;
         item.articulo_label = `${a.marca} — ${a.nombre}`;
         item.query = item.articulo_label;
+        // precio_sugerido ahora SIEMPRE es el normal (sin pactado) — el
+        // backend cambió en 2026-05. El pactado se aplica con click.
         item.precio = a.precio_sugerido;
         item.stock_disponible = a.stock;
         // Guardamos los precios crudos para recalcular si cambia la
@@ -569,13 +716,74 @@
         item._precio_minorista = Number(a.precio_minorista);
         item._precio_mayorista = Number(a.precio_mayorista);
         item._umbral = Number(a.umbral);
-        // Info del precio pactado: para mostrar el badge debajo del
-        // input y para que `onCantidadCambia` sepa que no debe pisarlo
-        // con el minor/may auto.
+        // Info del precio pactado: el badge se renderiza abajo del input.
+        // Mientras `pactado_aplicado` esté en false, el precio del input
+        // es el normal y `onCantidadCambia` lo va ajustando libremente.
         item.tiene_precio_pactado = !!a.tiene_precio_pactado;
+        item.precio_pactado = a.precio_pactado || '';
+        item.pactado_aplicado = false;
+        // Info del precio de LISTA (si el cliente tiene lista y el
+        // artículo está en ella). Misma filosofía que pactado: badge
+        // clickeable, NO auto-carga.
+        item.tiene_precio_lista = !!a.tiene_precio_lista;
+        item.precio_lista = a.precio_lista || '';
+        item.lista_nombre = a.lista_nombre || '';
+        item.lista_aplicada = false;
         item.precio_default_sin_acuerdo = a.precio_default_sin_acuerdo;
         item.dropdownAbierto = false;
         item.results = [];
+      },
+      aplicarPactado(idx) {
+        // Click en el badge "⭐ Pactado $X · click para aplicar".
+        // Pisa el precio del input con el pactado y deja una marca
+        // para que `onCantidadCambia` NO lo vuelva a pisar al cambiar
+        // la cantidad (sino se pierde el acuerdo con cada cambio).
+        const item = this.items[idx];
+        if (!item.tiene_precio_pactado || !item.precio_pactado) return;
+        item.precio = item.precio_pactado;
+        item.pactado_aplicado = true;
+        // Si la lista estaba aplicada, la des-aplicamos: solo UNA
+        // sugerencia activa a la vez (sino el operador no sabe cuál
+        // es el "estado" del input).
+        item.lista_aplicada = false;
+      },
+      quitarPactado(idx) {
+        // Vuelve al precio normal según la cantidad actual. Útil si
+        // Osvaldo clickeó por error o quiere recalcular.
+        const item = this.items[idx];
+        item.pactado_aplicado = false;
+        // Reusamos la lógica de onCantidadCambia para que respete el
+        // umbral mayorista.
+        this._recalcularPrecioNormal(idx);
+      },
+      aplicarPrecioLista(idx) {
+        // Click en el badge "📋 Lista $X · click para aplicar".
+        // Mismo patrón que aplicarPactado: pisa el precio y marca la
+        // línea para que `onCantidadCambia` no la pise.
+        const item = this.items[idx];
+        if (!item.tiene_precio_lista || !item.precio_lista) return;
+        item.precio = item.precio_lista;
+        item.lista_aplicada = true;
+        // Mutuamente excluyente con pactado_aplicado para que el
+        // operador no se confunda viendo dos "✓ aplicado" a la vez.
+        item.pactado_aplicado = false;
+      },
+      quitarPrecioLista(idx) {
+        const item = this.items[idx];
+        item.lista_aplicada = false;
+        this._recalcularPrecioNormal(idx);
+      },
+      _recalcularPrecioNormal(idx) {
+        // Ajusta `item.precio` al normal (mayorista si pasó umbral,
+        // minorista si no). NO respeta pactado_aplicado: el caller es
+        // responsable de chequearlo antes.
+        const item = this.items[idx];
+        if (!item._umbral) return;
+        if (item.cantidad >= item._umbral && item._precio_mayorista) {
+          item.precio = String(item._precio_mayorista);
+        } else if (item._precio_minorista) {
+          item.precio = String(item._precio_minorista);
+        }
       },
       onCantidadCambia(idx) {
         // Si la cantidad cruza el umbral, autoajustamos el precio al
@@ -583,18 +791,12 @@
         // operador puede pisarlo a mano después: lo respetamos hasta
         // que vuelva a cambiar la cantidad.
         //
-        // EXCEPCIÓN: si el artículo tiene precio pactado con este
-        // cliente, NO pisamos — el precio pactado prevalece sobre
-        // la regla minor/may. El operador puede editar a mano igual,
-        // y al guardar se actualiza el PrecioCliente.
+        // EXCEPCIONES: si el operador aplicó pactado O lista, NO
+        // pisamos — el acuerdo/lista prevalece sobre la regla minor/may
+        // hasta que el operador decida volver al normal.
         const item = this.items[idx];
-        if (item.tiene_precio_pactado) return;
-        if (!item._umbral) return;
-        if (item.cantidad >= item._umbral && item._precio_mayorista) {
-          item.precio = String(item._precio_mayorista);
-        } else if (item._precio_minorista) {
-          item.precio = String(item._precio_minorista);
-        }
+        if (item.pactado_aplicado || item.lista_aplicada) return;
+        this._recalcularPrecioNormal(idx);
       },
 
       // ---------------- Líneas ----------------
@@ -608,6 +810,12 @@
           descuento_porcentaje: 0,
           stock_disponible: null,
           tiene_precio_pactado: false,
+          precio_pactado: '',
+          pactado_aplicado: false,
+          tiene_precio_lista: false,
+          precio_lista: '',
+          lista_nombre: '',
+          lista_aplicada: false,
           precio_default_sin_acuerdo: '0',
           query: '',
           results: [],
@@ -723,16 +931,22 @@
             return;
           }
           // Éxito. Si vinieron warnings (ej. stock insuficiente),
-          // mostramos un alert al operador ANTES de redirigir, así
-          // los lee. Lo hacemos con `alert()` nativo y no banner en
-          // pantalla porque ya nos vamos al listado del admin —
-          // queremos que sea imposible de ignorar.
+          // mostramos un modal Alpine ANTES de redirigir. Imposible
+          // de ignorar: el operador tiene que tocar "Entendido" para
+          // continuar. Sin el modal el redirect haría que los
+          // warnings pasen sin que nadie los lea.
           if (data.warnings && data.warnings.length) {
-            const msg = 'La venta se guardó correctamente, pero:\n\n'
-              + data.warnings.map(w => '⚠ ' + w).join('\n\n');
-            alert(msg);
+            this.abrirModal({
+              tipo: 'warning',
+              titulo: 'La venta se guardó, pero hay avisos',
+              mensaje: 'Revisá lo siguiente:',
+              lista: data.warnings,
+              okLabel: 'Entendido, ir al listado',
+              callback: () => { window.location.href = '/admin/venta/venta/'; },
+            });
+          } else {
+            window.location.href = '/admin/venta/venta/';
           }
-          window.location.href = '/admin/venta/venta/';
         } catch (e) {
           this.errores = ['Error de red: ' + e.message];
         } finally {

@@ -107,23 +107,45 @@ def _total_venta(venta: Venta) -> Decimal:
     return _calc(venta)
 
 
-def _articulo_to_dict(articulo: Articulo, cantidad: int, pactado: PrecioCliente | None = None) -> dict:
+def _articulo_to_dict(
+    articulo: Articulo,
+    cantidad: int,
+    pactado: PrecioCliente | None = None,
+    precio_lista: dict | None = None,
+) -> dict:
     """
     Serializa un Articulo para el JSON del autocomplete.
 
-    Si viene `pactado` (porque el caller pasó cliente_id y existe un
-    PrecioCliente para ese par cliente+artículo), el `precio_sugerido`
-    devuelto es el precio pactado en vez del minorista/mayorista, y
-    se incluye `tiene_precio_pactado=True` con el precio de referencia
-    para que el front muestre el badge y/o el "antes/ahora".
+    Tres precios coexisten en la respuesta (todos como string para no
+    perder decimales en el round-trip a JS):
+
+      - `precio_sugerido`: lo que se carga en el input al elegir. Es
+        SIEMPRE el precio normal (minorista/mayorista según cantidad).
+        Pactado y lista NO auto-cargan — son badges clickeables.
+
+      - `precio_pactado` + `tiene_precio_pactado`: si hay PrecioCliente
+        para este par (cliente, artículo). El operador puede hacer
+        click en el badge para pisar el sugerido.
+
+      - `precio_lista` + `lista_nombre`: si el artículo está en alguna
+        ListaPrecios del cliente. Es el precio EFECTIVO ya con el
+        ajuste de la lista aplicado. Mismo patrón: badge clickeable.
+
+    Si coinciden pactado + lista, el front los muestra ambos (badges
+    distintos) y el operador elige cuál aplicar.
     """
     precio_default = _precio_sugerido(articulo, cantidad)
-    if pactado is not None:
-        precio_sugerido = pactado.precio_unitario
-        tiene_pactado = True
-    else:
-        precio_sugerido = precio_default
-        tiene_pactado = False
+    precio_sugerido = precio_default
+    tiene_pactado = pactado is not None
+    precio_pactado_val = str(pactado.precio_unitario) if pactado is not None else ''
+
+    # Info del precio de lista (si existe). precio_lista viene
+    # pre-calculado desde el caller con el ajuste aplicado.
+    precio_lista_val = ''
+    lista_nombre_val = ''
+    if precio_lista:
+        precio_lista_val = str(precio_lista.get('precio', ''))
+        lista_nombre_val = precio_lista.get('lista_nombre', '')
 
     return {
         'id': articulo.id,
@@ -140,10 +162,15 @@ def _articulo_to_dict(articulo: Articulo, cantidad: int, pactado: PrecioCliente 
         'umbral': articulo.cantidad_por_mayor or 0,
         'stock': articulo.stock,
         'precio_sugerido': str(precio_sugerido),
-        # Precio pactado: si lo hay, el front muestra una insignia y
-        # `precio_default_sin_acuerdo` permite calcular el % de
-        # descuento implícito ("antes $100, ahora $80, -20%").
+        # Pactado: badge clickeable, NO auto-carga.
         'tiene_precio_pactado': tiene_pactado,
+        'precio_pactado': precio_pactado_val,
+        # Lista de precios del cliente: badge clickeable, NO auto-carga.
+        'tiene_precio_lista': bool(precio_lista),
+        'precio_lista': precio_lista_val,
+        'lista_nombre': lista_nombre_val,
+        # Legacy: el front viejo usaba esto para "lista $X" — ahora
+        # coincide con precio_sugerido. Mantengo el nombre por compat.
         'precio_default_sin_acuerdo': str(precio_default),
     }
 
@@ -208,9 +235,77 @@ def api_articulos_buscar(request):
         )
         pactados_map = {p.articulo_id: p for p in pactados_qs}
 
+    # Además del pactado, buscamos si el cliente tiene listas de
+    # precios y si alguno de los artículos del result set está en
+    # esas listas. Si lo está, calculamos el precio efectivo (con el
+    # ajuste de la lista) y lo serializamos como un badge clickeable
+    # paralelo al pactado.
+    #
+    # Decisión: si el cliente tiene MÚLTIPLES listas, usamos la más
+    # reciente (`updated_at` desc). Razón: lo más probable es que la
+    # última editada sea la "vigente". Si en el futuro queremos elegir
+    # entre varias, el back ya tiene la info — solo cambia la UI.
+    lista_info_map: dict[int, dict] = {}
+    if cliente_id and articulos:
+        try:
+            from articulo.models import ListaPrecios, ListaPreciosItem
+            from articulo.precios import precio_efectivo, cargar_precios_pactados
+
+            lista_actual = (
+                ListaPrecios.objects
+                .filter(cliente_id=cliente_id)
+                .order_by('-updated_at')
+                .first()
+            )
+            if lista_actual:
+                articulo_ids = [a.id for a in articulos]
+                items_en_lista = ListaPreciosItem.objects.filter(
+                    lista=lista_actual,
+                    articulo_id__in=articulo_ids,
+                ).values_list('articulo_id', flat=True)
+                articulos_en_lista_ids = set(items_en_lista)
+                if articulos_en_lista_ids:
+                    # Calculamos el precio efectivo de cada artículo
+                    # que está en la lista — aplicando el ajuste de
+                    # la lista (descuento o aumento). Reusamos el
+                    # helper canónico `precio_efectivo` (mismo que el
+                    # PDF y la pantalla de listas).
+                    cliente_obj = Cliente.objects.get(pk=cliente_id)
+                    articulos_en_lista = [
+                        a for a in articulos if a.id in articulos_en_lista_ids
+                    ]
+                    pact_map_para_lista = cargar_precios_pactados(
+                        cliente_obj, articulos_en_lista,
+                    )
+                    for a in articulos_en_lista:
+                        p = precio_efectivo(
+                            a,
+                            cliente_obj,
+                            descuento_lista=lista_actual.descuento_porcentaje,
+                            precios_pactados_map=pact_map_para_lista,
+                            tipo_ajuste=lista_actual.tipo_ajuste,
+                        )
+                        lista_info_map[a.id] = {
+                            'precio': p,
+                            'lista_nombre': lista_actual.nombre,
+                        }
+        except Exception:
+            # Defensivo: si articulo no está instalado o algo falla en
+            # la integración, no rompemos el autocomplete — solo
+            # perdemos el badge de lista para esta búsqueda.
+            import logging
+            logging.getLogger(__name__).exception(
+                'Cargar precio de lista para autocomplete falló'
+            )
+
     return JsonResponse({
         'results': [
-            _articulo_to_dict(a, cantidad, pactados_map.get(a.id))
+            _articulo_to_dict(
+                a,
+                cantidad,
+                pactados_map.get(a.id),
+                lista_info_map.get(a.id),
+            )
             for a in articulos
         ],
     })
@@ -251,16 +346,55 @@ def api_clientes_buscar(request):
     return JsonResponse({'results': results})
 
 
+def _listas_activas_de_cliente(cliente, max_resultados: int = 3) -> list[dict]:
+    """
+    Devuelve hasta `max_resultados` listas de precios del cliente que
+    sean "aplicables" a una venta. Criterio:
+      - Tienen al menos 1 item (sino no es realmente una lista).
+      - Tienen un `descuento_porcentaje > 0` (sino no aporta nada
+        al flujo de venta — el operador no necesita aplicar 0%).
+      - Ordenadas por updated_at desc (las más nuevas arriba).
+
+    El front muestra estas listas como botones en un banner; el
+    operador decide cuál aplicar (no automático).
+    """
+    from articulo.models import ListaPrecios
+    from django.db.models import Count
+
+    qs = (
+        ListaPrecios.objects
+        .filter(cliente=cliente, descuento_porcentaje__gt=0)
+        .annotate(_n_items=Count('items'))
+        .filter(_n_items__gt=0)
+        .order_by('-updated_at')[:max_resultados]
+    )
+    return [
+        {
+            'id': l.id,
+            'nombre': l.nombre,
+            'descuento_porcentaje': str(l.descuento_porcentaje),
+            'descuento_motivo': l.descuento_motivo,
+            'n_items': l._n_items,
+        }
+        for l in qs
+    ]
+
+
 @login_required
 @require_GET
 def api_cliente_saldo(request, cliente_id):
     """
-    Devuelve el saldo actual del cliente.
+    Devuelve el saldo actual del cliente + sus listas vigentes con
+    descuento.
 
     Útil cuando el front quiere refrescar el saldo sin re-buscar (por
     ejemplo después de guardar una venta, o si en edición querés ver
     el saldo "antes" de ese pago). El endpoint de búsqueda ya devuelve
     saldo, pero este permite consultarlo por ID directo sin filtrar.
+
+    `listas_activas` permite que el front muestre un banner ofreciendo
+    aplicar el descuento de alguna lista a la venta actual (decisión
+    explícita del operador, no automática).
     """
     cliente = get_object_or_404(
         Cliente.objects.select_related('cuenta'),
@@ -270,6 +404,7 @@ def api_cliente_saldo(request, cliente_id):
         'cliente_id': cliente.id,
         'nombre': cliente.nombre_completo(),
         'saldo': str(cliente.saldo),
+        'listas_activas': _listas_activas_de_cliente(cliente),
     })
 
 
