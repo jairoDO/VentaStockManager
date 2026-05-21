@@ -1,0 +1,921 @@
+{% load static %}
+{% comment %}
+Pantalla de difusión manual de una lista de precios.
+
+El operador ve sus clientes (con WhatsApp cargado) filtrables y va
+apretando "Enviar" por cada uno — abre wa.me en pestaña nueva con el
+mensaje y el link pre-llenados.
+
+Sin wa-bot: cada envío requiere intervención manual del operador.
+Es lo más simple posible — útil para el caso "mandarle a 15 clientes
+una promo el viernes a la tarde sin levantar infra".
+
+No persistimos "ya envié" en DB: es un estado de sesión visual (ver
+chip ✓ enviado). Si Osvaldo cierra la pestaña, pierde el avance.
+Para campañas serias con tracking, ver `wa_campania.Campania`.
+
+Diseño: cards en vez de tabla densa (estilo broadcast tool, no admin),
+hero header con progreso, sticky toolbar para filtros + acciones bulk.
+Mobile-first porque Osvaldo suele difundir desde el celular.
+{% endcomment %}
+
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Difundir lista — {{ lista.nombre }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    /* Animación sutil al marcar como enviado — ayuda a confirmar
+       visualmente la acción sin tener que mirar fijo. */
+    @keyframes pulse-sent {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.02); box-shadow: 0 4px 20px rgba(16, 185, 129, 0.25); }
+      100% { transform: scale(1); }
+    }
+    .cliente-card.enviado { animation: pulse-sent 0.4s ease-out; }
+    /* Gradient del hero, definido acá para no repetir clases */
+    .hero-bg {
+      background: linear-gradient(135deg, #7c3aed 0%, #6366f1 50%, #2563eb 100%);
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900 min-h-screen">
+  <div x-data="difundir()" x-init="init()">
+
+    {% comment %}
+      ============================================================
+      HERO HEADER con gradiente, info de la lista y barra de progreso.
+      Es la "carátula" de la pantalla — Osvaldo entra y ve de un vistazo
+      qué lista está difundiendo y cuánto le falta.
+      ============================================================
+    {% endcomment %}
+    <header class="hero-bg text-white">
+      <div class="max-w-screen-xl mx-auto px-6 py-6">
+        <a href="/articulos/lista-precios/?lista_id={{ lista.id }}"
+           class="inline-flex items-center gap-1 text-sm text-white/80 hover:text-white transition">
+          <span>←</span><span>Volver al editor</span>
+        </a>
+        <div class="mt-3 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-2 text-xs uppercase tracking-wider text-white/70 font-medium">
+              <span>📢</span><span>Difusión por WhatsApp</span>
+            </div>
+            <h1 class="text-3xl font-bold mt-1">{{ lista.nombre }}</h1>
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm text-white/85">
+              <span>👤 <b>{{ lista.cliente.nombre_completo }}</b></span>
+              <span>·</span>
+              <span>📅 Link válido hasta
+                <b x-text="formatearFecha('{{ expira_at_iso }}') || 'sin vencimiento'"></b>
+              </span>
+            </div>
+          </div>
+
+          {% comment %}
+            Bloque de progreso: chip grande con X / Total + barra. Se
+            ve también desde lejos en el celular.
+          {% endcomment %}
+          <div class="bg-white/15 backdrop-blur rounded-xl px-5 py-3 min-w-[220px]">
+            <div class="text-xs uppercase tracking-wider text-white/70 font-medium mb-1">
+              Progreso de la difusión
+            </div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-3xl font-bold" x-text="enviados.size"></span>
+              <span class="text-lg text-white/70">/ <span x-text="clientes.length"></span></span>
+              <span class="ml-2 text-xs text-white/70">enviados</span>
+            </div>
+            <div class="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
+              <div class="h-full bg-emerald-300 transition-all duration-300"
+                   :style="`width: ${clientes.length ? (enviados.size / clientes.length * 100) : 0}%`"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="max-w-screen-xl mx-auto px-6 py-6 pb-32">
+
+      {% comment %}
+        ============================================================
+        BLOQUE 1: Link público + plantilla de mensaje editable.
+        ============================================================
+      {% endcomment %}
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-5">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div>
+            <label class="flex items-center gap-2 text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+              <span>🔗</span><span>Link público de la lista</span>
+            </label>
+            <div class="flex gap-2">
+              <input type="text" readonly value="{{ share_url }}"
+                     x-ref="inputShareUrl"
+                     @focus="$event.target.select()"
+                     class="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono">
+              <button type="button" @click="copiarLink()"
+                      class="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-sm whitespace-nowrap transition">
+                <span x-show="!linkCopiado">📋 Copiar</span>
+                <span x-show="linkCopiado" x-cloak class="text-emerald-700 font-medium">✓ Copiado</span>
+              </button>
+            </div>
+          </div>
+          <div>
+            <label class="flex items-center gap-2 text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+              <span>💬</span><span>Mensaje</span>
+              <span class="text-[10px] text-slate-500 normal-case font-normal">
+                — se personaliza con {% verbatim %}{{nombre}}{% endverbatim %} por cliente
+              </span>
+            </label>
+            <textarea x-model="mensajeTemplate"
+                      rows="3"
+                      class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-300 focus:border-purple-400 outline-none transition"></textarea>
+          </div>
+        </div>
+      </div>
+
+      {% comment %}
+        ============================================================
+        BLOQUE 2 (sticky): filtros + acciones bulk en una sola fila.
+        Sticky para que cuando bajes scrolleando los clientes, los
+        filtros queden a mano sin tener que volver arriba.
+        ============================================================
+      {% endcomment %}
+      <div class="sticky top-0 z-10 -mx-6 px-6 py-3 mb-4 bg-slate-100/95 backdrop-blur border-b border-slate-200">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+            <div class="col-span-2 md:col-span-1">
+              <label class="block text-[10px] font-semibold text-slate-500 mb-1 uppercase tracking-wide">Buscar</label>
+              <div class="relative">
+                <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">🔍</span>
+                <input type="text" x-model.debounce.300ms="filtros.q" @input="cargar()"
+                       placeholder="Nombre o apellido…"
+                       class="w-full pl-8 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-300 focus:border-purple-400 outline-none transition">
+              </div>
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold text-slate-500 mb-1 uppercase tracking-wide">Compraron en</label>
+              <select x-model.number="filtros.solo_compraron_ultimos_dias" @change="cargar()"
+                      class="w-full px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-purple-300 focus:border-purple-400 outline-none transition">
+                <option value="0">Cualquier momento</option>
+                <option value="30">Últimos 30 días</option>
+                <option value="60">Últimos 60 días</option>
+                <option value="90">Últimos 90 días</option>
+                <option value="180">Últimos 6 meses</option>
+                <option value="365">Último año</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold text-slate-500 mb-1 uppercase tracking-wide">Saldo</label>
+              <select x-model="filtros.saldo" @change="cargar()"
+                      class="w-full px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-purple-300 focus:border-purple-400 outline-none transition">
+                <option value="">Cualquiera</option>
+                <option value="favor">A favor del cliente</option>
+                <option value="deudor">El cliente debe</option>
+              </select>
+            </div>
+            <div class="flex items-center pb-2">
+              <label class="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+                <input type="checkbox" x-model="filtros.respetar_optin" @change="cargar()"
+                       class="rounded text-purple-600 focus:ring-purple-400">
+                <span>Solo opt-in</span>
+                <span class="text-[10px] text-slate-400" title="Cumple con la ley anti-spam">(recomendado)</span>
+              </label>
+            </div>
+            {% comment %}
+              Bloque de acciones de envío. Hay DOS caminos posibles:
+
+                1) Vía wa-bot (recomendado): selección multiple con
+                   checkbox + selector de modo (link/PDF/ambos) + un
+                   click envía todos en background con rate limit.
+
+                2) Vía wa.me manual (fallback): el "🚀 Abrir todos"
+                   abre N pestañas que el operador confirma a mano.
+                   Solo si el bot está caído o querés revisar c/u.
+            {% endcomment %}
+            <div class="flex flex-wrap items-end gap-2 justify-end">
+              <div class="min-w-[160px]">
+                <label class="block text-[10px] font-semibold text-slate-500 mb-1 uppercase tracking-wide">
+                  Modo de envío
+                </label>
+                <select x-model="modo"
+                        @change="_modoTouched = true"
+                        class="w-full px-2 py-2 border border-emerald-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400 outline-none transition">
+                  <option value="texto">📝 Solo texto (en el chat)</option>
+                  <option value="link">📎 Solo link público</option>
+                  <option value="pdf">📄 Solo PDF adjunto</option>
+                  <option value="ambos">✨ Ambos: PDF + link</option>
+                </select>
+              </div>
+              <button type="button" @click="resetEnviados()"
+                      :disabled="enviados.size === 0"
+                      title="Quita las marcas ✓ enviado (no afecta envíos reales)"
+                      class="px-3 py-2 text-xs bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition border border-slate-200">
+                ↺ Reset
+              </button>
+              <button type="button" @click="pedirEnviarViaBot()"
+                      :disabled="seleccionados.size === 0 || botCorriendo"
+                      :title="seleccionados.size === 0 ? 'Seleccioná al menos un cliente' : 'Envía via wa-bot con rate limit'"
+                      class="px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white text-xs font-semibold rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition shadow-sm">
+                <span x-show="!botCorriendo">🤖 Enviar a <span x-text="seleccionados.size"></span> via bot</span>
+                <span x-show="botCorriendo" x-cloak>Enviando…</span>
+              </button>
+              <button type="button" @click="abrirTodosPendientes()"
+                      :disabled="cantidadPendientes() === 0"
+                      title="Manual: abre N pestañas wa.me (los browsers pueden bloquear popups). Útil si el bot está caído."
+                      class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-600 text-xs rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition border border-slate-200">
+                🌐 wa.me manual (<span x-text="cantidadPendientes()"></span>)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% comment %}
+        ============================================================
+        BLOQUE 3: grid de cards de clientes.
+        En lugar de tabla densa: cards visuales con avatar de iniciales,
+        info compacta, botón grande de enviar. Cuando un cliente está
+        enviado, la card cambia a verde + tilde. Mobile: 1 columna,
+        tablet 2, desktop 3.
+        ============================================================
+      {% endcomment %}
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <template x-for="c in clientes" :key="c.id">
+          <div class="cliente-card bg-white rounded-xl border-2 transition-all duration-200 overflow-hidden cursor-pointer"
+               @click="toggleSeleccion(c.id)"
+               :class="seleccionados.has(c.id)
+                   ? 'border-emerald-500 bg-emerald-50 shadow-md ring-2 ring-emerald-200'
+                   : enviados.has(c.id)
+                       ? 'enviado border-emerald-300 bg-emerald-50/50 shadow-sm'
+                       : 'border-slate-200 hover:border-slate-300 hover:shadow-md shadow-sm'">
+            <div class="p-4">
+              <div class="flex items-start gap-3">
+                {# Checkbox de selección masiva — el wrapper card también es clickeable #}
+                <input type="checkbox"
+                       :checked="seleccionados.has(c.id)"
+                       @click.stop="toggleSeleccion(c.id)"
+                       class="mt-1 rounded text-emerald-600 focus:ring-emerald-400 shrink-0">
+
+                {# Avatar de iniciales con color determinístico por nombre #}
+                <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0"
+                     :style="`background: ${avatarColor(c.nombre)}`"
+                     x-text="iniciales(c.nombre)"></div>
+
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="font-semibold text-slate-900 truncate" x-text="c.nombre"></h3>
+                    <span x-show="enviados.has(c.id)" x-cloak
+                          class="text-[10px] px-2 py-0.5 bg-emerald-600 text-white rounded-full font-semibold flex items-center gap-1">
+                      <span>✓</span><span>Enviado</span>
+                    </span>
+                    <span x-show="!c.puede_recibir_whatsapp" x-cloak
+                          class="text-[10px] px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full font-semibold"
+                          title="Cliente con opt-out. Solo aparece si destildaste 'Solo opt-in' arriba.">
+                      opt-out
+                    </span>
+                    {% comment %}
+                      Badge del modo que se aplicará a este cliente.
+                      Cascada: el cliente puede tener preferencia propia
+                      (sino se usa el modo global del selector arriba).
+                    {% endcomment %}
+                    <span class="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full font-medium border border-slate-200"
+                          :title="c.formato_preferido
+                              ? 'Preferencia del cliente: ' + c.formato_preferido
+                              : 'Usa el modo global de arriba'"
+                          x-text="iconoModo(c.formato_preferido || modo)"></span>
+                  </div>
+                  <div class="text-xs text-slate-500 font-mono mt-0.5" x-text="formatearTelefono(c.whatsapp_number)"></div>
+                </div>
+              </div>
+
+              {% comment %}
+                Metadata: saldo + última compra en chips chiquitos. Solo se
+                muestran si tienen contenido — si saldo es 0 y nunca compró,
+                no metemos ruido visual.
+              {% endcomment %}
+              <div class="flex flex-wrap gap-1.5 mt-3 text-[11px]"
+                   x-show="Number(c.saldo) !== 0 || c.ultima_compra">
+                <span x-show="Number(c.saldo) !== 0"
+                      :class="Number(c.saldo) > 0
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-red-50 text-red-800 border-red-200'"
+                      class="px-2 py-0.5 rounded-full border font-medium">
+                  <span x-text="Number(c.saldo) > 0 ? '💰 A favor' : '⚠ Debe'"></span>
+                  <span class="font-mono ml-1" x-text="formatearSaldo(c.saldo)"></span>
+                </span>
+                <span x-show="c.ultima_compra"
+                      class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                  🛒 <span x-text="formatearFecha(c.ultima_compra)"></span>
+                </span>
+              </div>
+
+              {% comment %}
+                Botón secundario: enviar UNO por wa.me manual (fallback).
+                El flujo principal es la selección masiva + "Enviar via bot"
+                del toolbar. Esto queda como atajo cuando el operador quiere
+                hacer un envío puntual revisando manualmente.
+              {% endcomment %}
+              <button type="button" @click.stop="enviarUno(c)"
+                      class="mt-4 w-full px-3 py-2 rounded-lg text-xs font-medium transition flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200">
+                <span class="text-sm">🌐</span>
+                <span x-text="enviados.has(c.id) ? 'Reenviar manual (wa.me)' : 'Enviar manual (wa.me)'"></span>
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      {% comment %}
+        ============================================================
+        BLOQUE 4: Progreso del envío vía bot.
+        Se muestra cuando hay envíos pendientes o recientes en esta
+        lista. Polea /api/.../progreso/ cada 2s para actualizar la
+        barra + el contador de cada estado.
+        ============================================================
+      {% endcomment %}
+      <div x-show="progreso && progreso.total > 0" x-cloak
+           class="mt-5 bg-white border-2 border-emerald-200 rounded-xl shadow-sm overflow-hidden">
+        <div class="bg-gradient-to-r from-emerald-50 to-blue-50 px-5 py-3 border-b border-emerald-200 flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center gap-2">
+            <span class="text-lg">🤖</span>
+            <span class="font-semibold text-slate-900">Progreso de envíos vía bot</span>
+            <span x-show="progreso && (progreso.pendientes + progreso.enviando) > 0" x-cloak
+                  class="text-xs text-emerald-700 animate-pulse">● en curso</span>
+            <span x-show="progreso && (progreso.pendientes + progreso.enviando) === 0" x-cloak
+                  class="text-xs text-slate-500">● finalizado</span>
+          </div>
+          <div class="flex items-center gap-3">
+            {% comment %}
+              Link al historial completo de envíos en el admin. La UI
+              de progreso muestra los últimos 50 — para investigar más
+              atrás o reintentar fallidos, el admin es el lugar.
+            {% endcomment %}
+            <a :href="`/admin/articulo/difusionlistapreciosenvio/?lista__id__exact=${LISTA_ID}`"
+               target="_blank"
+               title="Ver TODOS los envíos de esta lista en el admin (con filtros + opción de reintentar fallidos)"
+               class="text-xs text-blue-600 hover:underline">
+              📋 Ver historial completo →
+            </a>
+            <button type="button" @click="ocultarProgreso()" x-show="progreso && progreso.pendientes + progreso.enviando === 0" x-cloak
+                    class="text-xs text-slate-500 hover:text-slate-900 underline">Ocultar</button>
+          </div>
+        </div>
+        <div class="p-5">
+          {# Barra de progreso visual #}
+          <div class="mb-3">
+            <div class="flex items-baseline justify-between mb-1 text-sm">
+              <span class="font-semibold text-slate-700">
+                <span x-text="progreso.enviados + progreso.fallidos"></span> / <span x-text="progreso.total"></span> procesados
+              </span>
+              <span class="text-xs text-slate-500">
+                rate limit: 1 envío cada ~3.5s
+              </span>
+            </div>
+            <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div class="h-full bg-gradient-to-r from-emerald-500 to-emerald-600 transition-all duration-500"
+                   :style="'width: ' + ((progreso.enviados + progreso.fallidos) / Math.max(progreso.total, 1) * 100) + '%'"></div>
+            </div>
+          </div>
+
+          {# Contadores por estado #}
+          <div class="grid grid-cols-4 gap-2 mb-4 text-center text-xs">
+            <div class="bg-slate-50 border border-slate-200 rounded-lg p-2">
+              <div class="text-2xl font-bold text-slate-500" x-text="progreso.pendientes"></div>
+              <div class="text-slate-500">pendientes</div>
+            </div>
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-2">
+              <div class="text-2xl font-bold text-blue-700" x-text="progreso.enviando"></div>
+              <div class="text-blue-700">enviando</div>
+            </div>
+            <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-2">
+              <div class="text-2xl font-bold text-emerald-700" x-text="progreso.enviados"></div>
+              <div class="text-emerald-700">✓ enviados</div>
+            </div>
+            <div class="bg-red-50 border border-red-200 rounded-lg p-2">
+              <div class="text-2xl font-bold text-red-700" x-text="progreso.fallidos"></div>
+              <div class="text-red-700">✗ fallidos</div>
+            </div>
+          </div>
+
+          {# Lista de últimos envíos (expansible) #}
+          <details class="text-sm">
+            <summary class="cursor-pointer text-blue-600 hover:underline">
+              Ver últimos <span x-text="(progreso.recientes || []).length"></span> envíos
+            </summary>
+            <ul class="mt-3 space-y-1 max-h-72 overflow-y-auto">
+              <template x-for="e in progreso.recientes" :key="e.cliente_id + '_' + e.sent_at">
+                <li class="flex items-center justify-between gap-2 text-xs py-1.5 px-2 rounded"
+                    :class="e.status === 'enviado' ? 'bg-emerald-50'
+                            : e.status === 'fallido' ? 'bg-red-50'
+                            : e.status === 'enviando' ? 'bg-blue-50'
+                            : 'bg-slate-50'">
+                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <span x-text="iconoEstado(e.status)"></span>
+                    <span class="font-medium truncate" x-text="e.cliente_nombre"></span>
+                    <span class="text-[10px] text-slate-500" x-text="iconoModo(e.modo)"></span>
+                  </div>
+                  <div class="text-[10px] text-slate-500 shrink-0 max-w-[200px] truncate"
+                       :title="e.error_msg || ''"
+                       x-text="e.error_msg ? e.error_msg : (e.sent_at ? formatearHora(e.sent_at) : '')"></div>
+                </li>
+              </template>
+            </ul>
+          </details>
+        </div>
+      </div>
+
+      {% comment %}
+        ============================================================
+        Empty state — mensaje explicativo de por qué un cliente puede
+        no aparecer. Se mantiene el texto pero estilizado mejor.
+        ============================================================
+      {% endcomment %}
+      <div x-show="clientes.length === 0 && !cargando" x-cloak
+           class="bg-white rounded-xl border border-slate-200 p-8 shadow-sm">
+        <div class="text-center max-w-xl mx-auto">
+          <div class="text-5xl mb-3">📭</div>
+          <div class="text-slate-700 font-semibold mb-2">Sin clientes que coincidan</div>
+          <div class="text-sm text-slate-500 mb-5">No hay nadie que pase los filtros actuales.</div>
+
+          <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 text-xs text-amber-900 text-left">
+            <p class="font-semibold mb-2 flex items-center gap-2">
+              <span class="text-base">⚠</span>
+              <span>¿Cargaste un cliente y no aparece?</span>
+            </p>
+            <p class="mb-2">Para que un cliente aparezca acá tiene que cumplir <b>3 condiciones</b>:</p>
+            <ol class="list-decimal list-inside space-y-1 mb-3">
+              <li>Tener <code class="bg-amber-100 px-1.5 py-0.5 rounded font-mono">whatsapp_number</code>
+                cargado (formato <code class="bg-amber-100 px-1.5 py-0.5 rounded font-mono">5491155551234</code>, sin <code>+</code>)</li>
+              <li>Tener tildado <b>"puede recibir whatsapp"</b> (opt-in)</li>
+              <li>Pasar los filtros que tenés arriba (búsqueda, días, saldo)</li>
+            </ol>
+            <p class="mb-2">
+              Los clientes nuevos arrancan con opt-in <b>OFF</b> por default (cumple con la ley
+              anti-spam). Habilitalos desde
+              <a href="/admin/cliente/cliente/" target="_blank" class="underline font-semibold hover:text-amber-700">/admin/cliente/cliente/</a>
+              (tildá <b>"puede recibir whatsapp"</b> en el form, o usá la acción bulk
+              <b>"Habilitar WhatsApp en clientes seleccionados"</b>).
+            </p>
+            <p class="mb-2">
+              Si querés ver a los opt-out igual (para testing), destildá arriba el checkbox
+              <b>"Solo opt-in"</b>.
+            </p>
+            <p class="bg-amber-100 border border-amber-300 rounded p-2 mt-2">
+              💡 <b>Atajo</b>: si tus clientes tienen el campo <code class="bg-white px-1 py-0.5 rounded font-mono text-[10px]">telefono</code>
+              cargado pero NO <code class="bg-white px-1 py-0.5 rounded font-mono text-[10px]">whatsapp_number</code>,
+              andá a
+              <a href="/configuracion/panel-tareas/" target="_blank" class="underline font-semibold hover:text-amber-700">/configuracion/panel-tareas/</a>
+              y ejecutá <b>"Completar WhatsApp desde teléfono"</b>. Va a parsear el teléfono AR y
+              completar el WhatsApp automáticamente para todos los clientes con teléfono válido.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {# Loading state #}
+      <div x-show="cargando" x-cloak
+           class="bg-white rounded-xl border border-slate-200 p-12 shadow-sm text-center text-slate-400">
+        <div class="text-3xl mb-2 animate-pulse">⏳</div>
+        <div>Cargando clientes…</div>
+      </div>
+    </div>
+
+    {% include "partials/_modal_alpine.html" %}
+  </div>
+
+  <script>
+    const LISTA_ID = {{ lista.id }};
+    const SHARE_URL = '{{ share_url|escapejs }}';
+    const CLIENTE_PRINCIPAL_NOMBRE = '{{ lista.cliente.nombre_completo|escapejs }}';
+
+    function difundir() {
+      return {
+        ...modalState(),
+
+        cargando: false,
+        clientes: [],
+        // Set<id> de clientes a los que YA hicimos click en "Enviar
+        // manual via wa.me" en esta sesión. Solo trackea el wa.me
+        // manual — los envíos via bot se trackean en `progreso`.
+        enviados: new Set(),
+        // Set<id> de clientes seleccionados con el checkbox. Estos
+        // son los que se van a mandar cuando aprieten "Enviar via bot".
+        seleccionados: new Set(),
+        // Modo de envío (link/pdf/ambos). Lo carga init() desde el
+        // API con el default global. El operador lo puede cambiar
+        // antes de mandar — toma efecto en el próximo envío.
+        modo: 'link',
+        linkCopiado: false,
+        // Estado del envío bot (recibido del API /progreso/).
+        progreso: null,
+        botCorriendo: false,
+        _progresoTimer: null,
+        // Si el operador "ocultó" el panel de progreso después de que
+        // terminó, lo memorizamos para no mostrar de nuevo hasta que
+        // se inicie otro envío.
+        _progresoOculto: false,
+        filtros: {
+          q: '',
+          solo_compraron_ultimos_dias: 0,
+          saldo: '',   // '', 'favor', 'deudor'
+          respetar_optin: true,
+        },
+        mensajeTemplate:
+          'Hola {% verbatim %}{{nombre}}{% endverbatim %}, te paso la lista de precios:\n'
+          + SHARE_URL + '\n\n'
+          + 'Pasala por WhatsApp para confirmarme el pedido.',
+
+        async init() {
+          await this.cargar();
+          // Cargar progreso inicial: si esta lista ya tenía envíos
+          // (de difusiones anteriores), los mostramos como "histórico".
+          await this.refrescarProgreso();
+        },
+
+        async cargar() {
+          this.cargando = true;
+          try {
+            const params = new URLSearchParams();
+            if (this.filtros.q) params.set('q', this.filtros.q);
+            if (this.filtros.solo_compraron_ultimos_dias > 0) {
+              params.set('solo_compraron_ultimos_dias', String(this.filtros.solo_compraron_ultimos_dias));
+            }
+            if (this.filtros.saldo === 'favor') params.set('solo_con_saldo_a_favor', '1');
+            if (this.filtros.saldo === 'deudor') params.set('solo_con_saldo_deudor', '1');
+            params.set('solo_puede_recibir_whatsapp', this.filtros.respetar_optin ? '1' : '0');
+
+            const url = `/articulos/api/lista-precios/${LISTA_ID}/difundir/clientes/?${params}`;
+            const r = await fetch(url, { credentials: 'same-origin' });
+            const data = await r.json();
+            this.clientes = data.clientes || [];
+            // Pre-seleccionar el modo con el default global la PRIMERA
+            // vez que el operador entra. Si después él lo cambia,
+            // respetamos esa elección (no la pisamos en cargas siguientes).
+            if (data.formato_default_global && !this._modoTouched) {
+              this.modo = data.formato_default_global;
+            }
+          } finally {
+            this.cargando = false;
+          }
+        },
+
+        // ---------- Selección masiva ----------
+        toggleSeleccion(clienteId) {
+          if (this.seleccionados.has(clienteId)) {
+            this.seleccionados.delete(clienteId);
+          } else {
+            this.seleccionados.add(clienteId);
+          }
+          // Re-asignar para forzar reactividad Alpine (Set no es reactivo).
+          this.seleccionados = new Set(this.seleccionados);
+        },
+
+        // ---------- Envío vía bot ----------
+        pedirEnviarViaBot() {
+          if (this.seleccionados.size === 0) return;
+          this._modoTouched = true;  // el operador ya pasó por acá
+          const n = this.seleccionados.size;
+          const modoLabel = {
+            'link': 'solo link',
+            'pdf': 'solo PDF',
+            'ambos': 'PDF + link',
+          }[this.modo] || this.modo;
+          this.abrirModal({
+            tipo: 'confirm',
+            titulo: 'Enviar vía bot',
+            mensaje:
+              `Se van a mandar ${n} mensaje(s) por WhatsApp via el bot, modo "${modoLabel}". `
+              + 'El bot espacia los envíos cada ~3.5s para no levantar sospechas. '
+              + 'Podés ver el progreso en vivo abajo.\n\n'
+              + 'Recordatorio: cada cliente puede tener su preferencia propia '
+              + '(que respetamos por defecto). Si querés FORZAR el modo de arriba '
+              + 'a todos, este es el camino correcto.',
+            okLabel: `Sí, enviar a ${n}`,
+            cancelLabel: 'Cancelar',
+            callback: () => this._ejecutarEnviarViaBot(),
+          });
+        },
+
+        async _ejecutarEnviarViaBot() {
+          this.botCorriendo = true;
+          try {
+            const r = await fetch(
+              `/articulos/api/lista-precios/${LISTA_ID}/difundir/enviar/`,
+              {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-CSRFToken': this._csrf(),
+                },
+                body: JSON.stringify({
+                  cliente_ids: Array.from(this.seleccionados),
+                  modo_override: this.modo,
+                }),
+              },
+            );
+            const data = await r.json();
+            if (!r.ok || !data.ok) {
+              // 409: hay envíos en curso. Ofrecemos forzar.
+              if (r.status === 409 && data.pendientes_actuales) {
+                this.abrirModal({
+                  tipo: 'confirm',
+                  titulo: 'Ya hay envíos en curso',
+                  mensaje:
+                    `Hay ${data.pendientes_actuales} envío(s) procesándose para esta lista. `
+                    + 'Si los forzás, vas a sumar más a la cola — el bot los va a procesar en orden. '
+                    + '¿Continuamos?',
+                  okLabel: 'Sí, forzar',
+                  cancelLabel: 'No, esperar',
+                  callback: () => this._ejecutarEnviarViaBotForzar(),
+                });
+                return;
+              }
+              this.abrirModal({
+                tipo: 'error',
+                titulo: 'No se pudo encolar',
+                mensaje: data.error || 'Error desconocido al encolar los envíos.',
+              });
+              return;
+            }
+            // Éxito: limpiar selección + mostrar panel progreso + arrancar polling.
+            this.seleccionados = new Set();
+            this._progresoOculto = false;
+            this.refrescarProgreso();
+          } catch (e) {
+            this.abrirModal({
+              tipo: 'error',
+              titulo: 'Error de red',
+              mensaje: 'No se pudo contactar al servidor: ' + e.message,
+            });
+          } finally {
+            this.botCorriendo = false;
+          }
+        },
+
+        async _ejecutarEnviarViaBotForzar() {
+          // Mismo body pero con forzar=true.
+          this.botCorriendo = true;
+          try {
+            const r = await fetch(
+              `/articulos/api/lista-precios/${LISTA_ID}/difundir/enviar/`,
+              {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-CSRFToken': this._csrf(),
+                },
+                body: JSON.stringify({
+                  cliente_ids: Array.from(this.seleccionados),
+                  modo_override: this.modo,
+                  forzar: true,
+                }),
+              },
+            );
+            const data = await r.json();
+            if (data.ok) {
+              this.seleccionados = new Set();
+              this._progresoOculto = false;
+              this.refrescarProgreso();
+            } else {
+              this.abrirModal({
+                tipo: 'error',
+                titulo: 'No se pudo encolar',
+                mensaje: data.error || 'Error desconocido.',
+              });
+            }
+          } finally {
+            this.botCorriendo = false;
+          }
+        },
+
+        // ---------- Polling de progreso ----------
+        async refrescarProgreso() {
+          if (this._progresoTimer) {
+            clearTimeout(this._progresoTimer);
+            this._progresoTimer = null;
+          }
+          try {
+            const r = await fetch(
+              `/articulos/api/lista-precios/${LISTA_ID}/difundir/progreso/`,
+              { credentials: 'same-origin' },
+            );
+            const data = await r.json();
+            // Si el operador "ocultó" el panel y NO hay nada en curso,
+            // no lo re-mostramos. Si hay algo nuevo en curso, lo
+            // re-mostramos automáticamente.
+            const enCurso = (data.pendientes + data.enviando) > 0;
+            if (this._progresoOculto && !enCurso) {
+              this.progreso = null;
+            } else {
+              this.progreso = data;
+              if (enCurso) this._progresoOculto = false;
+            }
+            // Polling agresivo (2s) mientras hay envíos pendientes;
+            // más lento (10s) cuando todo terminó pero el panel sigue visible
+            // (por si el operador relanza); 0 (sin poll) si el panel está oculto.
+            if (enCurso) {
+              this._progresoTimer = setTimeout(() => this.refrescarProgreso(), 2000);
+            } else if (this.progreso) {
+              this._progresoTimer = setTimeout(() => this.refrescarProgreso(), 10000);
+            }
+          } catch (e) {
+            // Silencioso: si el polling falla una vez, lo intentamos
+            // de nuevo más tarde sin alarmar al operador.
+            console.warn('Polling progreso falló:', e);
+            this._progresoTimer = setTimeout(() => this.refrescarProgreso(), 5000);
+          }
+        },
+
+        ocultarProgreso() {
+          this._progresoOculto = true;
+          this.progreso = null;
+        },
+
+        // ---------- Helpers visuales ----------
+        iconoModo(modo) {
+          return {
+            'texto': '📝 texto',
+            'link':  '📎 link',
+            'pdf':   '📄 PDF',
+            'ambos': '✨ PDF+link',
+          }[modo] || '?';
+        },
+
+        iconoEstado(status) {
+          return {
+            'pendiente': '⏳',
+            'enviando': '⏩',
+            'enviado': '✓',
+            'fallido': '✗',
+          }[status] || '?';
+        },
+
+        formatearHora(iso) {
+          if (!iso) return '';
+          try {
+            return new Date(iso).toLocaleTimeString('es-AR', {
+              hour: '2-digit', minute: '2-digit', second: '2-digit',
+            });
+          } catch (e) { return iso; }
+        },
+
+        _csrf() {
+          const m = document.cookie.match(/csrftoken=([^;]+)/);
+          return m ? decodeURIComponent(m[1]) : '';
+        },
+
+        cantidadPendientes() {
+          return this.clientes.filter(c => !this.enviados.has(c.id)).length;
+        },
+
+        mensajeParaCliente(c) {
+          // Reemplazamos {{nombre}} por el primer nombre del cliente
+          // (lo que viene como "nombre completo" sin partir, alcanza
+          // para que se sienta personal sin más complejidad).
+          const primerNombre = (c.nombre || '').split(' ')[0] || 'amigo';
+          return this.mensajeTemplate.replace(/\{\{nombre\}\}/g, primerNombre);
+        },
+
+        enviarUno(c) {
+          // Abre wa.me en pestaña nueva con el mensaje pre-llenado.
+          // Marca al cliente como enviado SI el navegador permitió
+          // abrir la pestaña (window.open devuelve null si bloqueado).
+          const texto = encodeURIComponent(this.mensajeParaCliente(c));
+          const url = `https://wa.me/${c.whatsapp_number}?text=${texto}`;
+          const w = window.open(url, '_blank');
+          if (w) {
+            this.enviados.add(c.id);
+            // Forzamos reactividad — Set no es reactivo por default
+            // en Alpine 3.
+            this.enviados = new Set(this.enviados);
+          } else {
+            this.abrirModal({
+              tipo: 'error',
+              titulo: 'Popup bloqueado',
+              mensaje: 'El browser bloqueó la pestaña. Habilitá popups para este sitio (icono de bloqueo en la barra de direcciones) e intentá de nuevo.',
+            });
+          }
+        },
+
+        abrirTodosPendientes() {
+          const pendientes = this.clientes.filter(c => !this.enviados.has(c.id));
+          if (pendientes.length === 0) return;
+          this.abrirModal({
+            tipo: 'confirm',
+            titulo: `Abrir ${pendientes.length} pestañas`,
+            mensaje:
+              `Se van a abrir ${pendientes.length} pestañas con wa.me, una por cada cliente pendiente.\n\n`
+              + 'Los browsers suelen BLOQUEAR los popups si son muchos. '
+              + 'Es posible que tengas que hacer click manualmente en algunos botones de "Permitir" o '
+              + 'mandarlos uno por uno. ¿Continuamos?',
+            okLabel: 'Sí, abrir todas',
+            cancelLabel: 'No, cancelar',
+            callback: () => {
+              for (const c of pendientes) {
+                this.enviarUno(c);
+              }
+            },
+          });
+        },
+
+        resetEnviados() {
+          this.enviados = new Set();
+        },
+
+        async copiarLink() {
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(SHARE_URL);
+            } else {
+              this.$refs.inputShareUrl.select();
+              document.execCommand('copy');
+            }
+            this.linkCopiado = true;
+            setTimeout(() => { this.linkCopiado = false; }, 2500);
+          } catch (e) {
+            this.abrirModal({
+              tipo: 'error',
+              titulo: 'No pude copiar',
+              mensaje: 'El portapapeles no respondió. Seleccioná el link manualmente y copialo con Ctrl+C.',
+            });
+          }
+        },
+
+        // ---- Helpers visuales ----
+        iniciales(nombreCompleto) {
+          // Tomamos hasta 2 letras: primera del nombre y primera del apellido.
+          // Si solo hay una palabra, las dos primeras letras de esa palabra.
+          if (!nombreCompleto) return '?';
+          const partes = nombreCompleto.trim().split(/\s+/).filter(Boolean);
+          if (partes.length === 0) return '?';
+          if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
+          return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
+        },
+
+        avatarColor(nombreCompleto) {
+          // Color determinístico a partir del hash del nombre. Así un
+          // mismo cliente tiene SIEMPRE el mismo color de avatar y el
+          // operador empieza a reconocerlos de un vistazo.
+          // Paleta tipo "soft pastels saturados" — no chillones para
+          // no competir con el resto de la UI.
+          const paleta = [
+            '#7c3aed', '#6366f1', '#2563eb', '#0891b2', '#0d9488',
+            '#059669', '#65a30d', '#ca8a04', '#ea580c', '#dc2626',
+            '#db2777', '#9333ea',
+          ];
+          let hash = 0;
+          for (let i = 0; i < (nombreCompleto || '').length; i++) {
+            hash = ((hash << 5) - hash + nombreCompleto.charCodeAt(i)) | 0;
+          }
+          return paleta[Math.abs(hash) % paleta.length];
+        },
+
+        formatearTelefono(num) {
+          // wa-style: 54 9 11 5555-1234. No intentamos parsing
+          // exhaustivo — son números argentinos en formato wa.me
+          // (54 + 9 + area + número). Si no calza el patrón,
+          // devolvemos el original sin tocar.
+          if (!num) return '';
+          const s = String(num);
+          // Patrón típico: 549XXXXXXXXXX (12-13 dígitos)
+          if (/^54\d{10,11}$/.test(s)) {
+            // Ej: 5491155551234 → 54 9 11 5555-1234
+            const rest = s.slice(2); // sin "54"
+            const flag = rest[0] === '9' ? '9 ' : '';
+            const area = rest.slice(rest[0] === '9' ? 1 : 0, rest[0] === '9' ? 3 : 2);
+            const numStart = rest[0] === '9' ? 3 : 2;
+            const resto = rest.slice(numStart);
+            const mid = resto.slice(0, resto.length - 4);
+            const end = resto.slice(-4);
+            return `+54 ${flag}${area} ${mid}-${end}`;
+          }
+          return '+' + s;
+        },
+
+        formatearFecha(iso) {
+          if (!iso) return '';
+          try {
+            const d = new Date(iso);
+            return d.toLocaleDateString('es-AR', {
+              day: '2-digit', month: '2-digit', year: 'numeric',
+            });
+          } catch (e) { return iso; }
+        },
+
+        formatearSaldo(monto) {
+          const n = Number(monto || 0);
+          if (n === 0) return '—';
+          const abs = Math.abs(n).toLocaleString('es-AR', {
+            minimumFractionDigits: 2, maximumFractionDigits: 2,
+          });
+          return n > 0 ? `+$${abs}` : `-$${abs}`;
+        },
+      };
+    }
+  </script>
+</body>
+</html>

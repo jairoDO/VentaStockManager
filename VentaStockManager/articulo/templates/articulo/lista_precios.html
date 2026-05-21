@@ -1,0 +1,1468 @@
+{% load static %}
+{% comment %}
+Pantalla de "Lista de precios" — armar listas personalizadas por
+cliente con descuento global opcional, items ordenables, notas, y
+generar PDF.
+
+Filosofía idéntica a la grilla de precios:
+  - Estilo Tailwind por CDN + Alpine 3 (consistencia con
+    `venta_nueva.html` y `grilla_precios.html`).
+  - El template no precarga datos: todo se trae vía las APIs JSON.
+  - Cambios se mantienen en memoria hasta apretar "Guardar".
+
+Layout (esquemático):
+  ┌───────────────────────────────────────────────────┐
+  │ ← Volver al admin                                 │
+  │ Lista de precios                                  │
+  ├───────────────────────────────────────────────────┤
+  │ Cliente: [autocomplete]                           │
+  │   Saldo + listas previas (dropdown si tiene)      │
+  ├───────────────────────────────────────────────────┤
+  │ Filtros: [cat] [prov] [buscar]                    │
+  │ [+ Agregar todos los visibles]                    │
+  ├──────────────────────┬────────────────────────────┤
+  │ ARTÍCULOS DISPONIBLES│ EN LA LISTA                │
+  │ ... + paginación     │ items ordenables           │
+  ├──────────────────────┴────────────────────────────┤
+  │ Nombre / Descuento global / Motivo                │
+  │ [Guardar lista]  [Generar PDF]                    │
+  └───────────────────────────────────────────────────┘
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Lista de precios — VentaStockManager</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+{% comment %}
+Form oculto para que Django setee la cookie csrftoken (la usamos en
+el POST de guardar lista).
+{% endcomment %}
+<form style="display:none">{% csrf_token %}</form>
+
+{% comment %}
+Inyectamos las opciones de filtros como JSON via json_script — Alpine
+las lee sin riesgo de XSS.
+{% endcomment %}
+{{ categorias|json_script:"opt-categorias" }}
+{{ proveedores|json_script:"opt-proveedores" }}
+
+<div x-data="listaPrecios()" x-init="init()" class="max-w-screen-2xl mx-auto p-6 pb-32">
+
+  {# ---- Header ---- #}
+  <header class="mb-6">
+    <a href="/admin/" class="text-sm text-blue-600 hover:underline">← Volver al inicio</a>
+    <h1 class="text-2xl font-bold mt-1">Lista de precios</h1>
+    <p class="text-sm text-slate-500">
+      Armá una lista personalizada para un cliente con descuento global
+      opcional, y generala en PDF para compartir.
+    </p>
+  </header>
+
+  {# ---- Errores ---- #}
+  <div x-show="errores.length" x-cloak
+       class="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded mb-4">
+    <strong class="block mb-1">Problemas:</strong>
+    <ul class="list-disc list-inside text-sm">
+      <template x-for="(err, i) in errores" :key="i">
+        <li x-text="err.mensaje"></li>
+      </template>
+    </ul>
+  </div>
+
+  {# ---- Mensajes de éxito ---- #}
+  <div x-show="mensaje" x-cloak
+       class="bg-emerald-50 border border-emerald-300 text-emerald-800 px-4 py-3 rounded mb-4 text-sm"
+       x-text="mensaje"></div>
+
+  {# ---- Selección de cliente ---- #}
+  <div class="bg-white shadow rounded-lg p-4 mb-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="relative">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Cliente</label>
+        <input type="text"
+               x-model="clienteQuery"
+               @input.debounce.300ms="buscarClientes()"
+               @focus="if(clienteResults.length) dropdownClientesAbierto = true"
+               placeholder="Buscar por nombre o dirección…"
+               class="w-full border border-slate-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-400">
+        <div x-show="dropdownClientesAbierto && clienteResults.length"
+             x-cloak
+             @click.outside="dropdownClientesAbierto = false"
+             class="absolute z-10 w-full bg-white border border-slate-200 rounded shadow-lg mt-1 max-h-72 overflow-y-auto">
+          <template x-for="c in clienteResults" :key="c.id">
+            <button type="button"
+                    @click="seleccionarCliente(c)"
+                    class="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-100 last:border-0">
+              <div class="font-medium" x-text="c.nombre"></div>
+              <div class="text-xs text-slate-500" x-text="c.direccion + (c.telefono ? ' · ' + c.telefono : '')"></div>
+            </button>
+          </template>
+        </div>
+        <p x-show="cliente.id" x-cloak class="text-xs text-emerald-700 mt-1">
+          Seleccionado: <span class="font-medium" x-text="cliente.nombre"></span>
+          <span x-show="Number(cliente.saldo) !== 0"
+                :class="Number(cliente.saldo) > 0 ? 'text-emerald-700' : 'text-red-700'"
+                class="ml-2 font-semibold">
+            saldo: $<span x-text="cliente.saldo"></span>
+          </span>
+          <button type="button" @click="limpiarCliente()" class="ml-2 text-red-600 underline">cambiar</button>
+        </p>
+      </div>
+
+      <div x-show="cliente.id" x-cloak>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Listas previas del cliente</label>
+        <div class="flex gap-2">
+          <select x-model="listaSeleccionada"
+                  @change="onSeleccionListaPrevia()"
+                  class="flex-1 border border-slate-300 rounded px-3 py-2">
+            <option value="">— Crear lista nueva —</option>
+            <template x-for="l in listasPrevias" :key="l.id">
+              <option :value="l.id"
+                      x-text="l.nombre + ' (' + l.count_items + ' items, ' + l.descuento_porcentaje + '% ' + (l.tipo_ajuste === 'aumento' ? 'aumento' : 'desc.') + ')'"></option>
+            </template>
+          </select>
+          <button type="button" x-show="listaActualId" x-cloak
+                  @click="nuevaLista()"
+                  class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-sm rounded border border-slate-300">
+            + Nueva
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ---- Solo mostramos el armado si hay cliente ---- #}
+  <div x-show="cliente.id" x-cloak>
+
+    {# ---- Filtros para sumar items ---- #}
+    <div class="bg-white shadow rounded-lg p-4 mb-4">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Categoría</label>
+          <select x-model="filtros.categoria" @change="onFiltroCambia()"
+                  class="w-full border border-slate-300 rounded px-3 py-2">
+            <option value="">— Todas —</option>
+            <option value="0">— Sin categoría —</option>
+            <template x-for="c in opcionesCategorias" :key="c.id">
+              <option :value="c.id" x-text="c.nombre"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Proveedor</label>
+          <select x-model="filtros.proveedor" @change="onFiltroCambia()"
+                  class="w-full border border-slate-300 rounded px-3 py-2">
+            <option value="">— Todos —</option>
+            <option value="0">— Sin proveedor —</option>
+            <template x-for="p in opcionesProveedores" :key="p.id">
+              <option :value="p.id" x-text="p.nombre"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Buscar</label>
+          <input type="text"
+                 x-model="filtros.q"
+                 @input.debounce.300ms="onFiltroCambia()"
+                 placeholder="Nombre, código o marca…"
+                 class="w-full border border-slate-300 rounded px-3 py-2">
+        </div>
+        <div class="text-right text-sm text-slate-500 flex flex-col gap-1 items-end">
+          <button type="button"
+                  @click="agregarTodosVisibles()"
+                  :disabled="disponibles.length === 0"
+                  title="Solo los que están en esta página"
+                  class="px-3 py-2 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            + Agregar visibles (<span x-text="disponibles.length"></span>)
+          </button>
+          <button type="button"
+                  @click="agregarTodosLosMatcheos()"
+                  :disabled="totalDisponibles === 0 || totalDisponibles === disponibles.length"
+                  :title="totalDisponibles === disponibles.length ? 'Ya están todos visibles en esta página' : 'Agrega los ' + totalDisponibles + ' que matchean los filtros, sin importar la página'"
+                  class="px-3 py-2 bg-emerald-700 text-white rounded text-sm hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed">
+            + Agregar TODOS (<span x-text="totalDisponibles"></span>)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {# ---- Layout 2 columnas: disponibles + en lista ---- #}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      {# ---- Columna izquierda: disponibles ---- #}
+      <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="bg-slate-100 px-4 py-2 border-b text-sm font-semibold text-slate-700 flex items-center justify-between">
+          <span>Artículos disponibles</span>
+          <span class="text-xs text-slate-500"><span x-text="totalDisponibles"></span> resultados</span>
+        </div>
+        <div class="max-h-[600px] overflow-y-auto">
+          <table class="w-full text-sm">
+            <tbody>
+              <template x-for="a in disponibles" :key="a.id">
+                <tr class="border-b border-slate-100 hover:bg-slate-50">
+                  <td class="px-3 py-2 font-mono text-xs text-slate-500" x-text="a.codigo"></td>
+                  <td class="px-3 py-2">
+                    <div class="font-medium" x-text="a.nombre"></div>
+                    <div class="text-xs text-slate-500">
+                      <span x-show="a.marca && a.marca !== 'Generico'" x-text="a.marca"></span>
+                      <template x-if="a.categoria_id">
+                        <span class="inline-block ml-1 px-1.5 py-0.5 rounded text-white text-xs"
+                              :style="'background:' + (a.categoria_color || '#607d8b')"
+                              x-text="a.categoria_nombre"></span>
+                      </template>
+                    </div>
+                  </td>
+                  <td class="px-3 py-2 text-right">
+                    <div class="font-mono text-sm" x-text="'$' + a.precio_efectivo"></div>
+                    <div x-show="a.tiene_precio_pactado" x-cloak
+                         class="text-xs text-amber-600">precio pactado</div>
+                  </td>
+                  <td class="px-3 py-2 text-right">
+                    <button type="button"
+                            @click="agregarItem(a)"
+                            :disabled="estaEnLista(a.id)"
+                            :class="estaEnLista(a.id) ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'"
+                            class="px-2 py-1 rounded text-xs">
+                      <span x-show="!estaEnLista(a.id)">+ Agregar</span>
+                      <span x-show="estaEnLista(a.id)" x-cloak>✓ En lista</span>
+                    </button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="!cargandoDisponibles && disponibles.length === 0" x-cloak>
+                <td colspan="4" class="px-3 py-6 text-center text-slate-500">No hay artículos con esos filtros.</td>
+              </tr>
+              <tr x-show="cargandoDisponibles" x-cloak>
+                <td colspan="4" class="px-3 py-6 text-center text-slate-500">Cargando…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {# Paginación #}
+        <div class="bg-slate-50 px-3 py-2 border-t flex items-center justify-between text-xs">
+          <button type="button"
+                  @click="cambiarPaginaDisponibles(filtros.page - 1)"
+                  :disabled="filtros.page <= 1"
+                  class="px-2 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">
+            ←
+          </button>
+          <div>
+            Página <span x-text="filtros.page"></span> de <span x-text="totalPagesDisponibles || 1"></span>
+          </div>
+          <button type="button"
+                  @click="cambiarPaginaDisponibles(filtros.page + 1)"
+                  :disabled="filtros.page >= totalPagesDisponibles"
+                  class="px-2 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">
+            →
+          </button>
+        </div>
+      </div>
+
+      {# ---- Columna derecha: en la lista ---- #}
+      <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="bg-slate-100 px-4 py-2 border-b text-sm font-semibold text-slate-700 flex items-center justify-between">
+          <span>En la lista</span>
+          <span class="text-xs text-slate-500"><span x-text="enLista.length"></span> items</span>
+        </div>
+        <div class="max-h-[600px] overflow-y-auto">
+          <table class="w-full text-sm">
+            <tbody>
+              <template x-for="(it, idx) in enLista" :key="it.articulo_id">
+                <tr class="border-b border-slate-100">
+                  <td class="px-2 py-2 text-center text-slate-400 text-xs w-8" x-text="idx + 1"></td>
+                  <td class="px-2 py-2">
+                    <div class="font-medium" x-text="it.articulo_nombre"></div>
+                    <div class="text-xs text-slate-500 font-mono" x-text="it.articulo_codigo"></div>
+                    <input type="text"
+                           x-model="it.nota"
+                           placeholder="Nota (opcional)…"
+                           class="mt-1 w-full text-xs border border-slate-200 rounded px-2 py-0.5">
+                  </td>
+                  <td class="px-2 py-2 text-right font-mono whitespace-nowrap">
+                    <div x-text="'$' + precioConDescuento(it.precio_efectivo)"></div>
+                    {% comment %}
+                      Precio base (sin ajuste). Para descuento lo tachamos
+                      porque sugiere "ahorro". Para aumento NO tachamos: dar
+                      a entender "se rebaja" sería falso — lo dejamos en gris
+                      chico con prefijo "base" para que se entienda como
+                      referencia, no como precio anterior.
+                    {% endcomment %}
+                    <div x-show="Number(descuentoPorcentaje) > 0 && tipoAjuste !== 'aumento'" x-cloak
+                         class="text-xs text-slate-400 line-through" x-text="'$' + it.precio_efectivo"></div>
+                    <div x-show="Number(descuentoPorcentaje) > 0 && tipoAjuste === 'aumento'" x-cloak
+                         class="text-xs text-slate-400" x-text="'base $' + it.precio_efectivo"></div>
+                  </td>
+                  <td class="px-2 py-2 text-right whitespace-nowrap">
+                    <button type="button" @click="moverArriba(idx)" :disabled="idx === 0"
+                            class="px-1 py-0.5 text-slate-500 hover:text-slate-900 disabled:opacity-30">↑</button>
+                    <button type="button" @click="moverAbajo(idx)" :disabled="idx >= enLista.length - 1"
+                            class="px-1 py-0.5 text-slate-500 hover:text-slate-900 disabled:opacity-30">↓</button>
+                    <button type="button" @click="removerItem(idx)"
+                            class="px-1 py-0.5 text-red-600 hover:text-red-800">✕</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="enLista.length === 0" x-cloak>
+                <td colspan="4" class="px-3 py-6 text-center text-slate-500">
+                  La lista está vacía. Agregá artículos desde el panel de la izquierda.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    {% comment %}
+    ---- Metadata + acciones ----
+    El bloque del ajuste % cambió: ahora se elige primero TIPO
+    (descuento/aumento) con dos radios, y el campo % es siempre
+    positivo. La etiqueta del campo y el motivo cambian dinámicamente
+    según el tipo elegido para que sea claro qué se está modelando.
+    {% endcomment %}
+    <div class="bg-white shadow rounded-lg p-4 mt-4">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Nombre de la lista</label>
+          <input type="text" x-model="nombreLista"
+                 placeholder="ej. Lista marzo, Promo navidad…"
+                 class="w-full border border-slate-300 rounded px-3 py-2">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Tipo de ajuste</label>
+          <div class="flex gap-2">
+            <label class="flex-1 cursor-pointer">
+              <input type="radio" value="descuento" x-model="tipoAjuste" class="sr-only peer">
+              <div class="px-3 py-2 border border-slate-300 rounded text-sm text-center
+                          peer-checked:bg-emerald-600 peer-checked:text-white peer-checked:border-emerald-600
+                          hover:bg-slate-50 transition">
+                ⬇ Descuento
+              </div>
+            </label>
+            <label class="flex-1 cursor-pointer">
+              <input type="radio" value="aumento" x-model="tipoAjuste" class="sr-only peer">
+              <div class="px-3 py-2 border border-slate-300 rounded text-sm text-center
+                          peer-checked:bg-amber-600 peer-checked:text-white peer-checked:border-amber-600
+                          hover:bg-slate-50 transition">
+                ⬆ Aumento
+              </div>
+            </label>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">
+            <span x-text="tipoAjuste === 'aumento' ? 'Aumento global %' : 'Descuento global %'"></span>
+          </label>
+          <input type="number" min="0" max="100" step="0.01"
+                 x-model="descuentoPorcentaje"
+                 :class="tipoAjuste === 'aumento' ? 'border-amber-400 focus:ring-amber-300' : 'border-slate-300'"
+                 class="w-full border rounded px-3 py-2">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">
+            <span x-text="tipoAjuste === 'aumento' ? 'Motivo del aumento' : 'Motivo del descuento'"></span>
+          </label>
+          <input type="text" x-model="descuentoMotivo"
+                 placeholder="ej. Cliente fiel, ajuste de costos…"
+                 class="w-full border border-slate-300 rounded px-3 py-2">
+        </div>
+      </div>
+    </div>
+
+    {# ---- Botones flotantes ---- #}
+    {% comment %}
+    Fila de acciones. Layout:
+      - "Guardar lista": siempre activo (si hay items + nombre).
+      - "Descargar PDF": activo solo si la lista ya fue guardada
+        al menos una vez (necesita ID).
+      - "Compartir link": idem; abre un panelito con el link + botones
+        de copiar y desactivar.
+      - "Compartir por WhatsApp": idem; requiere además que haya link
+        activo. Si el cliente tiene `whatsapp_number` lo usamos como
+        destinatario; si no, abrimos wa.me sin destinatario para que
+        el user lo elija.
+
+    `listaActualId` es la fuente de verdad de "ya está guardada".
+    {% endcomment %}
+    <div class="flex gap-3 mt-4 justify-end flex-wrap">
+      <button type="button"
+              @click="guardarLista()"
+              :disabled="guardando || enLista.length === 0 || !nombreLista.trim()"
+              class="px-5 py-3 bg-blue-600 text-white rounded shadow hover:bg-blue-700 font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+        <span x-show="!guardando">Guardar lista</span>
+        <span x-show="guardando" x-cloak>Guardando…</span>
+      </button>
+      <button type="button"
+              @click="descargarPDF()"
+              :disabled="!listaActualId"
+              class="px-5 py-3 bg-slate-700 text-white rounded shadow hover:bg-slate-800 font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+        Descargar PDF
+      </button>
+      <button type="button"
+              @click="compartirLink()"
+              :disabled="!listaActualId || compartiendoLink"
+              class="px-5 py-3 bg-amber-600 text-white rounded shadow hover:bg-amber-700 font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+        <span x-show="!compartiendoLink">Compartir link público</span>
+        <span x-show="compartiendoLink" x-cloak>Generando…</span>
+      </button>
+      {% comment %}
+      Tres opciones para mandar al cliente, ordenadas por preferencia:
+
+        1. "📱 Via bot": usa el wa-bot conectado (igual que difundir).
+           Pide modo (link/PDF/ambos) con modal Alpine y manda. No
+           requiere intervención manual. El operador ve el resultado
+           inline como toast.
+
+        2. "🌐 Manual (wa.me)": fallback. Abre wa.me en pestaña nueva
+           con el mensaje precargado — el operador confirma en
+           WhatsApp Web manualmente. Útil si el bot está caído o si
+           el operador quiere revisar el mensaje antes.
+
+        3. "💬 Compartir…": para terceros (no el cliente principal).
+           Usa Web Share API en celular o wa.me sin destinatario.
+      {% endcomment %}
+      <button type="button"
+              @click="enviarViaBotAlCliente()"
+              :disabled="!cliente.id || !clienteWhatsapp || enviandoViaBot || enLista.length === 0 || !nombreLista.trim()"
+              :title="!cliente.id ? 'Falta seleccionar cliente'
+                       : !clienteWhatsapp ? 'El cliente no tiene WhatsApp. Cargálo en /admin/cliente/cliente/'
+                       : enLista.length === 0 ? 'Agregá al menos un artículo'
+                       : !nombreLista.trim() ? 'Poné un nombre a la lista'
+                       : 'Hace todo en un click: guarda lista (si hace falta), genera link (si hace falta), y manda al WhatsApp del cliente'"
+              class="px-5 py-3 bg-emerald-600 text-white rounded shadow hover:bg-emerald-700 font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+        <span x-show="!enviandoViaBot">📱 Enviar via bot</span>
+        <span x-show="enviandoViaBot" x-cloak>Enviando…</span>
+      </button>
+      <button type="button"
+              @click="enviarAlCliente()"
+              :disabled="!listaActualId || !linkActivo || !clienteWhatsapp"
+              :title="!linkActivo ? 'wa.me manual necesita link público — usá Enviar via bot o generá link primero' : 'Fallback manual: abre wa.me con el mensaje precargado'"
+              class="px-5 py-3 bg-white border border-emerald-300 text-emerald-700 rounded shadow hover:bg-emerald-50 font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+        🌐 Manual (wa.me)
+      </button>
+      <button type="button"
+              @click="compartirPorWhatsApp()"
+              :disabled="!listaActualId || !linkActivo"
+              title="Abre el menú de compartir (WhatsApp, Telegram, etc.) o copia el link"
+              class="px-5 py-3 bg-emerald-500 text-white rounded shadow hover:bg-emerald-600 font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+        💬 Compartir…
+      </button>
+      <button type="button"
+              @click="abrirDifundir()"
+              :disabled="!listaActualId"
+              title="Mandarla a varios clientes desde una pantalla con filtros (texto/link/PDF según preferencia)"
+              class="px-5 py-3 bg-purple-600 text-white rounded shadow hover:bg-purple-700 font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+        📢 Difundir a varios
+      </button>
+    </div>
+
+    {# ---- Panel del link público ---- #}
+    {% comment %}
+    Se muestra solo cuando hay link activo. Permite copiar la URL
+    al portapapeles (vía navigator.clipboard) y desactivarla. Si el
+    cliente cierra y reabre la pantalla, este panel se reconstruye
+    automáticamente desde el detalle de la lista (`link_activo` y
+    `share_url` vienen en el JSON).
+    {% endcomment %}
+    <div x-show="linkActivo" x-cloak class="bg-amber-50 border border-amber-300 rounded-lg p-4 mt-4">
+      <div class="flex items-start gap-3 flex-wrap">
+        <div class="flex-1 min-w-0">
+          <div class="text-xs uppercase text-amber-700 font-semibold mb-1">Link público activo</div>
+          <input type="text"
+                 readonly
+                 x-ref="inputShareUrl"
+                 :value="shareUrl"
+                 class="w-full font-mono text-xs px-2 py-1 border border-amber-200 rounded bg-white"
+                 @focus="$event.target.select()">
+          <div x-show="shareExpiraAt" x-cloak class="text-xs text-amber-700 mt-1">
+            Expira: <span x-text="formatearFecha(shareExpiraAt)"></span>
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <button type="button" @click="copiarLink()"
+                  class="px-3 py-1.5 bg-white border border-amber-400 text-amber-700 rounded text-sm hover:bg-amber-100">
+            <span x-show="!linkCopiado">Copiar</span>
+            <span x-show="linkCopiado" x-cloak>Copiado</span>
+          </button>
+          <button type="button" @click="desactivarLink()"
+                  class="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700">
+            Desactivar
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div> {# /cliente.id #}
+
+  <div x-show="!cliente.id" x-cloak class="bg-white shadow rounded-lg p-8 text-center text-slate-500">
+    Seleccioná un cliente para empezar a armar la lista.
+  </div>
+
+  {% include "partials/_modal_alpine.html" %}
+</div>
+
+<script>
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : '';
+  }
+
+  function listaPrecios() {
+    return {
+      // ---- Modal Alpine reusable (mergeado desde partial) ----
+      // REGLA: NUNCA usar alert()/confirm()/prompt() del browser.
+      // Usar siempre `this.abrirModal({...})`. Ver
+      // partials/_modal_alpine.html para la API.
+      ...modalState(),
+
+      // ---- Opciones de filtros ----
+      opcionesCategorias: [],
+      opcionesProveedores: [],
+
+      // ---- Cliente ----
+      // Estado separado entre el "input de búsqueda" (clienteQuery) y
+      // el "cliente seleccionado" (cliente.id/nombre/saldo). Esto
+      // sigue el patrón de venta_nueva.html y evita que la búsqueda
+      // pise el cliente actual antes de que el operador elija uno.
+      cliente: { id: null, nombre: '', saldo: '0' },
+      clienteQuery: '',
+      clienteResults: [],
+      dropdownClientesAbierto: false,
+
+      // ---- Listas previas y lista actual ----
+      // `listaActualId` = null indica "lista nueva", number indica
+      // que estamos editando una lista guardada. Es la fuente de
+      // verdad para decidir si el POST de guardar es create o
+      // update (le mandamos el id).
+      listasPrevias: [],
+      listaSeleccionada: '',  // value del <select>, '' = nueva
+      listaActualId: null,
+      nombreLista: '',
+      descuentoPorcentaje: 0,
+      // `tipoAjuste` decide si descuento_porcentaje se RESTA o SUMA al
+      // precio base. Default 'descuento' por compat con todas las
+      // listas viejas. Se persiste en el modelo y en las API.
+      tipoAjuste: 'descuento',
+      descuentoMotivo: '',
+
+      // ---- Disponibles (panel izquierdo) ----
+      disponibles: [],
+      totalDisponibles: 0,
+      totalPagesDisponibles: 1,
+      cargandoDisponibles: false,
+      filtros: { categoria: '', proveedor: '', q: '', page: 1 },
+
+      // ---- En la lista (panel derecho) ----
+      // Cada item: {articulo_id, articulo_codigo, articulo_nombre,
+      //             precio_efectivo (string, SIN descuento de lista),
+      //             orden, nota}
+      enLista: [],
+
+      // ---- UI ----
+      guardando: false,
+      errores: [],
+      mensaje: '',
+
+      // ---- Link público compartible ----
+      // Estos campos vienen del backend (api_detalle_lista). Se
+      // resetean al cargar otra lista o al desactivar el link.
+      linkActivo: false,
+      shareUrl: '',
+      shareToken: '',
+      shareExpiraAt: '',
+      compartiendoLink: false,
+      linkCopiado: false,
+      // Flag de "envío via bot en curso" para el botón nuevo "📱 Enviar
+      // via bot". Mientras está true, el botón se deshabilita y muestra
+      // "Enviando…". El envío real es async (worker django-q): el
+      // server responde 200 cuando ENCOLÓ, no cuando se mandó al cliente.
+      enviandoViaBot: false,
+      // Preferencias de formato — se cargan en `onSeleccionListaPrevia`
+      // desde el endpoint de detalle. Sirven para resolver el "modo
+      // efectivo" del envío sin tener que preguntárselo al operador.
+      // Cascada: clientePreferencia → formatoDefaultGlobal → 'link'.
+      clientePreferencia: '',
+      formatoDefaultGlobal: 'link',
+      // WhatsApp del cliente — viene del detalle de la lista. Lo
+      // usamos para armar el link `wa.me/{numero}?text=...`. Si el
+      // cliente no tiene número cargado, abrimos `wa.me/?text=...`
+      // (sin destinatario) y el operador lo elige.
+      clienteWhatsapp: '',
+      clientePuedeRecibirWhatsapp: false,
+
+      // ---- Init ----
+      async init() {
+        const cats = document.getElementById('opt-categorias');
+        if (cats) this.opcionesCategorias = JSON.parse(cats.textContent);
+        const provs = document.getElementById('opt-proveedores');
+        if (provs) this.opcionesProveedores = JSON.parse(provs.textContent);
+
+        // Si vinimos desde el admin con ?lista_id=N (botón "Editar
+        // visual" en el changelist o redirect del change_view),
+        // precargamos esa lista — sino el operador llega a una
+        // pantalla vacía y se confunde.
+        const params = new URLSearchParams(window.location.search);
+        const listaIdParam = params.get('lista_id');
+        if (listaIdParam) {
+          await this._precargarLista(Number(listaIdParam));
+        }
+      },
+
+      async _precargarLista(listaId) {
+        // El detalle-directo trae la lista con su cliente_id ya
+        // resuelto, así no necesitamos pasarlo desde el query param.
+        try {
+          const r = await fetch(`/articulos/api/lista-precios/${listaId}/detalle-directo/`, {
+            credentials: 'same-origin',
+          });
+          if (!r.ok) {
+            console.warn('No se pudo precargar la lista', listaId);
+            return;
+          }
+          const data = await r.json();
+          // Hidratamos cliente + lista usando la helper que ya tiene
+          // la pantalla cuando el operador la elige del dropdown.
+          this.cliente = {
+            id: data.cliente_id,
+            nombre: data.cliente_nombre || '',
+            saldo: '0',
+          };
+          this.clienteQuery = data.cliente_nombre || '';
+          // Cargamos las listas previas y disparamos el flujo normal
+          // de selección de lista existente.
+          // OJO: la helper se llama `cargarListasPrevias` — antes acá
+          // estaba `cargarListasDelCliente` (función inexistente), lo
+          // que tiraba TypeError silencioso y el detalle de la lista
+          // nunca se hidrataba: solo quedaba seteado el cliente.
+          await this.cargarListasPrevias();
+          this.listaSeleccionada = String(listaId);
+          await this.onSeleccionListaPrevia();
+          // Cargamos también la primera página de artículos disponibles
+          // para que el panel izquierdo no aparezca vacío al editar.
+          this.filtros.page = 1;
+          await this.cargarDisponibles();
+        } catch (e) {
+          console.error('precargarLista falló:', e);
+        }
+      },
+
+      // ---- Cliente ----
+      async buscarClientes() {
+        const q = this.clienteQuery.trim();
+        if (q.length < 2) {
+          this.clienteResults = [];
+          this.dropdownClientesAbierto = false;
+          return;
+        }
+        // Reusamos el endpoint que ya existe para venta_nueva.
+        const r = await fetch(`/venta/api/clientes/buscar/?q=${encodeURIComponent(q)}`, {
+          credentials: 'same-origin',
+        });
+        const data = await r.json();
+        this.clienteResults = data.results || [];
+        this.dropdownClientesAbierto = true;
+      },
+      async seleccionarCliente(c) {
+        this.cliente = { id: c.id, nombre: c.nombre, saldo: c.saldo || '0' };
+        this.clienteQuery = c.nombre;
+        this.clienteResults = [];
+        this.dropdownClientesAbierto = false;
+        this.errores = [];
+        // Reset del estado de armado (nueva lista por default).
+        this.nuevaLista();
+        // Cargar listas previas + primera página de disponibles.
+        await this.cargarListasPrevias();
+        this.filtros.page = 1;
+        await this.cargarDisponibles();
+      },
+      limpiarCliente() {
+        this.cliente = { id: null, nombre: '', saldo: '0' };
+        this.clienteQuery = '';
+        this.listasPrevias = [];
+        this.listaSeleccionada = '';
+        this.listaActualId = null;
+        this.nombreLista = '';
+        this.descuentoPorcentaje = 0;
+        this.descuentoMotivo = '';
+        this.enLista = [];
+        this.disponibles = [];
+      },
+
+      // ---- Listas previas ----
+      async cargarListasPrevias() {
+        if (!this.cliente.id) return;
+        try {
+          const r = await fetch(
+            `/articulos/api/lista-precios/cliente/${this.cliente.id}/listas/`,
+            { credentials: 'same-origin' },
+          );
+          const data = await r.json();
+          this.listasPrevias = data.listas || [];
+          // Actualizamos el saldo (puede que el endpoint /clientes/
+          // haya quedado stale si volvimos a esta pantalla).
+          this.cliente.saldo = data.cliente_saldo || this.cliente.saldo;
+        } catch (e) {
+          this.errores.push({ mensaje: 'No se pudieron cargar las listas previas: ' + e.message });
+        }
+      },
+      async onSeleccionListaPrevia() {
+        if (!this.listaSeleccionada) {
+          this.nuevaLista();
+          return;
+        }
+        const listaId = Number(this.listaSeleccionada);
+        try {
+          const r = await fetch(
+            `/articulos/api/lista-precios/cliente/${this.cliente.id}/lista/${listaId}/`,
+            { credentials: 'same-origin' },
+          );
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const data = await r.json();
+          this.listaActualId = data.id;
+          this.nombreLista = data.nombre;
+          this.descuentoPorcentaje = Number(data.descuento_porcentaje) || 0;
+          this.tipoAjuste = data.tipo_ajuste || 'descuento';
+          this.descuentoMotivo = data.descuento_motivo || '';
+          // Sincronizar estado del link público con lo que tiene el
+          // backend (puede ser activo, expirado o nunca compartido).
+          this.linkActivo = !!data.link_activo;
+          this.shareUrl = data.share_url || '';
+          this.shareToken = data.share_token || '';
+          this.shareExpiraAt = data.share_expira_at || '';
+          this.clienteWhatsapp = data.cliente_whatsapp || '';
+          this.clientePuedeRecibirWhatsapp = !!data.cliente_puede_recibir_whatsapp;
+          this.clientePreferencia = data.cliente_formato_preferido || '';
+          this.formatoDefaultGlobal = data.formato_default_global || 'link';
+          this.enLista = (data.items || []).map(it => ({
+            articulo_id: it.articulo_id,
+            articulo_codigo: it.articulo_codigo,
+            articulo_nombre: it.articulo_nombre,
+            // precio_efectivo viene del backend YA con el ajuste aplicado,
+            // pero queremos guardar el SIN-ajuste para recalcular en vivo
+            // si el operador cambia el % o el tipo (descuento ↔ aumento).
+            // Para "des-aplicar" tenemos que saber el tipo: dividir por
+            // (1-d/100) en descuento o por (1+d/100) en aumento.
+            precio_efectivo: this._precioSinAjuste(it.precio_efectivo, data.descuento_porcentaje, data.tipo_ajuste || 'descuento'),
+            orden: it.orden,
+            nota: it.nota || '',
+          }));
+        } catch (e) {
+          this.errores.push({ mensaje: 'No se pudo cargar la lista: ' + e.message });
+        }
+      },
+      // Helper para deshacer el ajuste que el backend aplicó al
+      // serializar `precio_efectivo`. Necesario para que la columna
+      // derecha guarde el precio BASE y recalcule en vivo cuando el
+      // operador cambia el % global o el tipo (descuento ↔ aumento).
+      _precioSinAjuste(precio, porcentaje, tipo) {
+        const p = Number(precio);
+        const d = Number(porcentaje);
+        if (!d || d <= 0 || d >= 100) return String(p.toFixed(2));
+        // Aumento: efectivo = base * (1+d/100) → base = efectivo / (1+d/100)
+        // Descuento: efectivo = base * (1-d/100) → base = efectivo / (1-d/100)
+        const factor = (tipo === 'aumento') ? (1 + d / 100) : (1 - d / 100);
+        if (factor === 0) return String(p.toFixed(2));
+        const base = p / factor;
+        return base.toFixed(2);
+      },
+      nuevaLista() {
+        this.listaActualId = null;
+        this.listaSeleccionada = '';
+        this.nombreLista = '';
+        this.descuentoPorcentaje = 0;
+        this.tipoAjuste = 'descuento';
+        this.descuentoMotivo = '';
+        this.enLista = [];
+        // El estado del link es per-lista — al crear una nueva,
+        // tiene que arrancar limpio (sino mostraríamos el link de
+        // la lista anterior).
+        this.linkActivo = false;
+        this.shareUrl = '';
+        this.shareToken = '';
+        this.shareExpiraAt = '';
+        this.linkCopiado = false;
+      },
+
+      // ---- Disponibles ----
+      async cargarDisponibles() {
+        if (!this.cliente.id) return;
+        this.cargandoDisponibles = true;
+        try {
+          const params = new URLSearchParams();
+          params.set('cliente_id', this.cliente.id);
+          if (this.filtros.categoria !== '') params.set('categoria', this.filtros.categoria);
+          if (this.filtros.proveedor !== '') params.set('proveedor', this.filtros.proveedor);
+          if (this.filtros.q) params.set('q', this.filtros.q);
+          params.set('page', this.filtros.page);
+          const r = await fetch(
+            '/articulos/api/lista-precios/articulos/?' + params.toString(),
+            { credentials: 'same-origin' },
+          );
+          const data = await r.json();
+          this.disponibles = data.items || [];
+          this.totalDisponibles = data.total_items || 0;
+          this.totalPagesDisponibles = data.total_pages || 1;
+        } catch (e) {
+          this.errores = [{ mensaje: 'Error al cargar artículos: ' + e.message }];
+        } finally {
+          this.cargandoDisponibles = false;
+        }
+      },
+      onFiltroCambia() {
+        this.filtros.page = 1;
+        this.cargarDisponibles();
+      },
+      cambiarPaginaDisponibles(n) {
+        if (n < 1 || n > this.totalPagesDisponibles) return;
+        this.filtros.page = n;
+        this.cargarDisponibles();
+      },
+
+      // ---- Manipulación de la lista ----
+      estaEnLista(articuloId) {
+        return this.enLista.some(it => it.articulo_id === articuloId);
+      },
+      agregarItem(a) {
+        if (this.estaEnLista(a.id)) return;
+        this.enLista.push({
+          articulo_id: a.id,
+          articulo_codigo: a.codigo,
+          articulo_nombre: a.nombre,
+          // Guardamos el precio efectivo SIN descuento de lista —
+          // el descuento se aplica solo a vista (precioConDescuento)
+          // y el backend lo recalcula al generar PDF.
+          precio_efectivo: a.precio_efectivo,
+          orden: this.enLista.length,
+          nota: '',
+        });
+      },
+      agregarTodosVisibles() {
+        for (const a of this.disponibles) {
+          if (!this.estaEnLista(a.id)) {
+            this.enLista.push({
+              articulo_id: a.id,
+              articulo_codigo: a.codigo,
+              articulo_nombre: a.nombre,
+              precio_efectivo: a.precio_efectivo,
+              orden: this.enLista.length,
+              nota: '',
+            });
+          }
+        }
+      },
+
+      agregarTodosLosMatcheos() {
+        // Trae los IDs de TODOS los artículos que matchean los
+        // filtros actuales (sin paginación, cap 1000) y los agrega
+        // a la lista. Si son > 50 confirmamos con modal porque es
+        // una acción destructiva (puede sumar centenas de items).
+        const ejecutar = async () => {
+          const params = new URLSearchParams();
+          if (this.cliente.id) params.set('cliente_id', this.cliente.id);
+          if (this.filtros.categoria !== '') params.set('categoria', this.filtros.categoria);
+          if (this.filtros.proveedor !== '') params.set('proveedor', this.filtros.proveedor);
+          if (this.filtros.q) params.set('q', this.filtros.q);
+          params.set('todos', '1');
+          try {
+            const r = await fetch(`/articulos/api/lista-precios/articulos/?${params}`, {
+              credentials: 'same-origin',
+            });
+            const data = await r.json();
+            const ids = data.ids || [];
+            // El endpoint NO devuelve nombre/precio_efectivo en
+            // modo `todos=1` — solo IDs. Para no hacer otro fetch
+            // por cada uno, los items que no estén ya en una página
+            // visible los agregamos con datos placeholder y los
+            // refrescamos al guardar (el backend recalcula todo).
+            const visiblesPorId = new Map(this.disponibles.map(a => [a.id, a]));
+            let nuevos = 0;
+            for (const id of ids) {
+              if (this.estaEnLista(id)) continue;
+              const visible = visiblesPorId.get(id);
+              if (visible) {
+                this.enLista.push({
+                  articulo_id: visible.id,
+                  articulo_codigo: visible.codigo,
+                  articulo_nombre: visible.nombre,
+                  precio_efectivo: visible.precio_efectivo,
+                  orden: this.enLista.length,
+                  nota: '',
+                });
+              } else {
+                // Placeholder — al guardar y recargar, el detalle
+                // de la lista trae los datos reales.
+                this.enLista.push({
+                  articulo_id: id,
+                  articulo_codigo: '...',
+                  articulo_nombre: '(cargando al guardar)',
+                  precio_efectivo: '0',
+                  orden: this.enLista.length,
+                  nota: '',
+                });
+              }
+              nuevos++;
+            }
+            this.mensaje = `${nuevos} artículos agregados`
+              + (data.capped ? ' (cortamos en 1000, filtrá más fino si hace falta)' : '')
+              + '. Guardá la lista para confirmar.';
+            setTimeout(() => { this.mensaje = ''; }, 5000);
+          } catch (e) {
+            this.errores = [{ mensaje: 'No se pudo cargar la lista completa: ' + e.message }];
+          }
+        };
+
+        if (this.totalDisponibles > 50) {
+          this.abrirModal({
+            tipo: 'confirm',
+            titulo: 'Agregar muchos artículos',
+            mensaje: `Vas a agregar ${this.totalDisponibles} artículos a la lista. `
+                   + 'Después podés sacar los que no quieras a mano. ¿Continuamos?',
+            okLabel: 'Sí, agregar todos',
+            cancelLabel: 'No',
+            callback: ejecutar,
+          });
+        } else {
+          ejecutar();
+        }
+      },
+      removerItem(idx) {
+        this.enLista.splice(idx, 1);
+        this._renumerarOrden();
+      },
+      moverArriba(idx) {
+        if (idx === 0) return;
+        const tmp = this.enLista[idx];
+        this.enLista[idx] = this.enLista[idx - 1];
+        this.enLista[idx - 1] = tmp;
+        this._renumerarOrden();
+      },
+      moverAbajo(idx) {
+        if (idx >= this.enLista.length - 1) return;
+        const tmp = this.enLista[idx];
+        this.enLista[idx] = this.enLista[idx + 1];
+        this.enLista[idx + 1] = tmp;
+        this._renumerarOrden();
+      },
+      _renumerarOrden() {
+        this.enLista.forEach((it, i) => { it.orden = i; });
+      },
+
+      // ---- Cálculo de precio con ajuste (vista) ----
+      // El método se sigue llamando `precioConDescuento` por compat
+      // con el template — internamente respeta el tipo (descuento o
+      // aumento) según `tipoAjuste`.
+      precioConDescuento(precio) {
+        const p = Number(precio);
+        const d = Number(this.descuentoPorcentaje) || 0;
+        if (!d || d <= 0) return p.toFixed(2);
+        const factor = (this.tipoAjuste === 'aumento') ? (1 + d / 100) : (1 - d / 100);
+        return (p * factor).toFixed(2);
+      },
+
+      // Refresca campos de metadata de la lista (link activo, expira_at,
+      // datos del cliente para WA) sin tocar `enLista` — esto evita que
+      // un guardado sucesivo pise el orden o las notas que el operador
+      // está editando.
+      async _refrescarMetadataLista() {
+        if (!this.cliente.id || !this.listaActualId) return;
+        try {
+          const r = await fetch(
+            `/articulos/api/lista-precios/cliente/${this.cliente.id}/lista/${this.listaActualId}/`,
+            { credentials: 'same-origin' },
+          );
+          if (!r.ok) return;
+          const data = await r.json();
+          this.linkActivo = !!data.link_activo;
+          this.shareUrl = data.share_url || '';
+          this.shareToken = data.share_token || '';
+          this.shareExpiraAt = data.share_expira_at || '';
+          this.clienteWhatsapp = data.cliente_whatsapp || '';
+          this.clientePuedeRecibirWhatsapp = !!data.cliente_puede_recibir_whatsapp;
+          this.clientePreferencia = data.cliente_formato_preferido || '';
+          this.formatoDefaultGlobal = data.formato_default_global || 'link';
+        } catch (e) {
+          // Silencioso: el guardado en sí ya fue exitoso, el refresco
+          // es extra. Si falla, los datos viejos siguen siendo válidos.
+        }
+      },
+
+      // ---- Guardar ----
+      async guardarLista() {
+        if (!this.cliente.id) {
+          this.errores = [{ mensaje: 'Falta seleccionar el cliente.' }];
+          return;
+        }
+        if (!this.nombreLista.trim()) {
+          this.errores = [{ mensaje: 'Falta el nombre de la lista.' }];
+          return;
+        }
+        this.guardando = true;
+        this.errores = [];
+        this.mensaje = '';
+        try {
+          const payload = {
+            id: this.listaActualId,
+            cliente_id: this.cliente.id,
+            nombre: this.nombreLista.trim(),
+            descuento_porcentaje: String(this.descuentoPorcentaje || 0),
+            tipo_ajuste: this.tipoAjuste || 'descuento',
+            descuento_motivo: this.descuentoMotivo,
+            items: this.enLista.map((it, idx) => ({
+              articulo_id: it.articulo_id,
+              orden: idx,
+              nota: it.nota || '',
+            })),
+          };
+          const r = await fetch('/articulos/api/lista-precios/guardar/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify(payload),
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            this.errores = data.errores || [{ mensaje: 'Error al guardar.' }];
+            return null;
+          }
+          this.listaActualId = data.lista_id;
+          this.listaSeleccionada = String(data.lista_id);
+          this.mensaje = 'Lista guardada (id ' + data.lista_id + ').';
+          // Refresco del listado de listas previas para que el
+          // nuevo registro aparezca en el dropdown.
+          await this.cargarListasPrevias();
+          // Re-cargo el detalle para refrescar el estado del link
+          // público (por si hay metadata que solo vive en backend,
+          // como `cliente_whatsapp`). Es barato — una sola request
+          // contra el endpoint que ya optimizamos.
+          await this._refrescarMetadataLista();
+          // Limpiamos el mensaje tras un rato.
+          setTimeout(() => { this.mensaje = ''; }, 4000);
+          return data.lista_id;
+        } catch (e) {
+          this.errores = [{ mensaje: 'Error de red: ' + e.message }];
+          return null;
+        } finally {
+          this.guardando = false;
+        }
+      },
+
+      // ---- PDF ----
+      // Decisión: NO re-guardamos automáticamente antes de bajar el
+      // PDF. La regla es "lo que ves en la pantalla puede no ser lo
+      // que está en el PDF si hay cambios sin guardar". Si el botón
+      // está habilitado es porque `listaActualId` existe, o sea, la
+      // lista ya fue guardada al menos una vez. El operador puede
+      // apretar "Guardar" antes del PDF si quiere que coincidan.
+      // Esto evita que un click accidental dispare un POST inesperado.
+      descargarPDF() {
+        if (!this.listaActualId) return;
+        window.open(
+          `/articulos/api/lista-precios/pdf/${this.listaActualId}/`,
+          '_blank'
+        );
+      },
+
+      // ---- Link público ----
+      compartirLink() {
+        if (!this.listaActualId) return;
+        // Si ya hay link activo, no pedimos confirmación — el botón
+        // funciona como "regenerar". Si no, confirmamos con modal
+        // (regla del proyecto: NUNCA confirm/alert nativo).
+        if (!this.linkActivo) {
+          this.abrirModal({
+            tipo: 'confirm',
+            titulo: 'Generar link público',
+            mensaje: 'Se va a generar un link que cualquiera con ese URL puede abrir SIN login. '
+                   + 'Tiene un vencimiento automático que podés configurar en la configuración general. '
+                   + '¿Confirmás?',
+            okLabel: 'Sí, generar',
+            cancelLabel: 'No, cancelar',
+            callback: () => this._ejecutarCompartirLink(),
+          });
+        } else {
+          this._ejecutarCompartirLink();
+        }
+      },
+
+      async _ejecutarCompartirLink() {
+        this.compartiendoLink = true;
+        try {
+          const r = await fetch(
+            `/articulos/api/lista-precios/${this.listaActualId}/compartir/`,
+            {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+              },
+              body: JSON.stringify({}),
+            },
+          );
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            this.errores = [{ mensaje: 'No se pudo generar el link.' }];
+            return;
+          }
+          this.linkActivo = true;
+          this.shareUrl = data.share_url;
+          this.shareToken = data.share_token;
+          this.shareExpiraAt = data.expira_at;
+          this.linkCopiado = false;
+          this.mensaje = 'Link generado. Copialo y mandáselo al cliente.';
+          setTimeout(() => { this.mensaje = ''; }, 4000);
+        } catch (e) {
+          this.errores = [{ mensaje: 'Error de red: ' + e.message }];
+        } finally {
+          this.compartiendoLink = false;
+        }
+      },
+
+      desactivarLink() {
+        if (!this.listaActualId) return;
+        this.abrirModal({
+          tipo: 'confirm',
+          titulo: 'Desactivar link público',
+          mensaje: 'El cliente ya no va a poder acceder a esta lista hasta que generes uno nuevo. '
+                 + '¿Confirmás?',
+          okLabel: 'Sí, desactivar',
+          cancelLabel: 'No, cancelar',
+          callback: () => this._ejecutarDesactivarLink(),
+        });
+      },
+
+      async _ejecutarDesactivarLink() {
+        try {
+          const r = await fetch(
+            `/articulos/api/lista-precios/${this.listaActualId}/desactivar-link/`,
+            {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+              },
+            },
+          );
+          if (!r.ok) {
+            this.errores = [{ mensaje: 'No se pudo desactivar el link.' }];
+            return;
+          }
+          this.linkActivo = false;
+          this.shareUrl = '';
+          this.shareToken = '';
+          this.shareExpiraAt = '';
+          this.linkCopiado = false;
+          this.mensaje = 'Link desactivado.';
+          setTimeout(() => { this.mensaje = ''; }, 3000);
+        } catch (e) {
+          this.errores = [{ mensaje: 'Error de red: ' + e.message }];
+        }
+      },
+
+      async copiarLink() {
+        if (!this.shareUrl) return;
+        try {
+          // navigator.clipboard requiere HTTPS o localhost. En staging
+          // sin HTTPS puede fallar — caemos al fallback de seleccionar
+          // el input y dejar que el operador haga Ctrl+C.
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(this.shareUrl);
+          } else {
+            this.$refs.inputShareUrl.select();
+            document.execCommand('copy');
+          }
+          this.linkCopiado = true;
+          setTimeout(() => { this.linkCopiado = false; }, 2500);
+        } catch (e) {
+          this.errores = [{ mensaje: 'No pude copiar al portapapeles: ' + e.message }];
+        }
+      },
+
+      _mensajeWhatsapp() {
+        // Texto único reusable entre los dos botones (compartir
+        // genérico y enviar al cliente). Si el cliente NO está
+        // seleccionado lo dejamos genérico ("Hola, te paso la lista").
+        const fecha = this.shareExpiraAt
+          ? ` Válida hasta el ${this.formatearFecha(this.shareExpiraAt)}.`
+          : '';
+        const saludo = this.cliente.nombre
+          ? `Hola ${this.cliente.nombre},`
+          : 'Hola,';
+        return (
+          `${saludo} te paso la lista de precios:\n`
+          + `${this.shareUrl}\n\n`
+          + `Pasala por WhatsApp para confirmarme el pedido.${fecha}`
+        );
+      },
+
+      async _asegurarLinkActivo() {
+        // Helper: si todavía no se generó el link público, lo creamos
+        // antes de mandarlo. Sin esto el WhatsApp llevaría una URL
+        // vacía.
+        if (this.linkActivo) return true;
+        await this.compartirLink();
+        return this.linkActivo;
+      },
+
+      async enviarAlCliente() {
+        // Botón "🌐 Manual (wa.me)" — fallback. Abre wa.me en pestaña
+        // nueva con el mensaje precargado para que el operador haga
+        // click "Enviar" en WhatsApp Web. NO usa el bot — es para
+        // cuando el bot está caído o el operador quiere revisar.
+        if (!this.clienteWhatsapp) return;
+        if (!(await this._asegurarLinkActivo())) return;
+        const texto = encodeURIComponent(this._mensajeWhatsapp());
+        window.open(`https://wa.me/${this.clienteWhatsapp}?text=${texto}`, '_blank');
+      },
+
+      _resolverModoEfectivo() {
+        // Cascada: preferencia del cliente → default global → 'link'.
+        // Es lo MISMO que hace el backend (cfg.resolver_formato_lista)
+        // pero acá lo computamos en el front para mostrarlo al operador
+        // en el modal — así sabe qué va a mandar antes de confirmar.
+        const validos = ['link', 'pdf', 'ambos', 'texto'];
+        if (validos.includes(this.clientePreferencia)) return this.clientePreferencia;
+        if (validos.includes(this.formatoDefaultGlobal)) return this.formatoDefaultGlobal;
+        return 'link';
+      },
+
+      _fuenteModo() {
+        // ¿De dónde vino el modo efectivo? Lo usamos en el modal para
+        // que el operador entienda por qué se va a mandar así.
+        const validos = ['link', 'pdf', 'ambos'];
+        if (validos.includes(this.clientePreferencia)) {
+          return 'preferencia guardada del cliente';
+        }
+        return 'configuración general del negocio';
+      },
+
+      async enviarViaBotAlCliente() {
+        // Botón "📱 Enviar via bot" — flujo TODO-EN-UNO. Resuelve los
+        // tres pasos implícitos que antes el operador tenía que hacer
+        // a mano (guardar lista → generar link → mandar) en una sola
+        // confirmación clara. Muestra el modo efectivo resuelto en
+        // cascada (preferencia del cliente / global), no pregunta.
+        if (!this.cliente.id) {
+          this.errores = [{mensaje: 'Falta seleccionar el cliente.'}];
+          return;
+        }
+        if (!this.clienteWhatsapp) {
+          this.abrirModal({
+            tipo: 'error',
+            titulo: 'Cliente sin WhatsApp',
+            mensaje: 'Este cliente no tiene número de WhatsApp cargado. '
+                   + 'Editalo en /admin/cliente/cliente/ para agregárselo.',
+          });
+          return;
+        }
+        if (this.enLista.length === 0 || !this.nombreLista.trim()) {
+          this.abrirModal({
+            tipo: 'error',
+            titulo: 'Falta info en la lista',
+            mensaje: 'Antes de enviar:\n'
+                   + '• Poné un nombre a la lista (ej. "Lista marzo")\n'
+                   + '• Agregá al menos un artículo desde el panel izquierdo',
+          });
+          return;
+        }
+
+        const modo = this._resolverModoEfectivo();
+        const fuente = this._fuenteModo();
+        const modoLabels = {
+          'texto': '📝 Solo texto (lista pegada en el mensaje)',
+          'link':  '📎 Solo link público (siempre actualizado)',
+          'pdf':   '📄 PDF adjunto (queda en el chat)',
+          'ambos': '✨ PDF + link debajo (lo mejor de los dos)',
+        };
+        // Modo texto NO necesita link público — la lista va embebida en
+        // el cuerpo del mensaje. Esto simplifica el flujo: ahorra un
+        // paso (generar link) y una llamada al backend.
+        const necesitaLink = (modo === 'link' || modo === 'ambos');
+
+        // Armar lista de "pasos que voy a hacer" en lenguaje claro,
+        // así el operador entiende qué va a pasar antes de confirmar.
+        const pasos = [];
+        if (!this.listaActualId) {
+          pasos.push('1. Guardar la lista (todavía no se guardó).');
+        }
+        if (necesitaLink && !this.linkActivo) {
+          pasos.push(`${pasos.length + 1}. Generar un link público compartible.`);
+        }
+        pasos.push(`${pasos.length + 1}. Mandar al WhatsApp de ${this.cliente.nombre}.`);
+
+        const primerNombre = (this.cliente.nombre || 'el cliente').split(' ')[0];
+
+        this.abrirModal({
+          tipo: 'confirm',
+          titulo: `Enviar a ${primerNombre}`,
+          mensaje:
+            `Voy a mandarle la lista "${this.nombreLista}" en modo:\n\n`
+            + `${modoLabels[modo]}\n`
+            + `(según ${fuente})\n\n`
+            + 'Pasos:\n'
+            + pasos.map(p => '  ' + p).join('\n')
+            + '\n\nSi querés cambiar el modo, cancelá y editalo en el cliente '
+            + '(/admin/cliente/cliente/) o usá "Difundir a varios" donde podés elegir.',
+          okLabel: '✓ Sí, hacer todo',
+          cancelLabel: 'Cancelar',
+          callback: () => this._ejecutarFlujoCompletoEnvioBot(modo, necesitaLink),
+        });
+      },
+
+      async _ejecutarFlujoCompletoEnvioBot(modo, necesitaLink) {
+        // Ejecuta los 3 pasos en orden: guardar (si hace falta) →
+        // generar link (si hace falta) → encolar envío. Cualquier
+        // paso que falle aborta y muestra el error.
+        this.enviandoViaBot = true;
+        this.mensaje = '';
+        this.errores = [];
+        try {
+          // Paso 1: guardar si todavía no se guardó.
+          if (!this.listaActualId) {
+            this.mensaje = 'Guardando lista…';
+            const id = await this.guardarLista();
+            if (!id) {
+              // guardarLista ya escribió errores en this.errores.
+              return;
+            }
+          }
+
+          // Paso 2: generar link si lo necesita y no está activo.
+          if (necesitaLink && !this.linkActivo) {
+            this.mensaje = 'Generando link público…';
+            await this._ejecutarCompartirLink();
+            if (!this.linkActivo) {
+              this.abrirModal({
+                tipo: 'error',
+                titulo: 'No se pudo generar el link',
+                mensaje: 'Probá de nuevo, o cambiá el modo del cliente a "Solo PDF" '
+                       + '(que no necesita link).',
+              });
+              return;
+            }
+          }
+
+          // Paso 3: encolar envío al bot.
+          this.mensaje = 'Mandando al bot…';
+          await this._ejecutarEnviarViaBotCliente(modo);
+        } finally {
+          this.enviandoViaBot = false;
+        }
+      },
+
+      async _ejecutarEnviarViaBotCliente(modoOverride) {
+        this.enviandoViaBot = true;
+        this.errores = [];
+        try {
+          const r = await fetch(
+            `/articulos/api/lista-precios/${this.listaActualId}/difundir/enviar/`,
+            {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+              },
+              body: JSON.stringify({
+                cliente_ids: [this.cliente.id],
+                modo_override: modoOverride || '',
+              }),
+            },
+          );
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            // Si hay envíos en curso (409), avisamos y ofrecemos
+            // fallback wa.me. Sino, error genérico.
+            this.abrirModal({
+              tipo: 'error',
+              titulo: 'No se pudo encolar',
+              mensaje: (data.error || 'Error desconocido.')
+                + '\n\nPodés probar el botón "🌐 Manual (wa.me)" como alternativa.',
+            });
+            return;
+          }
+          // OK — feedback inline rápido. El procesamiento real lo
+          // hace el worker en background (1 envío, ~5 segundos).
+          this.mensaje = '✓ Mandado via bot. Llega al cliente en unos segundos.';
+          setTimeout(() => { this.mensaje = ''; }, 4000);
+        } catch (e) {
+          this.abrirModal({
+            tipo: 'error',
+            titulo: 'Error de red',
+            mensaje: 'No se pudo contactar al servidor: ' + e.message
+              + '\n\nProbá "🌐 Manual (wa.me)" como fallback.',
+          });
+        } finally {
+          this.enviandoViaBot = false;
+        }
+      },
+
+      async compartirPorWhatsApp() {
+        // Botón "💬 Compartir...": el operador elige a quién mandárselo.
+        // Si el browser soporta Web Share API (celulares) se abre el
+        // menú nativo del SO con todas las apps de mensajería; en
+        // desktop cae a `wa.me/` sin destinatario (el operador
+        // elige el contacto en WhatsApp Web).
+        if (!(await this._asegurarLinkActivo())) return;
+        const mensaje = this._mensajeWhatsapp();
+
+        if (navigator.share) {
+          try {
+            await navigator.share({
+              title: 'Lista de precios',
+              text: mensaje,
+              url: this.shareUrl,
+            });
+            return;
+          } catch (e) {
+            if (e.name === 'AbortError') return;
+            // Si hay otro error, seguimos al fallback de wa.me.
+          }
+        }
+        const texto = encodeURIComponent(mensaje);
+        window.open(`https://wa.me/?text=${texto}`, '_blank');
+      },
+
+      abrirDifundir() {
+        // Botón "📢 Difundir a varios": abre la pantalla de difusión
+        // manual con el id de la lista. Esa pantalla maneja filtros,
+        // selección múltiple y enviar uno por uno a wa.me.
+        if (!this.listaActualId || !this.linkActivo) return;
+        window.open(
+          `/articulos/lista-precios/${this.listaActualId}/difundir/`,
+          '_blank',
+        );
+      },
+
+      // ---- Util ----
+      formatearFecha(iso) {
+        if (!iso) return '';
+        try {
+          const d = new Date(iso);
+          return d.toLocaleString('es-AR', {
+            day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          });
+        } catch (e) {
+          return iso;
+        }
+      },
+    };
+  }
+</script>
+
+<style>
+  [x-cloak] { display: none !important; }
+</style>
+
+</body>
+</html>

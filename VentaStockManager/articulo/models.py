@@ -1,8 +1,11 @@
 
 import random
 import string
+import uuid
+from datetime import timedelta
 from django.db import models
 import random
+from django.utils import timezone
 from django.utils.html import format_html
 
 
@@ -76,9 +79,26 @@ class ListaPrecios(models.Model):
         decimal_places=2,
         default=0,
         help_text=(
-            'Descuento adicional aplicado a TODA la lista (sobre el '
-            'precio que ya considera PrecioCliente si lo hay). 0 = sin '
-            'descuento extra.'
+            'Magnitud del ajuste porcentual aplicado a TODA la lista, '
+            'siempre positiva (0-100). Si querés AUMENTO en vez de '
+            'descuento, cambiá `tipo_ajuste`. El campo no se renombró '
+            'para no romper datos / APIs viejas.'
+        ),
+    )
+    # Cómo se interpreta `descuento_porcentaje`: como descuento (-pct)
+    # o como aumento (+pct). Default 'descuento' para compatibilidad
+    # con todas las listas que ya existen en DB. Ver migración 0008.
+    TIPO_AJUSTE_CHOICES = [
+        ('descuento', 'Descuento'),
+        ('aumento', 'Aumento'),
+    ]
+    tipo_ajuste = models.CharField(
+        max_length=10,
+        choices=TIPO_AJUSTE_CHOICES,
+        default='descuento',
+        help_text=(
+            'Cómo se interpreta el % global: descuento (resta) o '
+            'aumento (suma). El número en sí siempre es positivo (0–100).'
         ),
     )
     descuento_motivo = models.CharField(max_length=255, blank=True, default='')
@@ -91,6 +111,32 @@ class ListaPrecios(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    # Link público compartible. Cuando `share_token` es NULL, la lista
+    # NO tiene link activo (estado por defecto). Cuando se comparte,
+    # se genera un UUID4 + una fecha de vencimiento opcional. La
+    # combinación token + chequeo de expiración la hace la vista
+    # pública — no usamos un BooleanField "compartida" porque el
+    # token-mismo es la prueba de existencia y permite revocar
+    # simplemente seteándolo a NULL (sin tocar otras filas).
+    share_token = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+        help_text=(
+            'UUID que se usa en la URL pública. NULL = link no '
+            'compartido o revocado.'
+        ),
+    )
+    share_expira_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Fecha de expiración del link público. NULL = no expira '
+            '(no recomendado; el flujo normal usa el default de '
+            'ConfiguracionGeneral.lista_precios_link_dias).'
+        ),
+    )
 
     articulos = models.ManyToManyField(
         'Articulo',
@@ -112,6 +158,71 @@ class ListaPrecios(models.Model):
 
     def cantidad_items(self) -> int:
         return self.items.count()
+
+    @property
+    def link_activo(self) -> bool:
+        """
+        ¿La lista tiene un link público utilizable ahora?
+
+        Activo = hay token Y (no hay expiración O todavía no expiró).
+        Esto es la fuente de verdad usada por la vista pública para
+        decidir si renderizar o devolver 404 — y por el front (vía
+        la API JSON) para mostrar el botón "Desactivar" vs el botón
+        "Compartir".
+        """
+        if not self.share_token:
+            return False
+        if self.share_expira_at is None:
+            return True
+        return self.share_expira_at > timezone.now()
+
+    def compartir(self, dias: int | None = None) -> dict:
+        """
+        Activa (o renueva) el link público de la lista.
+
+        - Genera un UUID4 nuevo (si ya había uno, lo PISA — pensar
+          esto como "revocar y regenerar": el link anterior queda
+          inválido inmediatamente).
+        - Si `dias` es None, lee `ConfiguracionGeneral.lista_precios_link_dias`.
+          Si el caller pasa 0 o un valor explícito, se respeta tal cual.
+        - Persiste los cambios con `save(update_fields=...)` para no
+          tocar `updated_at` con un save() completo (la lista en sí
+          no cambió — solo el link).
+
+        Devuelve el dict `{'share_token': UUID, 'share_expira_at': dt}`
+        para que el caller arme el response sin re-leer del modelo.
+        """
+        # Import perezoso para evitar ciclos (configuracion importa
+        # apps de Django muy temprano).
+        from configuracion.models import get_config
+
+        if dias is None:
+            dias = get_config().lista_precios_link_dias
+
+        self.share_token = uuid.uuid4()
+        if dias and dias > 0:
+            self.share_expira_at = timezone.now() + timedelta(days=dias)
+        else:
+            # `dias=0` explícito = "no expira". Pensado para el corner
+            # case en que Osvaldo quiera un link permanente para un
+            # cliente VIP (no recomendado, pero no lo prohibimos).
+            self.share_expira_at = None
+        self.save(update_fields=['share_token', 'share_expira_at', 'updated_at'])
+        return {
+            'share_token': self.share_token,
+            'share_expira_at': self.share_expira_at,
+        }
+
+    def desactivar_link(self) -> None:
+        """
+        Revoca el link público. Si no había link, no hace nada
+        (idempotente — el caller no necesita chequear antes).
+        """
+        if not self.share_token and not self.share_expira_at:
+            return
+        self.share_token = None
+        self.share_expira_at = None
+        self.save(update_fields=['share_token', 'share_expira_at', 'updated_at'])
 
 
 class ListaPreciosItem(models.Model):
@@ -150,6 +261,142 @@ class ListaPreciosItem(models.Model):
 
     def __str__(self):
         return f'{self.lista.nombre} · {self.articulo.nombre}'
+
+
+class DifusionListaPreciosEnvio(models.Model):
+    """
+    Un envío individual de una lista de precios a un cliente por WhatsApp.
+
+    Se crean en bulk cuando el operador aprieta "Enviar a los N
+    seleccionados" en la pantalla de difundir. La task de django-q2
+    los procesa uno por uno con delay (rate limit) para no levantar
+    sospechas en WhatsApp.
+
+    El `modo` se SNAPSHOTEA al crear el envío (no se lee de
+    Cliente.formato_preferido_lista_precios en runtime). Razón: si el
+    cliente cambia su preferencia entre que se encola y se procesa,
+    queremos respetar la decisión tomada al difundir.
+    """
+
+    MODO_LINK = 'link'
+    MODO_PDF = 'pdf'
+    MODO_AMBOS = 'ambos'
+    MODO_TEXTO = 'texto'
+    MODO_CHOICES = [
+        (MODO_TEXTO, 'Solo texto'),
+        (MODO_LINK, 'Solo link'),
+        (MODO_PDF, 'Solo PDF'),
+        (MODO_AMBOS, 'PDF + link'),
+    ]
+
+    STATUS_PENDIENTE = 'pendiente'
+    STATUS_ENVIANDO = 'enviando'
+    STATUS_ENVIADO = 'enviado'
+    STATUS_FALLIDO = 'fallido'
+    STATUS_CHOICES = [
+        (STATUS_PENDIENTE, 'Pendiente'),
+        (STATUS_ENVIANDO, 'Enviando'),
+        (STATUS_ENVIADO, 'Enviado'),
+        (STATUS_FALLIDO, 'Fallido'),
+    ]
+
+    lista = models.ForeignKey(
+        'ListaPrecios',
+        related_name='envios_difusion',
+        on_delete=models.CASCADE,
+    )
+    cliente = models.ForeignKey(
+        'cliente.Cliente',
+        related_name='envios_difusion_lista',
+        on_delete=models.PROTECT,
+    )
+    modo = models.CharField(max_length=10, choices=MODO_CHOICES)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDIENTE,
+    )
+    # Snapshot del número usado al momento de encolar — útil si el
+    # cliente cambia su whatsapp_number después de que se mandó.
+    telefono_usado = models.CharField(max_length=20, blank=True, default='')
+    error_msg = models.TextField(blank=True, default='')
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    creado_por = models.ForeignKey(
+        'auth.User',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'envío de difusión de lista'
+        verbose_name_plural = 'envíos de difusión de lista'
+        indexes = [
+            # Worker query: WHERE status=pendiente ORDER BY created_at
+            models.Index(fields=['status', 'created_at']),
+            # Reporte por lista: WHERE lista_id=X
+            models.Index(fields=['lista', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.lista.nombre} → {self.cliente.nombre_completo()} [{self.status}]'
+
+
+class SolicitudListaCliente(models.Model):
+    """
+    Cliente pidió la lista por WhatsApp pero NO tiene una asignada.
+
+    Se crea desde `wa_campania.auto_responder` cuando detecta el caso.
+    El operador la ve como notificación en el header del admin (badge
+    rojo con count) y puede:
+      - Ir directo al editor de lista con el cliente preseleccionado
+        para armarle una rápido.
+      - Marcarla como "resuelta" (después de armar la lista o si decidió
+        ignorarla — ej. ex-cliente que insiste).
+
+    NO duplicamos: si el cliente vuelve a pedir mientras hay una
+    solicitud pendiente, no creamos otra (sería ruido visual). Si la
+    primera ya está resuelta y vuelve a pedir, sí creamos nueva.
+    """
+
+    cliente = models.ForeignKey(
+        'cliente.Cliente',
+        related_name='solicitudes_lista',
+        on_delete=models.CASCADE,
+    )
+    # Texto crudo que mandó el cliente. Sirve para entender si pidió
+    # "lista" genérica o algo más específico ("lista de bebidas") que
+    # el operador pueda usar al armarle la lista.
+    mensaje_original = models.TextField(blank=True, default='')
+    resuelta = models.BooleanField(
+        default=False,
+        help_text='Marcar cuando la lista esté armada o se decida ignorar.',
+    )
+    resuelta_at = models.DateTimeField(null=True, blank=True)
+    notas = models.TextField(
+        blank=True,
+        default='',
+        help_text='Opcional: por qué se resolvió de tal manera, qué lista se le armó, etc.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'solicitud de lista'
+        verbose_name_plural = 'solicitudes de lista'
+        indexes = [
+            # Query del badge: COUNT WHERE resuelta=False. Index acelera.
+            models.Index(fields=['resuelta', '-created_at']),
+            # Para chequeo de dedupe (¿ya hay una pendiente para este cliente?).
+            models.Index(fields=['cliente', 'resuelta']),
+        ]
+
+    def __str__(self):
+        estado = 'pendiente' if not self.resuelta else 'resuelta'
+        return f'{self.cliente.nombre_completo()} pidió lista [{estado}]'
 
 
 class ReglaCategoria(models.Model):
@@ -208,7 +455,18 @@ class ReglaCategoria(models.Model):
 # ---------------------------------------------------------------------------
 class Articulo(models.Model):
     id = models.AutoField(primary_key=True)
-    codigo = models.CharField(max_length=255)
+    # `codigo` es el identificador "humano" del artículo (etiqueta,
+    # comprobante, factura, planilla). Lo deja libre el operador pero
+    # si lo omite, `save()` autogenera uno único (iniciales + 4 dígitos
+    # con retry en colisión). Por eso `blank=True`: el form admin / la
+    # grilla no lo exigen, save() lo completa.
+    #
+    # NO unique=True a nivel DB: el dump legacy de Sheets tiene
+    # duplicados (mismo código en filas distintas) y agregar el
+    # constraint reventaría la migración. La unicidad se garantiza
+    # SOLO para los códigos auto-generados — los que carga el operador
+    # a mano pueden chocar y lo tomamos como "asunto del operador".
+    codigo = models.CharField(max_length=255, blank=True)
     codigo_interno = models.CharField(max_length=50, blank=True, null=True)
     nombre = models.CharField(max_length=255)
     descripcion = models.TextField(blank=True, null=True)
@@ -246,7 +504,54 @@ class Articulo(models.Model):
         related_name='articulos',
     )
 
+    def _generar_codigo_unico(self) -> str:
+        """
+        Devuelve un código nuevo que NO existe en la tabla para esta
+        clase. Formato: ``<INICIALES>-<4 dígitos>`` (ej. "COCA-1234").
+
+        Usa hasta 20 reintentos con random 4-dígitos. Espacio de
+        candidatos por prefijo: 10.000. Para que las colisiones sean
+        problema realmente, harían falta ~miles de artículos con las
+        mismas iniciales — irrealista para este negocio.
+
+        Fallback: si los 20 reintentos fallan (extremadamente improbable),
+        usamos timestamp para garantizar unicidad sin tirar excepción.
+        """
+        nombre = (self.nombre or '').strip()
+        if nombre:
+            # Iniciales de cada palabra, hasta 4 chars, en mayúsculas.
+            iniciales = ''.join(w[0] for w in nombre.split())[:4].upper()
+        else:
+            iniciales = 'ART'
+        if not iniciales:
+            iniciales = 'ART'
+
+        Cls = type(self)
+        for _ in range(20):
+            random_part = ''.join(random.choices(string.digits, k=4))
+            candidato = f'{iniciales}-{random_part}'
+            # Excluímos el propio pk para no chocar con uno mismo en
+            # caso de un edge case (update donde codigo se vacía).
+            qs = Cls.objects.filter(codigo=candidato)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if not qs.exists():
+                return candidato
+
+        # Fallback paranoia: timestamp en lugar de random. Garantía
+        # de no colisionar consigo mismo en un sub-segundo razonable.
+        import time
+        return f'{iniciales}-{int(time.time()) % 1_000_000}'
+
     def save(self, *args, **kwargs):
+        # ---- Auto-generación de codigo (público, único) ----
+        # El operador puede crear un artículo sin código (form admin o
+        # grilla). Acá lo completamos con uno único auto-generado. Solo
+        # si está vacío — si trae uno cargado a mano, lo respetamos.
+        if not (self.codigo or '').strip():
+            self.codigo = self._generar_codigo_unico()
+
+        # ---- Auto-generación de codigo_interno (legacy) ----
         if not self.codigo_interno:
             # Obtener las iniciales del nombre del artículo
             iniciales = ''.join(word[0] for word in self.nombre.split())
@@ -254,7 +559,51 @@ class Articulo(models.Model):
             random_number = ''.join(random.choices(string.digits, k=4))
             # Combinar las iniciales y el número aleatorio
             self.codigo_interno = iniciales.upper() + random_number
+
+        # ---- Detectar cambio de precio_minorista ----
+        # Cuando sube el precio del artículo (típicamente por inflación),
+        # los PrecioCliente acordados sobre el precio VIEJO quedan
+        # desactualizados — el cliente termina con un descuento implícito
+        # mucho más grande que el original. Para evitar precios stale,
+        # cuando detectamos un cambio en precio_minorista borramos todos
+        # los PrecioCliente apuntando a este artículo. Osvaldo (o quien
+        # haya hecho el acuerdo) tiene que volver a setearlos manualmente
+        # — esa fricción es deseada: obliga a revisar si el acuerdo sigue
+        # vigente con el precio nuevo.
+        #
+        # update_fields acotado y precio_minorista NO está en la lista =>
+        # save() no toca el precio, no hace falta chequear.
+        update_fields = kwargs.get('update_fields')
+        precio_cambio = False
+        if self.pk and (update_fields is None or 'precio_minorista' in update_fields):
+            try:
+                anterior = type(self).objects.only('precio_minorista').get(pk=self.pk)
+                if anterior.precio_minorista != self.precio_minorista:
+                    precio_cambio = True
+            except type(self).DoesNotExist:
+                # Race condition rarísima: la fila se borró entre que
+                # tenemos self.pk y el SELECT. No es crítico: tratamos
+                # como "no había antes" → no borramos pactados (no hay
+                # ninguno que apuntar a un Articulo recién borrado).
+                pass
+
         super().save(*args, **kwargs)
+
+        if precio_cambio:
+            # Borrar los PrecioCliente del artículo en una sola query.
+            # Importamos local para evitar circular (cliente → articulo).
+            from cliente.models import PrecioCliente
+            borrados, _ = PrecioCliente.objects.filter(articulo_id=self.pk).delete()
+            # auditlog ya logea el delete por cada PrecioCliente; no
+            # necesitamos extra logging acá.
+            if borrados:
+                # print + tag para que aparezca en los logs de Render.
+                # Es info útil para el operador si se da cuenta tarde
+                # de que perdió un acuerdo (puede grep-ear en logs).
+                print(
+                    f'[ARTICULO {self.pk}] precio_minorista cambió → '
+                    f'{borrados} PrecioCliente borrados (acuerdos stale).'
+                )
 
     def __str__(self):
         return f'{self.codigo} - {self.codigo_interno} | {self.marca + " - " if self.marca else " - "} |  {self.nombre}' \

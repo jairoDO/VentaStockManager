@@ -1,0 +1,130 @@
+{% load static %}
+{% comment %}
+Vista PÚBLICA de una lista de precios. No requiere login: la valida
+el token UUID en la URL.
+
+Diseño mobile-first deliberadamente sobrio:
+  - No tiene chrome del admin (sin sidebar, sin botones "volver").
+  - El header se queda corto: nombre del negocio + cliente + validez
+    del link.
+  - La tabla es simple: artículo + precio. Si hay nota en el item,
+    la mostramos como subtítulo gris (en vez de una columna extra,
+    que en mobile rompe el layout).
+  - Botón fijo abajo para descargar PDF, que en celular es lo que
+    los clientes prefieren para guardarse / imprimir.
+
+El precio que mostramos YA tiene aplicado el descuento de la lista
+(precio_efectivo se calcula en la vista con `descuento_lista=lista.descuento_porcentaje`).
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Lista de precios — {{ cliente.nombre_completo }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {% comment %}
+  Bloqueamos indexing — los links públicos son temporales y no queremos
+  que Google los cachee.
+  {% endcomment %}
+  <meta name="robots" content="noindex, nofollow">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+<div class="max-w-2xl mx-auto px-4 py-6 pb-32">
+
+  {# ---- Header ---- #}
+  <header class="mb-6 text-center">
+    <h1 class="text-xl font-bold text-slate-900">{{ negocio_nombre }}</h1>
+    <p class="text-sm text-slate-500 mt-1">Lista de precios para</p>
+    <p class="text-lg font-semibold text-slate-700">{{ cliente.nombre_completo }}</p>
+    {% if lista.share_expira_at %}
+      <p class="text-xs text-slate-400 mt-2">
+        Válido hasta el {{ lista.share_expira_at|date:"d/m/Y H:i" }}
+      </p>
+    {% endif %}
+    {% if lista.descuento_porcentaje > 0 %}
+      {% comment %}
+        El chip cambia de color según el tipo de ajuste:
+        emerald (verde) si es descuento (buena onda, "te ahorrás"),
+        amber (ámbar) si es aumento (heads up al cliente sin alarmar).
+      {% endcomment %}
+      {% if lista.tipo_ajuste == 'aumento' %}
+        <div class="mt-3 inline-block px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-sm font-medium">
+          Aumento aplicado: {{ lista.descuento_porcentaje|floatformat:"-2" }}%
+          {% if lista.descuento_motivo %} · {{ lista.descuento_motivo }}{% endif %}
+        </div>
+      {% else %}
+        <div class="mt-3 inline-block px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-sm font-medium">
+          Descuento aplicado: {{ lista.descuento_porcentaje|floatformat:"-2" }}%
+          {% if lista.descuento_motivo %} · {{ lista.descuento_motivo }}{% endif %}
+        </div>
+      {% endif %}
+    {% endif %}
+  </header>
+
+  {# ---- Tabla ---- #}
+  <div class="bg-white shadow rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-100 text-xs uppercase text-slate-600 border-b">
+        <tr>
+          <th class="px-3 py-2 text-left">Artículo</th>
+          <th class="px-3 py-2 text-right">Precio</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          <tr class="border-b border-slate-100 last:border-0">
+            <td class="px-3 py-2">
+              <div class="font-medium">
+                {% if it.pactado %}<span class="text-amber-600 mr-1">*</span>{% endif %}
+                {% if it.marca and it.marca != 'Generico' %}<span class="text-slate-500 text-xs">{{ it.marca }} ·</span>{% endif %}
+                {{ it.nombre }}
+              </div>
+              {% if it.codigo %}
+                <div class="text-xs text-slate-400 font-mono">{{ it.codigo }}</div>
+              {% endif %}
+              {% if it.nota %}
+                <div class="text-xs text-slate-500 italic mt-0.5">{{ it.nota }}</div>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2 text-right font-mono whitespace-nowrap font-semibold">
+              ${{ it.precio|floatformat:2 }}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="2" class="px-3 py-6 text-center text-slate-500">
+              Esta lista está vacía.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ---- Footer notas ---- #}
+  <div class="mt-4 text-xs text-slate-500 space-y-1">
+    {% if items %}
+      {% comment %}
+      Solo mostramos la leyenda del asterisco si hay al menos un
+      precio pactado en la lista. Evita que el cliente vea una nota
+      ambigua sin contexto.
+      {% endcomment %}
+      {% for it in items %}{% if it.pactado %}<p class="mt-1">* Precio acordado con el cliente.</p>{% endif %}{% endfor %}
+    {% endif %}
+    <p>Precios sujetos a cambios. Esta lista es solo informativa.</p>
+  </div>
+
+  {# ---- Botón PDF ---- #}
+  <div class="mt-6 text-center">
+    <a href="{% url 'lista_precios_publica_pdf' lista.share_token %}"
+       class="inline-block px-6 py-3 bg-emerald-600 text-white rounded-lg shadow hover:bg-emerald-700 font-semibold">
+      Descargar PDF
+    </a>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -26,6 +26,7 @@ def precio_efectivo(
     descuento_lista: Optional[Decimal] = None,
     *,
     precios_pactados_map: Optional[dict] = None,
+    tipo_ajuste: str = 'descuento',
 ) -> Decimal:
     """
     Devuelve el precio que se le cobra a `cliente` por `articulo`,
@@ -36,13 +37,18 @@ def precio_efectivo(
          de precios — el mayorista solo aplica cuando hay umbral
          de cantidad, lo cual no tiene sentido en una lista parcial).
 
-      2. Sobre eso, aplica el `descuento_lista` (0-100) si vino.
+      2. Sobre eso, aplica el ajuste de la lista:
+           - tipo_ajuste='descuento' → factor = (100 - pct) / 100
+           - tipo_ajuste='aumento'   → factor = (100 + pct) / 100
 
     `precios_pactados_map` (opcional): si vas a calcular el precio
     de MUCHOS artículos del mismo cliente (como en la pantalla
     custom o el PDF), pasá un dict `{articulo_id: PrecioCliente}`
     pre-cargado para evitar N+1. Si no lo pasás, hacemos una
     query por artículo.
+
+    `tipo_ajuste`: viene del modelo `ListaPrecios.tipo_ajuste`. Default
+    'descuento' por compatibilidad con callers viejos.
     """
     # Resolver precio base (con PrecioCliente o minorista).
     precio_base: Optional[Decimal] = None
@@ -66,13 +72,18 @@ def precio_efectivo(
     if precio_base is None:
         precio_base = articulo.precio_minorista or Decimal('0')
 
-    # Aplicar descuento de la lista, si vino.
+    # Aplicar ajuste de la lista, si vino.
     if descuento_lista is None:
         descuento_lista = Decimal('0')
     if descuento_lista <= 0:
         return precio_base.quantize(Decimal('0.01'))
 
-    factor = (CIEN - descuento_lista) / CIEN
+    # El campo conceptualmente es "magnitud del ajuste", siempre positivo.
+    # El signo lo da `tipo_ajuste`.
+    if tipo_ajuste == 'aumento':
+        factor = (CIEN + descuento_lista) / CIEN
+    else:
+        factor = (CIEN - descuento_lista) / CIEN
     return (precio_base * factor).quantize(Decimal('0.01'))
 
 

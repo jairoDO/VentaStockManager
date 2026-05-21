@@ -132,6 +132,19 @@ def procesar_archivo_xlsx(ruta_archivo):
     return errores  
 
 def actualizar_precios_articulos_desde_drive():
+    # Switch maestro: si la integración con Sheets está apagada en el
+    # singleton de configuración, NO-OP (con mensaje claro para los
+    # logs / panel de tareas). Osvaldo lo apaga/prende desde
+    # /admin/configuracion/configuraciongeneral/.
+    from configuracion.models import get_config
+    if not get_config().sheets_sync_habilitado:
+        msg = (
+            'Sync con Google Sheets desactivado. Para reactivarlo: '
+            'andá a /admin/configuracion/configuraciongeneral/ y tildá '
+            '"Sheets sync habilitado".'
+        )
+        print(f'[sheets-sync] NOP: {msg}')
+        return msg
     ruta_archivo = download_sheet_from_google_sheets(
         settings.GOOGLE_SHEET_ID,
         settings.GOOGLE_SHEET_RANGE,

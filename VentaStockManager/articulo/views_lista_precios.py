@@ -55,6 +55,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from cliente.models import Cliente
@@ -106,11 +108,11 @@ def lista_precios_pantalla(request: HttpRequest) -> HttpResponse:
 # ---------------------------------------------------------------------------
 # Helpers de serialización
 # ---------------------------------------------------------------------------
-def _serializar_item(item: ListaPreciosItem, cliente, descuento_lista, pactados_map) -> dict[str, Any]:
+def _serializar_item(item: ListaPreciosItem, cliente, descuento_lista, pactados_map, tipo_ajuste: str = 'descuento') -> dict[str, Any]:
     """
     Convierte un `ListaPreciosItem` a dict JSON-friendly, con el
-    precio efectivo ya calculado (PrecioCliente + descuento de
-    la lista).
+    precio efectivo ya calculado (PrecioCliente + ajuste de la lista,
+    sea descuento o aumento según `tipo_ajuste`).
     """
     articulo = item.articulo
     efectivo = precio_efectivo(
@@ -118,6 +120,7 @@ def _serializar_item(item: ListaPreciosItem, cliente, descuento_lista, pactados_
         cliente,
         descuento_lista=descuento_lista,
         precios_pactados_map=pactados_map,
+        tipo_ajuste=tipo_ajuste,
     )
     tiene_pactado = pactados_map.get(articulo.id) is not None
     return {
@@ -161,9 +164,15 @@ def api_listas_del_cliente(request: HttpRequest, cliente_id: int) -> JsonRespons
         'id': l.id,
         'nombre': l.nombre,
         'descuento_porcentaje': str(l.descuento_porcentaje),
+        'tipo_ajuste': l.tipo_ajuste,
         'descuento_motivo': l.descuento_motivo or '',
         'count_items': l._count_items,
         'updated_at': l.updated_at.isoformat(),
+        # `link_activo` se calcula en Python (property). No vale la
+        # pena annotate-arlo: el queryset es chico (listas por cliente)
+        # y el check de `share_expira_at > now()` queda redundante con
+        # el property.
+        'link_activo': l.link_activo,
     } for l in qs]
 
     return JsonResponse({
@@ -206,18 +215,42 @@ def api_detalle_lista(request: HttpRequest, cliente_id: int, lista_id: int) -> J
     pactados = cargar_precios_pactados(cliente, articulos)
 
     items_data = [
-        _serializar_item(it, cliente, lista.descuento_porcentaje, pactados)
+        _serializar_item(it, cliente, lista.descuento_porcentaje, pactados, lista.tipo_ajuste)
         for it in items
     ]
+
+    # Resolver el modo efectivo de envío para este cliente. El front
+    # lo usa para mostrar en el modal "voy a mandar en modo X" sin
+    # preguntar al operador (a menos que él quiera cambiarlo).
+    # Misma cascada que la API de difundir: cliente.preferencia → global.
+    from configuracion.models import get_config
+    cfg = get_config()
 
     return JsonResponse({
         'id': lista.id,
         'cliente_id': cliente.id,
         'cliente_nombre': cliente.nombre_completo(),
+        'cliente_saldo': str(cliente.saldo),
+        'cliente_whatsapp': cliente.whatsapp_number or '',
+        'cliente_puede_recibir_whatsapp': cliente.puede_recibir_whatsapp,
+        'cliente_formato_preferido': cliente.formato_preferido_lista_precios or '',
+        'formato_default_global': cfg.formato_default_lista_precios,
         'nombre': lista.nombre,
         'descuento_porcentaje': str(lista.descuento_porcentaje),
+        'tipo_ajuste': lista.tipo_ajuste,
         'descuento_motivo': lista.descuento_motivo or '',
         'updated_at': lista.updated_at.isoformat(),
+        # Estado del link público — el front lo usa para decidir si
+        # muestra "Compartir" o "Mostrar link existente / desactivar".
+        'link_activo': lista.link_activo,
+        'share_token': str(lista.share_token) if lista.share_token else '',
+        'share_expira_at': lista.share_expira_at.isoformat() if lista.share_expira_at else '',
+        'share_url': (
+            request.build_absolute_uri(
+                reverse('lista_precios_publica_web', args=[lista.share_token])
+            )
+            if lista.link_activo else ''
+        ),
         'items': items_data,
     })
 
@@ -286,6 +319,20 @@ def api_articulos_disponibles(request: HttpRequest) -> JsonResponse:
             | Q(codigo_interno__icontains=q)
             | Q(marca__icontains=q)
         )
+
+    # Modo "devolver solo los IDs de TODOS los matches, sin paginar".
+    # Lo usa el botón "Agregar TODOS los N que matchean" del front
+    # para poder sumar a la lista sin tener que navegar página por
+    # página. Capeamos a 1000 por seguridad — si Osvaldo necesita
+    # más que eso en una sola lista, algo está raro y conviene que
+    # filtre primero (categoría, búsqueda).
+    if request.GET.get('todos') == '1':
+        ids = list(qs.values_list('id', flat=True)[:1000])
+        return JsonResponse({
+            'ids': ids,
+            'total': len(ids),
+            'capped': len(ids) >= 1000,
+        })
 
     paginator = Paginator(qs, _page_size())
     page_obj = paginator.get_page(page)
@@ -385,9 +432,16 @@ def api_guardar_lista(request: HttpRequest) -> JsonResponse:
         descuento = Decimal(str(desc_raw or '0'))
     except (InvalidOperation, TypeError):
         descuento = Decimal('0')
-        errores.append({'campo': 'descuento_porcentaje', 'mensaje': 'Descuento no es un número válido.'})
+        errores.append({'campo': 'descuento_porcentaje', 'mensaje': 'El % no es un número válido.'})
     if descuento < 0 or descuento > 100:
-        errores.append({'campo': 'descuento_porcentaje', 'mensaje': 'El descuento debe estar entre 0 y 100.'})
+        errores.append({'campo': 'descuento_porcentaje', 'mensaje': 'El % debe estar entre 0 y 100.'})
+
+    # tipo_ajuste: 'descuento' (default) o 'aumento'. Validamos contra
+    # los choices del modelo para no aceptar valores arbitrarios.
+    tipo_ajuste = (payload.get('tipo_ajuste') or 'descuento').strip()
+    if tipo_ajuste not in ('descuento', 'aumento'):
+        errores.append({'campo': 'tipo_ajuste', 'mensaje': 'tipo_ajuste debe ser "descuento" o "aumento".'})
+        tipo_ajuste = 'descuento'
 
     motivo = (payload.get('descuento_motivo') or '').strip()
 
@@ -451,6 +505,7 @@ def api_guardar_lista(request: HttpRequest) -> JsonResponse:
                 )
             lista.nombre = nombre
             lista.descuento_porcentaje = descuento
+            lista.tipo_ajuste = tipo_ajuste
             lista.descuento_motivo = motivo
             lista.save()
             # Wipe & re-create. Más simple que diff y para listas
@@ -461,6 +516,7 @@ def api_guardar_lista(request: HttpRequest) -> JsonResponse:
                 cliente=cliente,
                 nombre=nombre,
                 descuento_porcentaje=descuento,
+                tipo_ajuste=tipo_ajuste,
                 descuento_motivo=motivo,
                 creado_por=request.user if request.user.is_authenticated else None,
             )
@@ -480,25 +536,16 @@ def api_guardar_lista(request: HttpRequest) -> JsonResponse:
 
 
 # ---------------------------------------------------------------------------
-# API: PDF de una lista
+# PDF: helper compartido entre la vista interna (staff) y la pública (token)
 # ---------------------------------------------------------------------------
-@staff_member_required
-@require_GET
-def api_pdf_lista(request: HttpRequest, lista_id: int) -> HttpResponse:
+def _render_pdf_lista(lista: ListaPrecios) -> HttpResponse:
     """
-    GET /articulos/api/lista-precios/pdf/<lista_id>/
-
-    Genera un PDF simple con la lista. La estructura es deliberadamente
-    más sobria que la del PDF de venta — la lista de precios se
-    imprime / se comparte por WhatsApp y queremos algo legible y
-    autodescriptivo.
-
-    Estructura:
-      - Cabecera con cliente + nombre de la lista + fecha.
-      - Tabla: Código | Artículo | Precio (efectivo, con desc lista
-        aplicado si corresponde).
-      - Si lista tiene `descuento_porcentaje > 0`: nota al pie con
-        el descuento aplicado y el motivo si lo hay.
+    Renderiza el PDF de una lista de precios y devuelve un HttpResponse
+    listo para mandar al browser. Lo factorizamos a un helper para
+    que la versión interna (`api_pdf_lista`, con staff_member_required)
+    y la pública (`vista_pdf_publica`, con token UUID) compartan
+    exactamente el mismo render — así nunca se diverge el formato
+    entre lo que ve Osvaldo y lo que ve el cliente.
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
@@ -508,10 +555,6 @@ def api_pdf_lista(request: HttpRequest, lista_id: int) -> HttpResponse:
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-    lista = get_object_or_404(
-        ListaPrecios.objects.select_related('cliente'),
-        pk=lista_id,
-    )
     cliente = lista.cliente
     items_qs = (
         lista.items
@@ -572,6 +615,7 @@ def api_pdf_lista(request: HttpRequest, lista_id: int) -> HttpResponse:
             articulo, cliente,
             descuento_lista=lista.descuento_porcentaje,
             precios_pactados_map=pactados,
+            tipo_ajuste=lista.tipo_ajuste,
         )
         nombre = articulo.nombre
         if articulo.marca and articulo.marca != 'Generico':
@@ -619,7 +663,9 @@ def api_pdf_lista(request: HttpRequest, lista_id: int) -> HttpResponse:
     )
     pies = []
     if lista.descuento_porcentaje and lista.descuento_porcentaje > 0:
-        txt = f'Precios con descuento del {lista.descuento_porcentaje:g}% aplicado'
+        # tipo_ajuste decide la etiqueta: "descuento" (resta) o "aumento" (suma).
+        etiqueta_ajuste = 'aumento' if lista.tipo_ajuste == 'aumento' else 'descuento'
+        txt = f'Precios con {etiqueta_ajuste} del {lista.descuento_porcentaje:g}% aplicado'
         if lista.descuento_motivo:
             txt += f' ({lista.descuento_motivo})'
         pies.append(txt + '.')
@@ -643,3 +689,536 @@ def api_pdf_lista(request: HttpRequest, lista_id: int) -> HttpResponse:
     safe_name = ''.join(c if c.isalnum() else '_' for c in lista.nombre)[:40] or 'lista'
     response['Content-Disposition'] = f'inline; filename="lista_{safe_name}_{lista.id}.pdf"'
     return response
+
+
+# ---------------------------------------------------------------------------
+# API: detalle de una lista por ID directo (sin cliente_id)
+# ---------------------------------------------------------------------------
+@staff_member_required
+@require_GET
+def api_detalle_lista_directo(request: HttpRequest, lista_id: int) -> JsonResponse:
+    """
+    GET /articulos/api/lista-precios/<lista_id>/detalle-directo/
+
+    Atajo del `api_detalle_lista` cuando el caller solo conoce el
+    `lista_id` y no el `cliente_id`. Lo usa la pantalla custom
+    cuando viene precargada con `?lista_id=N` (ej. desde el redirect
+    del ListaPreciosAdmin), porque ahí no tiene cliente_id a mano.
+
+    Internamente delega a `api_detalle_lista` con el cliente correcto.
+    """
+    lista = get_object_or_404(ListaPrecios, pk=lista_id)
+    return api_detalle_lista(request, cliente_id=lista.cliente_id, lista_id=lista_id)
+
+
+# ---------------------------------------------------------------------------
+# API: PDF de una lista (interno, staff)
+# ---------------------------------------------------------------------------
+@staff_member_required
+@require_GET
+def api_pdf_lista(request: HttpRequest, lista_id: int) -> HttpResponse:
+    """
+    GET /articulos/api/lista-precios/pdf/<lista_id>/
+
+    Versión interna del PDF — protegida por `staff_member_required`.
+    El render lo delega al helper compartido (`_render_pdf_lista`) que
+    también usa la vista pública por token. Esto evita que ambas
+    versiones se desincronicen si en algún momento cambiamos el
+    formato del PDF.
+    """
+    lista = get_object_or_404(
+        ListaPrecios.objects.select_related('cliente'),
+        pk=lista_id,
+    )
+    return _render_pdf_lista(lista)
+
+
+# ---------------------------------------------------------------------------
+# Helper: resolver lista por token público o devolver None
+# ---------------------------------------------------------------------------
+def _lista_por_token_o_none(token) -> ListaPrecios | None:
+    """
+    Busca la lista por `share_token` y devuelve la instancia si:
+      - existe,
+      - tiene token no NULL (defensivo: el filtro `share_token=token`
+        ya excluye los NULL),
+      - NO expiró (o expira_at es NULL = link sin vencimiento).
+
+    Devuelve None en cualquier otro caso para que las vistas
+    públicas puedan responder 404 con un template específico (en
+    vez de un 404 genérico tipo "Page not found" que el cliente
+    no entiende).
+
+    Importante: NO usamos `get_object_or_404` porque queremos
+    distinguir "token inexistente" de "token expirado", y eso
+    requiere chequear `share_expira_at` después de tener la
+    instancia.
+    """
+    if not token:
+        return None
+    try:
+        lista = (
+            ListaPrecios.objects
+            .select_related('cliente')
+            .get(share_token=token)
+        )
+    except ListaPrecios.DoesNotExist:
+        return None
+    if not lista.link_activo:
+        return None
+    return lista
+
+
+# ---------------------------------------------------------------------------
+# Vista pública: render HTML de la lista (sin login)
+# ---------------------------------------------------------------------------
+def vista_publica_lista(request: HttpRequest, token) -> HttpResponse:
+    """
+    GET /p/lista-precios/<uuid:token>/
+
+    Pantalla mobile-first, sin chrome de admin, que el cliente final
+    abre desde un link mandado por WhatsApp / email. NO requiere
+    login.
+
+    Comportamiento:
+      - Token válido y vigente → renderiza la lista con precios.
+      - Token NO existe O expiró O fue revocado → render del template
+        de "link expirado" con HTTP 404. Usamos 404 (no 410 Gone)
+        porque para el cliente el resultado es indistinguible: el
+        link no le sirve. Y los crawlers se portan mejor con 404.
+
+    Nunca devolvemos detalle de POR QUÉ falla — un atacante con
+    fuerza bruta de UUIDs no se entera de si el token es válido
+    pero expiró vs si no existe.
+    """
+    lista = _lista_por_token_o_none(token)
+    if lista is None:
+        # Buscamos si existió alguna vez (token presente en DB) para
+        # mostrar el mensaje "venció el {fecha}" cuando aplique. Si
+        # nunca existió, mostramos el mensaje genérico. Esto le da
+        # contexto al cliente sin filtrar info sensible (la fecha de
+        # vencimiento es la misma que el operador le compartió).
+        venció_at = None
+        try:
+            referencia = ListaPrecios.objects.get(share_token=token)
+            venció_at = referencia.share_expira_at
+        except (ListaPrecios.DoesNotExist, ValueError, TypeError):
+            pass
+        return render(
+            request,
+            'articulo/lista_precios_publica_expirado.html',
+            {'venció_at': venció_at},
+            status=404,
+        )
+
+    cliente = lista.cliente
+    items_qs = (
+        lista.items
+        .select_related('articulo')
+        .order_by('orden', 'articulo__nombre')
+    )
+    items = list(items_qs)
+    articulos = [i.articulo for i in items]
+    pactados = cargar_precios_pactados(cliente, articulos)
+
+    # Pre-calculamos los precios efectivos para no llamar la función
+    # desde el template (Django templates no admiten kwargs).
+    items_render = []
+    for it in items:
+        articulo = it.articulo
+        precio = precio_efectivo(
+            articulo, cliente,
+            descuento_lista=lista.descuento_porcentaje,
+            precios_pactados_map=pactados,
+            tipo_ajuste=lista.tipo_ajuste,
+        )
+        items_render.append({
+            'codigo': articulo.codigo or articulo.codigo_interno or '',
+            'nombre': articulo.nombre,
+            'marca': articulo.marca or '',
+            'nota': it.nota or '',
+            'precio': precio,
+            'pactado': pactados.get(articulo.id) is not None,
+        })
+
+    return render(
+        request,
+        'articulo/lista_precios_publica.html',
+        {
+            'lista': lista,
+            'cliente': cliente,
+            'items': items_render,
+            # Hardcodeado por ahora — cuando tengamos varios negocios
+            # esto vendrá de ConfiguracionGeneral o de un settings.
+            'negocio_nombre': getattr(settings, 'NEGOCIO_NOMBRE', 'Golosinas Insa'),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Vista pública: PDF (sin login)
+# ---------------------------------------------------------------------------
+def vista_pdf_publica(request: HttpRequest, token) -> HttpResponse:
+    """
+    GET /p/lista-precios/<uuid:token>/pdf/
+
+    Misma validación de token que `vista_publica_lista`. Reusa el
+    helper `_render_pdf_lista` para que el PDF público sea idéntico
+    al interno.
+
+    Si el token no es válido (no existe / expiró), devolvemos un
+    HTML 404 (no un PDF 404), porque el cliente probablemente está
+    bajando esto desde WhatsApp y un texto explicativo le sirve
+    más que un PDF vacío.
+    """
+    lista = _lista_por_token_o_none(token)
+    if lista is None:
+        return render(
+            request,
+            'articulo/lista_precios_publica_expirado.html',
+            {'venció_at': None},
+            status=404,
+        )
+    return _render_pdf_lista(lista)
+
+
+# ---------------------------------------------------------------------------
+# API: compartir lista (generar/renovar link público)
+# ---------------------------------------------------------------------------
+@staff_member_required
+@require_POST
+def api_compartir_lista(request: HttpRequest, lista_id: int) -> JsonResponse:
+    """
+    POST /articulos/api/lista-precios/<id>/compartir/
+
+    Body opcional: `{"dias": 14}` (override del default de config).
+
+    Genera o renueva el link público. Devuelve la URL absoluta para
+    que el front la copie al portapapeles sin tener que armarla.
+    """
+    lista = get_object_or_404(ListaPrecios, pk=lista_id)
+
+    dias = None
+    if request.body:
+        try:
+            payload = json.loads(request.body.decode('utf-8'))
+            if isinstance(payload, dict) and 'dias' in payload and payload['dias'] is not None:
+                dias = int(payload['dias'])
+                if dias < 0:
+                    return JsonResponse(
+                        {'ok': False, 'errores': [{'mensaje': 'dias debe ser >= 0.'}]},
+                        status=400,
+                    )
+        except (ValueError, TypeError):
+            # JSON inválido o `dias` no es entero: ignoramos y usamos
+            # el default. No es worth devolver un 400 — el flujo común
+            # es "POST sin body" desde el botón.
+            dias = None
+
+    info = lista.compartir(dias=dias)
+    share_url = request.build_absolute_uri(
+        reverse('lista_precios_publica_web', args=[info['share_token']])
+    )
+    return JsonResponse({
+        'ok': True,
+        'share_token': str(info['share_token']),
+        'share_url': share_url,
+        'expira_at': info['share_expira_at'].isoformat() if info['share_expira_at'] else '',
+    })
+
+
+# ---------------------------------------------------------------------------
+# API: desactivar link público
+# ---------------------------------------------------------------------------
+@staff_member_required
+@require_POST
+def api_desactivar_link_lista(request: HttpRequest, lista_id: int) -> JsonResponse:
+    """
+    POST /articulos/api/lista-precios/<id>/desactivar-link/
+
+    Revoca el link público. Idempotente: si ya estaba revocado,
+    devuelve `{ok: true}` igual.
+    """
+    lista = get_object_or_404(ListaPrecios, pk=lista_id)
+    lista.desactivar_link()
+    return JsonResponse({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Pantalla de difusión manual
+# ---------------------------------------------------------------------------
+@staff_member_required
+def lista_precios_difundir(request: HttpRequest, lista_id: int) -> HttpResponse:
+    """
+    Pantalla `/articulos/lista-precios/<id>/difundir/`.
+
+    Sirve para mandar el LINK de una lista de precios a varios
+    clientes uno por uno via wa.me (sin pasar por el wa-bot).
+
+    Pre-requisitos:
+      - La lista tiene que tener `share_token` activo. Si no, no hay
+        link que mandar — redirigimos al editor con un mensaje claro.
+
+    El template carga los clientes vía la API `..difundir/clientes/`.
+    """
+    lista = get_object_or_404(
+        ListaPrecios.objects.select_related('cliente'),
+        pk=lista_id,
+    )
+    # No hace falta link activo para entrar a la pantalla — el modo
+    # "texto" (lista en el body del mensaje) no necesita link.
+    # Si el operador después elige link/pdf/ambos y el link no está
+    # activo, la API de envío lo genera automáticamente (o el front lo
+    # avisa). Mantenemos el share_url vacío si no hay link y el front
+    # decide qué hacer.
+    share_url = ''
+    if lista.link_activo and lista.share_token:
+        share_url = request.build_absolute_uri(
+            reverse('lista_precios_publica_web', args=[lista.share_token])
+        )
+    contexto = {
+        'lista': lista,
+        'share_url': share_url,
+        'expira_at_iso': lista.share_expira_at.isoformat() if lista.share_expira_at else '',
+    }
+    return render(request, 'articulo/lista_precios_difundir.html', contexto)
+
+
+@staff_member_required
+@require_GET
+def api_lista_precios_difundir_clientes(request: HttpRequest, lista_id: int) -> JsonResponse:
+    """
+    GET /articulos/api/lista-precios/<id>/difundir/clientes/
+
+    Devuelve la audiencia para difundir: clientes con whatsapp_number
+    cargado. Filtros opcionales:
+      - q: busca por nombre/apellido
+      - solo_compraron_ultimos_dias: filtro por actividad reciente
+      - solo_con_saldo_a_favor / solo_con_saldo_deudor
+      - solo_puede_recibir_whatsapp (default true, respeta el opt-in)
+
+    Respuesta:
+      {clientes: [{id, nombre, whatsapp_number, puede_recibir_whatsapp,
+                   saldo, ultima_compra}]}
+
+    Devuelve TODOS los clientes que matchean (sin paginación) porque
+    el operador típicamente quiere ver la lista entera para decidir
+    a quién enviar. Si crece mucho (>500), agregamos paginación.
+    """
+    get_object_or_404(ListaPrecios, pk=lista_id)  # valida que existe
+
+    from cliente.models import Cliente
+    from django.db.models import Sum, Max, Q
+    from datetime import timedelta
+    from django.utils import timezone as tz
+
+    qs = Cliente.objects.exclude(whatsapp_number='').exclude(whatsapp_number=None)
+
+    # Por default respetamos el opt-in (`puede_recibir_whatsapp=True`),
+    # pero permitimos override por query param para casos puntuales
+    # (ej. mandarle una lista a un cliente que no quiso campañas de
+    # promo pero sí su lista personal).
+    respetar_optin = request.GET.get('solo_puede_recibir_whatsapp', '1') == '1'
+    if respetar_optin:
+        qs = qs.filter(puede_recibir_whatsapp=True)
+
+    q = (request.GET.get('q') or '').strip()
+    if q:
+        qs = qs.filter(Q(nombre__icontains=q) | Q(apellido__icontains=q))
+
+    try:
+        dias = int(request.GET.get('solo_compraron_ultimos_dias') or '0')
+    except ValueError:
+        dias = 0
+    if dias > 0:
+        desde = tz.now().date() - timedelta(days=dias)
+        qs = qs.filter(ventas__fecha_compra__gte=desde).distinct()
+
+    a_favor = request.GET.get('solo_con_saldo_a_favor') == '1'
+    deudor = request.GET.get('solo_con_saldo_deudor') == '1'
+    if a_favor or deudor:
+        qs = qs.annotate(saldo_calc=Sum('cuenta__movimientos__monto'))
+        if a_favor:
+            qs = qs.filter(saldo_calc__gt=0)
+        if deudor:
+            qs = qs.filter(saldo_calc__lt=0)
+
+    qs = qs.annotate(
+        ultima_compra=Max('ventas__fecha_compra'),
+        saldo_total=Sum('cuenta__movimientos__monto'),
+    ).order_by('nombre', 'apellido')
+
+    clientes = [
+        {
+            'id': c.id,
+            'nombre': c.nombre_completo(),
+            'whatsapp_number': c.whatsapp_number,
+            'puede_recibir_whatsapp': c.puede_recibir_whatsapp,
+            'saldo': str(c.saldo_total or 0),
+            'ultima_compra': c.ultima_compra.isoformat() if c.ultima_compra else None,
+            # Preferencia de formato per-cliente. La UI la muestra como
+            # un mini-badge para que el operador sepa qué modo aplicará
+            # a este destinatario por default.
+            'formato_preferido': c.formato_preferido_lista_precios or '',
+        }
+        for c in qs
+    ]
+
+    # Default global del modo, para que la UI lo muestre como
+    # pre-selección del selector "Modo de envío".
+    from configuracion.models import get_config
+    cfg = get_config()
+    return JsonResponse({
+        'clientes': clientes,
+        'total': len(clientes),
+        'formato_default_global': cfg.formato_default_lista_precios,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Difundir v2: envío automático vía wa-bot (no wa.me manual)
+# ---------------------------------------------------------------------------
+import logging  # noqa: E402  (importado acá para los warnings de fallback)
+
+
+@staff_member_required
+@require_POST
+def api_lista_precios_difundir_enviar(request: HttpRequest, lista_id: int) -> JsonResponse:
+    """
+    POST /articulos/api/lista-precios/<id>/difundir/enviar/
+
+    Body:
+      {
+        "cliente_ids": [1, 2, 3, ...],
+        "modo_override": "" | "link" | "pdf" | "ambos",
+        "forzar": false
+      }
+
+    Crea N `DifusionListaPreciosEnvio` pendientes (resolviendo modo en
+    cascada per-cliente) y encola la task `procesar_difusion(lista_id)`
+    en django-q2. El worker manda uno por uno con rate limit.
+    """
+    lista = get_object_or_404(
+        ListaPrecios.objects.select_related('cliente'),
+        pk=lista_id,
+    )
+
+    try:
+        payload = json.loads(request.body.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        return JsonResponse({'ok': False, 'error': 'JSON inválido.'}, status=400)
+
+    cliente_ids = payload.get('cliente_ids') or []
+    if not isinstance(cliente_ids, list) or not cliente_ids:
+        return JsonResponse(
+            {'ok': False, 'error': 'cliente_ids debe ser una lista no vacía.'},
+            status=400,
+        )
+    cliente_ids = [int(x) for x in cliente_ids if str(x).isdigit()]
+
+    modo_override = (payload.get('modo_override') or '').strip()
+    if modo_override not in ('', 'link', 'pdf', 'ambos'):
+        return JsonResponse(
+            {'ok': False, 'error': 'modo_override inválido.'},
+            status=400,
+        )
+
+    # Bloqueo defensivo: si hay envíos pendientes recientes (worker
+    # procesando), avisamos al front para que no encole en paralelo.
+    # El usuario igual puede forzar mandando otra vez con forzar=true.
+    from .models import DifusionListaPreciosEnvio
+    pendientes_actuales = DifusionListaPreciosEnvio.objects.filter(
+        lista=lista,
+        status__in=(
+            DifusionListaPreciosEnvio.STATUS_PENDIENTE,
+            DifusionListaPreciosEnvio.STATUS_ENVIANDO,
+        ),
+    ).count()
+    if pendientes_actuales > 0 and not payload.get('forzar'):
+        return JsonResponse({
+            'ok': False,
+            'error': (
+                f'Hay {pendientes_actuales} envíos en curso para esta lista. '
+                f'Esperá a que terminen o reintentá con "forzar".'
+            ),
+            'pendientes_actuales': pendientes_actuales,
+        }, status=409)
+
+    from .tasks_difusion import crear_envios_pendientes_difusion
+    encolados = crear_envios_pendientes_difusion(
+        lista, cliente_ids, modo_override, request.user,
+    )
+
+    if encolados == 0:
+        return JsonResponse({
+            'ok': False,
+            'error': 'Ningún cliente válido (sin whatsapp_number).',
+            'encolados': 0,
+        }, status=400)
+
+    # Encolar el worker. Si django-q2 no está disponible (raro), caemos
+    # a ejecución sincrónica (bloquea la request pero al menos manda).
+    try:
+        from django_q.tasks import async_task
+        async_task('articulo.tasks_difusion.procesar_difusion', lista.id)
+    except Exception as exc:
+        log = logging.getLogger(__name__)
+        log.warning('async_task no disponible, ejecuto inline: %s', exc)
+        from .tasks_difusion import procesar_difusion
+        procesar_difusion(lista.id)
+
+    return JsonResponse({
+        'ok': True,
+        'encolados': encolados,
+        'mensaje': (
+            f'Se encolaron {encolados} envíos. La barra de progreso '
+            f'muestra el avance.'
+        ),
+    })
+
+
+@staff_member_required
+@require_GET
+def api_lista_precios_difundir_progreso(request: HttpRequest, lista_id: int) -> JsonResponse:
+    """
+    GET /articulos/api/lista-precios/<id>/difundir/progreso/
+
+    Devuelve un snapshot del estado de los envíos de esta lista. La UI
+    lo polea cada 2s mientras hay pendientes para actualizar la barra
+    de progreso en vivo.
+    """
+    get_object_or_404(ListaPrecios, pk=lista_id)
+    from .models import DifusionListaPreciosEnvio
+    from django.db.models import Count
+
+    counts_qs = (
+        DifusionListaPreciosEnvio.objects
+        .filter(lista_id=lista_id)
+        .values('status')
+        .annotate(n=Count('id'))
+    )
+    counts = {row['status']: row['n'] for row in counts_qs}
+
+    recientes_qs = (
+        DifusionListaPreciosEnvio.objects
+        .filter(lista_id=lista_id)
+        .select_related('cliente')
+        .order_by('-created_at')[:50]
+    )
+    recientes = [{
+        'cliente_id': e.cliente_id,
+        'cliente_nombre': e.cliente.nombre_completo(),
+        'modo': e.modo,
+        'status': e.status,
+        'error_msg': e.error_msg[:140] if e.error_msg else '',
+        'sent_at': e.sent_at.isoformat() if e.sent_at else None,
+    } for e in recientes_qs]
+
+    return JsonResponse({
+        'total': sum(counts.values()),
+        'pendientes': counts.get('pendiente', 0),
+        'enviando': counts.get('enviando', 0),
+        'enviados': counts.get('enviado', 0),
+        'fallidos': counts.get('fallido', 0),
+        'recientes': recientes,
+    })

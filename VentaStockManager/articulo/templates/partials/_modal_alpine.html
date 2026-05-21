@@ -1,0 +1,139 @@
+{% comment %}
+Modal Alpine reusable.
+
+REGLA DEL PROYECTO: NUNCA usar `alert()`, `confirm()` o `prompt()`
+nativos del browser en pantallas custom. Usar SIEMPRE este modal.
+Los nativos rompen el look visual, bloquean el thread y no se pueden
+estilar — los reemplazamos por este componente Tailwind + Alpine.
+
+USO desde otro template:
+
+  1. Incluí este partial al final del componente Alpine (dentro
+     del div con `x-data`):
+       {% include "partials/_modal_alpine.html" %}
+
+  2. En tu función Alpine, mergeá el state del modal con tu state
+     usando spread (`...modalState()`):
+
+       function miPantalla() {
+         return {
+           ...miEstadoInicial,
+           ...modalState(),
+         }
+       }
+
+  3. Para mostrar algo, llamá a `abrirModal(...)`:
+
+       this.abrirModal({
+         tipo: 'warning',          // 'info' | 'warning' | 'error' | 'confirm'
+         titulo: 'Atención',
+         mensaje: 'Texto opcional explicando qué pasó.',
+         lista: ['Item 1', 'Item 2'],   // opcional, render como bullets
+         okLabel: 'Entendido',
+         cancelLabel: 'Cancelar',       // solo si tipo='confirm'
+         callback: () => {              // se ejecuta al confirmar
+           window.location.href = '/admin/';
+         },
+       });
+
+  - tipo 'confirm' muestra botones Cancelar + OK.
+  - los demás tipos muestran solo OK.
+  - el callback NO se ejecuta si el user aprieta Cancelar.
+  - el modal NO se cierra con click en el overlay ni con Esc — el
+    operador tiene que confirmar explícitamente.
+{% endcomment %}
+
+<div x-show="modal.abierto" x-cloak
+     class="fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative bg-white rounded-lg shadow-2xl max-w-lg w-full overflow-hidden">
+    <div :class="{
+            'bg-blue-50 border-blue-200': modal.tipo === 'info',
+            'bg-amber-50 border-amber-200': modal.tipo === 'warning',
+            'bg-red-50 border-red-200': modal.tipo === 'error',
+            'bg-slate-50 border-slate-200': modal.tipo === 'confirm',
+         }"
+         class="px-5 py-4 border-b">
+      <h3 class="text-lg font-semibold flex items-center gap-2"
+          :class="{
+            'text-blue-900': modal.tipo === 'info',
+            'text-amber-900': modal.tipo === 'warning',
+            'text-red-900': modal.tipo === 'error',
+            'text-slate-900': modal.tipo === 'confirm',
+          }">
+        <span x-show="modal.tipo === 'info'">ℹ️</span>
+        <span x-show="modal.tipo === 'warning'">⚠️</span>
+        <span x-show="modal.tipo === 'error'">❌</span>
+        <span x-show="modal.tipo === 'confirm'">❓</span>
+        <span x-text="modal.titulo"></span>
+      </h3>
+    </div>
+    <div class="px-5 py-4 text-sm text-slate-700">
+      <p x-show="modal.mensaje" x-text="modal.mensaje" class="mb-3 whitespace-pre-line"></p>
+      <ul x-show="modal.lista.length" class="space-y-2 list-disc list-inside">
+        <template x-for="item in modal.lista" :key="item">
+          <li x-text="item" class="leading-relaxed"></li>
+        </template>
+      </ul>
+    </div>
+    <div class="px-5 py-3 bg-slate-50 border-t flex justify-end gap-2">
+      <button x-show="modal.tipo === 'confirm'"
+              type="button"
+              @click="cancelarModal()"
+              class="px-4 py-2 text-sm text-slate-700 hover:text-slate-900">
+        <span x-text="modal.cancelLabel"></span>
+      </button>
+      <button type="button"
+              @click="confirmarModal()"
+              class="px-5 py-2 text-sm font-medium text-white rounded shadow-sm"
+              :class="{
+                'bg-blue-600 hover:bg-blue-700': modal.tipo === 'info' || modal.tipo === 'confirm',
+                'bg-amber-600 hover:bg-amber-700': modal.tipo === 'warning',
+                'bg-red-600 hover:bg-red-700': modal.tipo === 'error',
+              }">
+        <span x-text="modal.okLabel"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Helper global. Cada componente Alpine que use el modal mergea
+  // este state con el suyo: `return { ...miEstado, ...modalState() }`.
+  // Se redefine en cada include — no es problema porque es siempre
+  // la misma implementación idempotente.
+  function modalState() {
+    return {
+      modal: {
+        abierto: false,
+        tipo: 'info',
+        titulo: '',
+        mensaje: '',
+        lista: [],
+        callback: null,
+        okLabel: 'Entendido',
+        cancelLabel: 'Cancelar',
+      },
+      abrirModal({tipo = 'info', titulo, mensaje = '', lista = [], callback = null, okLabel = 'Entendido', cancelLabel = 'Cancelar'} = {}) {
+        this.modal.tipo = tipo;
+        this.modal.titulo = titulo;
+        this.modal.mensaje = mensaje;
+        this.modal.lista = lista;
+        this.modal.callback = callback;
+        this.modal.okLabel = okLabel;
+        this.modal.cancelLabel = cancelLabel;
+        this.modal.abierto = true;
+      },
+      confirmarModal() {
+        const cb = this.modal.callback;
+        this.modal.abierto = false;
+        this.modal.callback = null;
+        if (typeof cb === 'function') cb();
+      },
+      cancelarModal() {
+        this.modal.callback = null;
+        this.modal.abierto = false;
+      },
+    };
+  }
+</script>

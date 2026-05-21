@@ -37,6 +37,22 @@ django-material-admin porque esta es una pantalla full-width
   bloquear el primer paint. `defer` cumple las dos cosas.
   {% endcomment %}
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    /*
+     * Animación de "flash" cuando se agrega un artículo nuevo a la
+     * grilla. Llama la atención del operador hacia la fila recién
+     * creada sin que tenga que scrollear ni buscar dónde apareció.
+     * Duración: 1.2s (suficiente para registrarlo, sin molestar).
+     */
+    @keyframes flash-nueva-fila {
+      0%   { background-color: #fef3c7; box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.55); }
+      40%  { background-color: #fef3c7; box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.55); }
+      100% { background-color: #eff6ff; box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
+    }
+    .grilla-flash-new {
+      animation: flash-nueva-fila 1.2s ease-out;
+    }
+  </style>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen">
 
@@ -57,15 +73,27 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
 <div x-data="grillaPrecios()" x-init="init()" class="max-w-screen-2xl mx-auto p-6 pb-32">
 
   {# ---- Header ---- #}
-  <header class="mb-6">
-    <a href="/admin/articulo/articulo/" class="text-sm text-blue-600 hover:underline">← Volver al admin</a>
-    <h1 class="text-2xl font-bold mt-1">Grilla de precios</h1>
-    <p class="text-sm text-slate-500">
-      Editá precios de muchos artículos a la vez.
-      Los cambios se aplican al hacer click en
-      <span class="font-medium">"Guardar cambios"</span>.
-      Mientras tanto, podés moverte entre páginas y filtros sin perder lo editado.
-    </p>
+  {% comment %}
+    "Volver al inicio" va al admin root, no al changelist de artículos
+    (que ahora redirige acá). El botón "Admin clásico" usa el escape
+    ?clasico=1 para acceder al changelist viejo cuando se necesitan
+    las acciones bulk (mover categoría, asignar proveedor, etc.).
+  {% endcomment %}
+  <header class="mb-6 flex flex-wrap items-start justify-between gap-3">
+    <div>
+      <a href="/admin/" class="text-sm text-blue-600 hover:underline">← Volver al inicio</a>
+      <h1 class="text-2xl font-bold mt-1">Artículos · Grilla de precios</h1>
+      <p class="text-sm text-slate-500">
+        Pantalla principal de artículos. Editá precios o agregá artículos nuevos.
+        Los cambios se aplican al hacer click en
+        <span class="font-medium">"Guardar cambios"</span>.
+      </p>
+    </div>
+    <a href="/admin/articulo/articulo/?clasico=1"
+       title="Admin clásico de Django (acciones bulk: mover categoría, asignar proveedor, etc.)"
+       class="text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 text-slate-700 font-medium shadow-sm whitespace-nowrap">
+      ⚙ Admin clásico
+    </a>
   </header>
 
   {# ---- Banner de errores ---- #}
@@ -130,6 +158,24 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         </div>
       </div>
     </div>
+  </div>
+
+  {# ---- Acciones globales ---- #}
+  {% comment %}
+  Botón "Nuevo artículo": al click, agrega una fila placeholder al
+  principio de `items` con _nuevo=true. La fila tiene inputs para
+  los campos que la grilla normal no edita (nombre, código,
+  categoria, proveedor) más todos los precios/stock que sí.
+  {% endcomment %}
+  <div class="flex items-center justify-between mb-3">
+    <button type="button"
+            @click="agregarFilaNueva()"
+            class="px-4 py-2 bg-emerald-600 text-white rounded shadow hover:bg-emerald-700 text-sm font-semibold">
+      + Nuevo artículo
+    </button>
+    <span class="text-xs text-slate-500" x-show="nuevos.length > 0" x-cloak>
+      <span x-text="nuevos.length"></span> artículo(s) nuevo(s) sin guardar
+    </span>
   </div>
 
   {# ---- Bulk apply ---- #}
@@ -201,6 +247,88 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         </tr>
       </thead>
       <tbody>
+        {% comment %}
+        Filas de artículos NUEVOS (en memoria, sin guardar). Las
+        renderizamos al principio para que el operador las vea sin
+        scrollear y con borde azul + badge "NUEVO" para distinguirlas
+        de los existentes. No tienen checkbox (no aplican a bulk).
+        Tienen botón ❌ para cancelarlas (las saca del array sin
+        ningún POST a la DB).
+        {% endcomment %}
+        <template x-for="(nuevo, nidx) in nuevos" :key="nuevo._temp_id">
+          <tr class="border-b-2 border-blue-300 bg-blue-50"
+              :class="flashing.has(nuevo._temp_id) ? 'grilla-flash-new' : ''"
+              :data-temp-id="nuevo._temp_id">
+            <td class="px-2 py-1.5 text-center">
+              <button type="button"
+                      @click="quitarFilaNueva(nidx)"
+                      title="Cancelar (no se guarda)"
+                      class="text-red-600 hover:text-red-800 text-lg leading-none">×</button>
+            </td>
+            <td class="px-2 py-1.5">
+              <span class="inline-block px-2 py-0.5 rounded bg-blue-600 text-white text-xs font-semibold">NUEVO</span>
+              <input type="text"
+                     x-model="nuevo.codigo"
+                     placeholder="Código"
+                     class="mt-1 w-24 border border-blue-300 rounded px-1.5 py-1 text-xs font-mono">
+            </td>
+            <td class="px-2 py-1.5">
+              <input type="text"
+                     x-model="nuevo.nombre"
+                     placeholder="Nombre del artículo *"
+                     :class="(!nuevo.nombre || !nuevo.nombre.trim()) ? 'border-red-300' : 'border-blue-300'"
+                     class="w-full border rounded px-1.5 py-1 text-sm">
+              <input type="text"
+                     x-model="nuevo.marca"
+                     placeholder="Marca"
+                     class="mt-1 w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
+            </td>
+            <td class="px-2 py-1.5">
+              <select x-model="nuevo.categoria_id"
+                      class="w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
+                <option value="">— Sin categoría —</option>
+                <template x-for="c in opcionesCategorias" :key="c.id">
+                  <option :value="c.id" x-text="c.nombre"></option>
+                </template>
+              </select>
+            </td>
+            <td class="px-2 py-1.5">
+              <select x-model="nuevo.proveedor_id"
+                      class="w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
+                <option value="">— Sin proveedor —</option>
+                <template x-for="p in opcionesProveedores" :key="p.id">
+                  <option :value="p.id" x-text="p.nombre"></option>
+                </template>
+              </select>
+              {# Campo extra: vencimiento (NOT NULL en el modelo). Lo metemos #}
+              {# debajo del proveedor porque no hay más columnas libres. #}
+              <input type="date"
+                     x-model="nuevo.vencimiento"
+                     class="mt-1 w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
+            </td>
+            <td class="px-2 py-1.5 text-right">
+              <input type="number" min="0" step="1"
+                     x-model="nuevo.stock"
+                     class="w-20 border border-blue-300 rounded px-1.5 py-1 text-right">
+            </td>
+            <td class="px-2 py-1.5 text-right">
+              <input type="number" min="0" step="0.01"
+                     x-model="nuevo.precio_minorista"
+                     class="w-24 border border-blue-300 rounded px-1.5 py-1 text-right">
+            </td>
+            <td class="px-2 py-1.5 text-right">
+              <input type="number" min="0" step="0.01"
+                     x-model="nuevo.precio_mayorista"
+                     class="w-24 border border-blue-300 rounded px-1.5 py-1 text-right">
+            </td>
+            <td class="px-2 py-1.5 text-right">
+              <input type="number" min="0" step="1"
+                     x-model="nuevo.cantidad_por_mayor"
+                     class="w-20 border border-blue-300 rounded px-1.5 py-1 text-right">
+            </td>
+          </tr>
+        </template>
+
         <template x-for="(item, idx) in items" :key="item.id">
           <tr :class="idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'"
               class="border-b border-slate-100">
@@ -210,28 +338,58 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                      @change="toggleSeleccion(item.id, $event.target.checked)">
             </td>
             <td class="px-2 py-1.5 font-mono text-xs">
-              <div x-text="item.codigo_interno || item.codigo"></div>
-              <div class="text-slate-400" x-show="item.codigo && item.codigo_interno && item.codigo !== item.codigo_interno"
-                   x-text="item.codigo"></div>
+              {% comment %}
+                `codigo_interno` se oculta deliberadamente — el usuario no lo usa.
+                Mostramos solo el `codigo` real del artículo.
+              {% endcomment %}
+              <div x-text="item.codigo"></div>
             </td>
             <td class="px-2 py-1.5">
               <div x-text="item.nombre"></div>
               <div class="text-xs text-slate-500" x-show="item.marca && item.marca !== 'Generico'"
                    x-text="item.marca"></div>
             </td>
+            {% comment %}
+              Categoría editable inline. Mostramos un <select> compacto.
+              El operador puede recategorizar artículos mal clasificados
+              sin abrir el admin clásico. Cambio toma efecto al hacer
+              click en "Guardar cambios" — antes queda con el borde
+              ámbar (esCeldaModificada).
+
+              Background dinámico: refleja el color de la categoría
+              elegida (lookup en opcionesCategorias) para mantener la
+              señal visual del badge original. Si está en "sin categoría"
+              vuelve a fondo blanco.
+            {% endcomment %}
             <td class="px-2 py-1.5">
-              <template x-if="item.categoria_id">
-                <span class="inline-block px-2 py-0.5 rounded text-white text-xs font-medium"
-                      :style="'background:' + (item.categoria_color || '#607d8b')"
-                      x-text="item.categoria_nombre"></span>
-              </template>
-              <template x-if="!item.categoria_id">
-                <span class="text-slate-400">—</span>
-              </template>
+              <select x-model="item.categoria_id"
+                      @change="marcarCambio(item.id, 'categoria_id', item.categoria_id || null)"
+                      :class="esCeldaModificada(item.id, 'categoria_id') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
+                      :style="item.categoria_id && !esCeldaModificada(item.id, 'categoria_id')
+                              ? 'background:' + (colorCategoria(item.categoria_id) || '#fff') + '; color: white; font-weight: 500;'
+                              : ''"
+                      class="w-full border rounded px-1.5 py-1 text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
+                <option value="">— Sin categoría —</option>
+                <template x-for="c in opcionesCategorias" :key="c.id">
+                  <option :value="c.id" x-text="c.nombre"></option>
+                </template>
+              </select>
             </td>
+            {% comment %}
+              Proveedor también editable inline. Mismo patrón que
+              categoría — un select compacto con borde ámbar cuando
+              hay cambio pendiente.
+            {% endcomment %}
             <td class="px-2 py-1.5">
-              <span x-show="item.proveedor_id" x-text="item.proveedor_nombre"></span>
-              <span x-show="!item.proveedor_id" class="text-slate-400">—</span>
+              <select x-model="item.proveedor_id"
+                      @change="marcarCambio(item.id, 'proveedor_id', item.proveedor_id || null)"
+                      :class="esCeldaModificada(item.id, 'proveedor_id') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
+                      class="w-full border rounded px-1.5 py-1 text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
+                <option value="">— Sin proveedor —</option>
+                <template x-for="p in opcionesProveedores" :key="p.id">
+                  <option :value="p.id" x-text="p.nombre"></option>
+                </template>
+              </select>
             </td>
             <td class="px-2 py-1.5 text-right">
               <input type="number" min="0" step="1"
@@ -297,13 +455,15 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
 
 {# ---- Botón flotante Guardar ---- #}
 <div class="fixed bottom-6 right-6 z-30">
+  {% comment %}
+  Trick: el botón está fuera del x-data="grillaPrecios()" para que
+  quede 100% sticky aunque se scrollee, pero necesita acceso al
+  método guardar(). Usamos un dispatch a un custom event que el
+  x-data superior escucha.
+  {% endcomment %}
   <button type="button"
           x-data
           @click="$root.__alpine_root__ || guardar()"
-          {# Trick: el botón está fuera del x-data="grillaPrecios()" para
-             que quede 100% sticky aunque se scrollee, pero necesita
-             acceso al método. Usamos un dispatch a un custom event que
-             el x-data superior escucha. #}
           onclick="window.dispatchEvent(new CustomEvent('grilla:guardar'))"
           class="px-5 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 font-semibold flex items-center gap-2">
     <span>Guardar cambios</span>
@@ -351,6 +511,21 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         tocaMinorista: true,
         tocaMayorista: true,
       },
+      // `nuevos` es el array de filas placeholder para artículos a CREAR.
+      // Vive separado de `cambios` porque el modelo es distinto:
+      //   - `cambios`: dict {id_real: {campo: valor}} con updates.
+      //   - `nuevos`:  array de dicts completos para INSERT.
+      // Set de `_temp_id` de filas nuevas que deben hacer flash
+      // (animación CSS de 1.2s). Lo limpiamos con setTimeout cuando
+      // la animación termina. Necesita re-asignación tipo `flashing = new Set(...)`
+      // para que Alpine note el cambio (Set no es reactivo por default).
+      flashing: new Set(),
+
+      // Cada nuevo tiene un `_temp_id` único generado en el front
+      // (ver `_tempCounter`); el backend lo recibe y lo devuelve
+      // emparejado con el ID real al guardar.
+      nuevos: [],
+      _tempCounter: 0,
 
       // ---- Init ----
       init() {
@@ -423,8 +598,26 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         // (mismo valor → update no-op, pero igual dispara auditlog
         // con campos sin diff, que es ruido aceptable).
         if (!this.cambios[id]) this.cambios[id] = {};
-        this.cambios[id][campo] = String(valor);
+        // Preservamos null/undefined para FKs opcionales (categoria_id,
+        // proveedor_id). Si lo stringificáramos, "null" llegaría al
+        // backend como string y el int() fallaría con error tonto.
+        if (valor === null || valor === undefined) {
+          this.cambios[id][campo] = null;
+        } else {
+          this.cambios[id][campo] = String(valor);
+        }
         this.refrescarBadge();
+      },
+
+      // Helper visual para que el <select> de categoría tenga el
+      // mismo background que el badge original. Recibe un id (que
+      // viene del modelo como int o como string del <option value>)
+      // y devuelve el hex o null si no se encuentra.
+      colorCategoria(categoriaId) {
+        if (!categoriaId) return null;
+        const id = Number(categoriaId);
+        const cat = this.opcionesCategorias.find(c => c.id === id);
+        return cat ? cat.color : null;
       },
 
       esCeldaModificada(id, campo) {
@@ -434,8 +627,11 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
       cuentaCambios() {
         // Contamos por FILA con al menos un cambio, no por celda.
         // Es lo que tiene más sentido en el badge: "X artículos
-        // van a actualizarse".
-        return Object.keys(this.cambios).filter(id => Object.keys(this.cambios[id]).length > 0).length;
+        // van a actualizarse". Sumamos las filas nuevas también
+        // porque el operador piensa en términos de "X cosas
+        // pendientes de guardar".
+        const updates = Object.keys(this.cambios).filter(id => Object.keys(this.cambios[id]).length > 0).length;
+        return updates + this.nuevos.length;
       },
 
       refrescarBadge() {
@@ -469,6 +665,64 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
 
       limpiarSeleccion() {
         this.seleccionados = new Set();
+      },
+
+      // ---- Filas nuevas (creación inline) ----
+      agregarFilaNueva() {
+        this._tempCounter += 1;
+        const tempId = 'tmp_' + this._tempCounter;
+        // Default de vencimiento: hoy + 90 días (mismo criterio que
+        // el sync de Sheets y el backend). Lo mostramos pre-poblado
+        // para que el operador no tenga que tipearlo si no hay
+        // fecha real conocida.
+        const hoy = new Date();
+        hoy.setDate(hoy.getDate() + 90);
+        const venc = hoy.toISOString().slice(0, 10); // YYYY-MM-DD
+        // unshift = al principio, para que aparezca al tope visible
+        // sin tener que scrollear.
+        this.nuevos.unshift({
+          _temp_id: tempId,
+          nombre: '',
+          codigo: '',
+          marca: 'Generico',
+          categoria_id: '',
+          proveedor_id: '',
+          stock: 0,
+          precio_minorista: 0,
+          precio_mayorista: 0,
+          cantidad_por_mayor: 100,
+          vencimiento: venc,
+        });
+        this.refrescarBadge();
+
+        // Marca la fila para que se anime con flash + scrollea +
+        // pone foco en el input "nombre" (que es el campo más
+        // importante y siempre el primero que el operador quiere
+        // tipear). El timeout limpia el flag para que la animación
+        // se pueda re-disparar si volvés a agregar la misma temp_id
+        // (no debería pasar, pero defensive).
+        this.flashing.add(tempId);
+        // Forzar reactividad — Set no es reactivo por default en Alpine.
+        this.flashing = new Set(this.flashing);
+        setTimeout(() => {
+          this.flashing.delete(tempId);
+          this.flashing = new Set(this.flashing);
+        }, 1400);
+
+        // En el siguiente tick (después de que Alpine renderice la fila)
+        // busco el row y le pongo foco al input de nombre. Si todavía no
+        // está montado, retry 1 vez.
+        this.$nextTick(() => {
+          const row = document.querySelector(`tr[data-temp-id="${tempId}"]`);
+          if (!row) return;
+          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          const inputNombre = row.querySelector('input[placeholder*="Nombre"]');
+          if (inputNombre) inputNombre.focus();
+        });
+      },
+      quitarFilaNueva(idx) {
+        this.nuevos.splice(idx, 1);
+        this.refrescarBadge();
       },
 
       // ---- Bulk apply ----
@@ -521,15 +775,32 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         if (this.guardando) return;
         this.errores = [];
 
-        // Armar el payload: una entrada por id, con los campos que
-        // cambiaron.
+        // Armar el payload: una entrada por id (updates), y un
+        // array `nuevos` con los placeholders a crear.
         const cambios = [];
         for (const id of Object.keys(this.cambios)) {
           const fila = this.cambios[id];
           if (Object.keys(fila).length === 0) continue;
           cambios.push({ id: Number(id), ...fila });
         }
-        if (cambios.length === 0) {
+        // Construimos el array de nuevos limpiando los campos vacíos
+        // a null/string vacío para que el backend aplique sus
+        // defaults. El validador del backend tolera campos faltantes
+        // y aplica defaults razonables (vencimiento=hoy+90d, etc.).
+        const nuevos = this.nuevos.map(n => ({
+          _temp_id: n._temp_id,
+          nombre: n.nombre || '',
+          codigo: n.codigo || '',
+          marca: n.marca || 'Generico',
+          categoria_id: n.categoria_id || null,
+          proveedor_id: n.proveedor_id || null,
+          stock: n.stock || 0,
+          precio_minorista: String(n.precio_minorista || 0),
+          precio_mayorista: String(n.precio_mayorista || 0),
+          cantidad_por_mayor: n.cantidad_por_mayor || 100,
+          vencimiento: n.vencimiento || '',
+        }));
+        if (cambios.length === 0 && nuevos.length === 0) {
           this.errores = [{ mensaje: 'No hay cambios para guardar.' }];
           return;
         }
@@ -543,7 +814,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
               'Content-Type': 'application/json',
               'X-CSRFToken': getCookie('csrftoken'),
             },
-            body: JSON.stringify({ cambios }),
+            body: JSON.stringify({ cambios, nuevos }),
           });
           const data = await r.json();
           if (!r.ok || !data.ok) {
@@ -551,9 +822,11 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
             window.scrollTo({ top: 0, behavior: 'smooth' });
             return;
           }
-          // Éxito: limpiamos los cambios pendientes y recargamos la
-          // página actual para reflejar lo que quedó en DB.
+          // Éxito: limpiamos cambios pendientes y filas nuevas, y
+          // recargamos para que los nuevos artículos aparezcan en su
+          // lugar definitivo (con su ID real, ya sin borde azul).
           this.cambios = {};
+          this.nuevos = [];
           this.refrescarBadge();
           await this.cargar();
         } catch (e) {

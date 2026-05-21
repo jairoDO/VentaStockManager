@@ -1,0 +1,42 @@
+{% load static %}
+{% comment %}
+Template de "link no válido / expirado" para la vista pública de
+lista de precios. Se renderiza cuando:
+  - El token no existe en la DB.
+  - El token existe pero share_token fue puesto en NULL (revocado).
+  - El token expiró (share_expira_at < ahora).
+
+A propósito NO distinguimos visualmente entre estos casos: para el
+cliente la acción a tomar es la misma (pedirle al vendedor un link
+nuevo) y un atacante no aprende nada por la respuesta.
+
+Si la lista existió y tenía fecha de vencimiento, la mostramos a
+título informativo — el cliente puede chequear si era reciente
+o muy vieja.
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Link no disponible</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen flex items-center">
+
+<div class="max-w-md mx-auto px-4 py-12 text-center">
+  <div class="text-6xl mb-4 text-slate-400">404</div>
+  <h1 class="text-xl font-bold text-slate-900 mb-2">Link no disponible</h1>
+  {% if venció_at %}
+    <p class="text-sm text-slate-600">
+      Este link venció el <span class="font-medium">{{ venció_at|date:"d/m/Y" }}</span>.
+    </p>
+  {% endif %}
+  <p class="text-sm text-slate-600 mt-2">
+    Pedile al vendedor un link nuevo o consultá los precios directamente.
+  </p>
+</div>
+
+</body>
+</html>

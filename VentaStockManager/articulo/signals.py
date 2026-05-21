@@ -6,8 +6,9 @@ job que vacía la fila correspondiente en el Google Sheet. Esto cierra
 el ciclo del sync que hasta ahora era unidireccional (Sheets → DB).
 
 Seguridad:
-  - El sync de delete está OFF por default. Hay que prender el setting
-    `SHEETS_DELETE_SYNC_ENABLED=True` (var de entorno) para activarlo.
+  - El sync de delete está OFF por default. Hay que prender los flags
+    `sheets_sync_habilitado` y `sheets_delete_sync_habilitado` en
+    `ConfiguracionGeneral` (admin: /admin/configuracion/) para activarlo.
     Por qué: en desarrollo local apuntamos al MISMO Sheet de
     producción, y un delete accidental ahí sería destructivo. En
     staging/producción se prende cuando esté validado.
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import logging
 
-from django.conf import settings
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
@@ -36,11 +36,24 @@ def articulo_borrado_a_sheets(sender, instance, **kwargs):
     Encola el vaciado de la fila correspondiente en el Sheet.
 
     Solo dispara si:
-      - El feature flag `SHEETS_DELETE_SYNC_ENABLED` está en True.
+      - El master `sheets_sync_habilitado` está en True (singleton).
+      - El específico `sheets_delete_sync_habilitado` también en True.
       - El artículo tiene `codigo_interno` (es la clave de búsqueda
         en el Sheet — si está vacío no podemos encontrar la fila).
     """
-    if not getattr(settings, 'SHEETS_DELETE_SYNC_ENABLED', False):
+    # Doble gate desde el singleton ConfiguracionGeneral. Antes esto
+    # vivía en env vars (SHEETS_SYNC_ENABLED, SHEETS_DELETE_SYNC_ENABLED)
+    # pero migramos al singleton para que se prenda/apague desde
+    # /admin/configuracion/ sin redeploy.
+    #
+    # Import local: configuracion importa cosas que no queremos cargar
+    # al boot temprano si articulo.signals se conecta antes de que
+    # configuracion esté listo en apps.py.
+    from configuracion.models import get_config
+    cfg = get_config()
+    if not cfg.sheets_sync_habilitado:
+        return
+    if not cfg.sheets_delete_sync_habilitado:
         return
     if not instance.codigo_interno:
         log.info(

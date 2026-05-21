@@ -1,45 +1,52 @@
 {% extends "admin/base_site.html" %}
 {% load i18n %}
 
+{% comment %}
+Form intermedio del bulk action `mover_a_categoria_action`.
+Calcado del de asignar_proveedor.html: el POST trae los IDs
+seleccionados como hidden inputs + `aplicar=1` para que la
+action distinga entre "primer paso" (mostrar form) y "segundo
+paso" (ejecutar update).
+{% endcomment %}
+
 {% block content %}
   <div style="max-width: 700px; margin: 24px auto;">
-    <h1 style="margin-bottom: 8px;">Asignar proveedor</h1>
+    <h1 style="margin-bottom: 8px;">Mover artículos a categoría</h1>
     <p style="color: #64748b; margin-bottom: 24px;">
-      Vas a asignar un proveedor a <b>{{ cantidad }} artículo{{ cantidad|pluralize }}</b>.
-      El cambio sobrescribe el proveedor previo (si lo tenían).
+      Vas a mover <b>{{ cantidad }} artículo{{ cantidad|pluralize }}</b> a la
+      categoría que elijas abajo. Sobrescribe la categoría previa (si la tenían).
     </p>
 
     <form method="post" action="">
       {% csrf_token %}
 
       {% comment %}
-      Hidden inputs con los IDs seleccionados. Django admin espera
-      que la action mantenga estos para reconstruir el queryset
-      cuando el form se reenvía.
+      Hidden inputs con los IDs seleccionados — Django admin los necesita
+      para reconstruir el queryset cuando el form se reenvía.
       {% endcomment %}
       {% for obj in queryset %}
         <input type="hidden" name="{{ action_checkbox_name }}" value="{{ obj.pk }}">
       {% endfor %}
-      <input type="hidden" name="action" value="asignar_proveedor_action">
+      <input type="hidden" name="action" value="mover_a_categoria_action">
       <input type="hidden" name="aplicar" value="1">
 
       <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-bottom: 16px;">
-        <label for="proveedor_id" style="display: block; font-weight: 600; margin-bottom: 8px;">
-          Proveedor
+        <label for="categoria_id" style="display: block; font-weight: 600; margin-bottom: 8px;">
+          Categoría destino
         </label>
-        <select name="proveedor_id" id="proveedor_id" required
+        <select name="categoria_id" id="categoria_id" required
                 style="width: 100%; padding: 8px 12px; border-radius: 4px; border: 1px solid #cbd5e1; font-size: 14px;">
-          <option value="">— Elegí un proveedor —</option>
-          {% for p in proveedores %}
-            <option value="{{ p.id }}">{{ p.nombre }}</option>
+          <option value="">— Elegí una categoría —</option>
+          {% for c in categorias %}
+            <option value="{{ c.id }}">{{ c.nombre }}</option>
           {% endfor %}
-          <option value="__sin_proveedor__">(Quitar proveedor: dejar vacío)</option>
+          <option value="__sin_categoria__">(Quitar categoría: dejar vacío)</option>
         </select>
 
-        {% if not proveedores %}
+        {% if not categorias %}
           <p style="color: #c62828; margin-top: 12px; font-size: 13px;">
-            ⚠ No hay proveedores cargados todavía.
-            <a href="{% url 'admin:compra_proveedor_add' %}">Agregar uno</a> y volvé acá.
+            ⚠ No hay categorías cargadas todavía.
+            <a href="{% url 'admin:articulo_categoria_add' %}">Agregar una</a> y volvé acá.
           </p>
         {% endif %}
       </div>
@@ -51,9 +58,9 @@
           Cancelar
         </a>
         <button type="submit"
-                {% if not proveedores %}disabled{% endif %}
+                {% if not categorias %}disabled{% endif %}
                 style="padding: 8px 20px; background: #2563eb; color: white; border: none; border-radius: 4px; font-weight: 500; cursor: pointer;">
-          Aplicar a {{ cantidad }} artículo{{ cantidad|pluralize }}
+          Mover {{ cantidad }} artículo{{ cantidad|pluralize }}
         </button>
       </div>
     </form>
@@ -62,7 +69,14 @@
       <summary style="cursor: pointer;">Ver artículos seleccionados</summary>
       <ul style="margin-top: 8px; font-size: 13px; max-height: 300px; overflow-y: auto;">
         {% for obj in queryset|slice:":50" %}
-          <li>{{ obj }}</li>
+          <li>
+            {{ obj.nombre }}
+            {% if obj.categoria %}
+              <span style="color: #94a3b8;">(actual: {{ obj.categoria.nombre }})</span>
+            {% else %}
+              <span style="color: #94a3b8;">(sin categoría)</span>
+            {% endif %}
+          </li>
         {% endfor %}
         {% if queryset.count > 50 %}
           <li><i>… y {{ queryset.count|add:"-50" }} más</i></li>

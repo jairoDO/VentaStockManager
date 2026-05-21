@@ -30,6 +30,7 @@ toca).
 from __future__ import annotations
 
 import json
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -57,7 +58,15 @@ except Exception:  # pragma: no cover - solo se daría con un import roto
 # Campos editables desde la grilla. Si en algún momento queremos
 # permitir editar más cosas (p.ej. la marca), sumar acá Y agregar
 # al validador correspondiente más abajo.
-CAMPOS_EDITABLES = ('precio_minorista', 'precio_mayorista', 'stock', 'cantidad_por_mayor')
+#
+# categoria_id y proveedor_id se agregaron en 2026-05 — el operador
+# pidió poder recategorizar inline (cuando las reglas auto-asignan mal)
+# sin tener que abrir cada artículo o hacer bulk acciones desde el
+# admin clásico.
+CAMPOS_EDITABLES = (
+    'precio_minorista', 'precio_mayorista', 'stock', 'cantidad_por_mayor',
+    'categoria_id', 'proveedor_id',
+)
 
 
 def _page_size() -> int:
@@ -260,6 +269,22 @@ def _validar_y_normalizar(cambio: dict[str, Any]) -> tuple[dict[str, Any] | None
                 continue
             normalizado[campo] = val_int
 
+    # FKs opcionales: aceptamos None / '' / '0' como "quitar la FK".
+    # No chequeamos que el ID exista en DB — confiamos en el ON DELETE
+    # SET NULL del FK + en que el select del front solo ofrece IDs
+    # válidos. Si alguien forja un id inexistente, el save() falla
+    # con IntegrityError y queda en logs (es atacante, no bug).
+    for campo in ('categoria_id', 'proveedor_id'):
+        if campo in cambio:
+            raw = cambio[campo]
+            if raw in (None, '', 0, '0'):
+                normalizado[campo] = None
+                continue
+            try:
+                normalizado[campo] = int(raw)
+            except (TypeError, ValueError):
+                errores.append({'id': str(item_id), 'campo': campo, 'mensaje': 'ID inválido.'})
+
     if not normalizado and not errores:
         # Nadie mandó campos editables. Lo ignoramos sin error: el
         # front podría haber mandado una fila "vacía" por algún
@@ -270,6 +295,123 @@ def _validar_y_normalizar(cambio: dict[str, Any]) -> tuple[dict[str, Any] | None
     return normalizado, errores
 
 
+# Vencimiento por defecto cuando el operador crea un artículo inline
+# sin especificarlo. Mantenemos el mismo "hoy + 90 días" que usa el
+# sync de Google Sheets, para que el comportamiento sea consistente
+# entre fuentes de creación.
+_VENCIMIENTO_DEFAULT_DIAS = 90
+
+
+def _validar_y_normalizar_nuevo(nuevo: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    """
+    Valida un dict crudo del POST que representa un artículo a CREAR.
+    Devuelve `(normalizado, errores)`.
+
+    Reglas:
+      - `nombre`: requerido, no vacío.
+      - `codigo` o `codigo_interno`: si ninguno viene, está OK — el
+        save() del modelo genera `codigo_interno` automáticamente.
+      - `precio_minorista`: Decimal >= 0 (default 0 si no viene).
+      - `precio_mayorista`: Decimal >= 0 (default 0 si no viene).
+      - `stock`: int >= 0 (default 0).
+      - `cantidad_por_mayor`: int >= 0 (default 100, idem modelo).
+      - `vencimiento`: ISO YYYY-MM-DD. Si no viene → hoy + 90 días
+        (consistente con sync de Sheets).
+      - `categoria_id`, `proveedor_id`: opcionales (null OK).
+
+    El `_temp_id` se preserva en el dict normalizado para que la
+    respuesta pueda emparejar las filas creadas con su placeholder
+    del front.
+    """
+    errores: list[dict[str, str]] = []
+    normalizado: dict[str, Any] = {}
+
+    temp_id = nuevo.get('_temp_id') or nuevo.get('temp_id') or ''
+    normalizado['_temp_id'] = str(temp_id)
+
+    nombre = (nuevo.get('nombre') or '').strip()
+    if not nombre:
+        errores.append({'temp_id': str(temp_id), 'campo': 'nombre', 'mensaje': 'El nombre es obligatorio.'})
+    else:
+        normalizado['nombre'] = nombre[:255]
+
+    # codigo / codigo_interno son opcionales — si no vienen, el save()
+    # del modelo genera codigo_interno automáticamente. Si vienen, los
+    # respetamos tal cual (no chequeamos unicidad acá; el DB no tiene
+    # constraint y duplicados se permiten desde sync histórico).
+    normalizado['codigo'] = (nuevo.get('codigo') or '').strip()[:255]
+    codigo_interno_raw = (nuevo.get('codigo_interno') or '').strip()
+    if codigo_interno_raw:
+        normalizado['codigo_interno'] = codigo_interno_raw[:50]
+    # else: dejamos que save() lo autogenere.
+
+    normalizado['marca'] = (nuevo.get('marca') or 'Generico').strip()[:255]
+
+    for campo, default in (('precio_minorista', '0'), ('precio_mayorista', '0')):
+        raw = nuevo.get(campo, default)
+        # Aceptamos string vacío como "no informado" → 0.
+        if raw == '' or raw is None:
+            normalizado[campo] = Decimal('0')
+            continue
+        try:
+            val = Decimal(str(raw))
+        except (InvalidOperation, TypeError, ValueError):
+            errores.append({'temp_id': str(temp_id), 'campo': campo, 'mensaje': 'Precio no válido.'})
+            continue
+        if val < 0:
+            errores.append({'temp_id': str(temp_id), 'campo': campo, 'mensaje': 'El precio no puede ser negativo.'})
+            continue
+        normalizado[campo] = val
+
+    for campo, default in (('stock', 0), ('cantidad_por_mayor', 100)):
+        raw = nuevo.get(campo, default)
+        if raw == '' or raw is None:
+            normalizado[campo] = default
+            continue
+        try:
+            val_int = int(raw)
+        except (TypeError, ValueError):
+            errores.append({'temp_id': str(temp_id), 'campo': campo, 'mensaje': 'Debe ser un entero.'})
+            continue
+        if val_int < 0:
+            errores.append({'temp_id': str(temp_id), 'campo': campo, 'mensaje': 'No puede ser negativo.'})
+            continue
+        normalizado[campo] = val_int
+
+    # FK opcionales.
+    for campo in ('categoria_id', 'proveedor_id'):
+        raw = nuevo.get(campo)
+        if raw in (None, '', 0, '0'):
+            normalizado[campo] = None
+            continue
+        try:
+            normalizado[campo] = int(raw)
+        except (TypeError, ValueError):
+            errores.append({'temp_id': str(temp_id), 'campo': campo, 'mensaje': 'ID inválido.'})
+
+    # Vencimiento: campo NOT NULL del modelo. Si no viene, default a
+    # hoy + 90 días (consistencia con sync de Sheets).
+    venc_raw = (nuevo.get('vencimiento') or '').strip()
+    if not venc_raw:
+        normalizado['vencimiento'] = date.today() + timedelta(days=_VENCIMIENTO_DEFAULT_DIAS)
+    else:
+        try:
+            # Aceptamos solo formato ISO YYYY-MM-DD (lo que mandan los
+            # <input type=date>). Otros formatos los rechazamos en
+            # vez de adivinar.
+            normalizado['vencimiento'] = datetime.strptime(venc_raw, '%Y-%m-%d').date()
+        except ValueError:
+            errores.append({
+                'temp_id': str(temp_id),
+                'campo': 'vencimiento',
+                'mensaje': 'Formato inválido (esperado YYYY-MM-DD).',
+            })
+
+    if errores:
+        return None, errores
+    return normalizado, []
+
+
 @staff_member_required
 @require_POST
 def api_grilla_guardar(request: HttpRequest) -> JsonResponse:
@@ -277,22 +419,30 @@ def api_grilla_guardar(request: HttpRequest) -> JsonResponse:
     POST /articulos/api/grilla/guardar/
 
     Body JSON:
-      {"cambios": [{"id": 4521, "precio_minorista": "1200.00", ...}, ...]}
+      {
+        "cambios": [{"id": 4521, "precio_minorista": "1200.00", ...}, ...],
+        "nuevos": [{"_temp_id": "tmp_1", "nombre": "...", ...}, ...]
+      }
 
-    Estrategia: validamos TODO el batch primero. Si hay UN error,
-    devolvemos 400 y no tocamos la DB. Esto evita el caso "actualicé
-    50 filas y la 51 era inválida, quedé en estado inconsistente
-    con la mitad guardada" — el operador ve un error claro y vuelve
-    a intentar.
+    Maneja dos operaciones en el mismo POST:
+      - `cambios`: updates de filas existentes (igual que antes).
+      - `nuevos`: creación inline de artículos desde la grilla.
+        Cada uno trae un `_temp_id` que devolvemos en la respuesta
+        emparejado con el `id` real, para que el front reemplace
+        las filas placeholder con el ID definitivo.
 
-    Para los updates usamos `save(update_fields=[campos cambiados])`
-    en lugar de un `.update()` masivo: a) auditlog hookea al pre/post
-    save y queremos los registros, b) `update_fields` evita que el
-    override `Articulo.save()` regenere `codigo_interno` cuando no
-    debe (sólo lo hace si el campo está en el SQL que arma el ORM).
+    Estrategia: validamos TODO el batch primero (cambios + nuevos).
+    Si hay UN error, devolvemos 400 y no tocamos la DB. Esto evita
+    el caso "actualicé 50 filas y la 51 era inválida, quedé en
+    estado inconsistente con la mitad guardada".
 
-    Todo va en una transacción atómica: si revienta a mitad de
-    camino, no queda nada aplicado.
+    Para los updates usamos `save(update_fields=[campos cambiados])`.
+    Para los creates usamos `Articulo.objects.create(...)` (no
+    `bulk_create`) para que el override de `Articulo.save()` se
+    dispare y auto-genere `codigo_interno` si no vino, y para que
+    auditlog registre la creación.
+
+    Todo va en una sola transacción atómica.
     """
     try:
         payload = json.loads(request.body.decode('utf-8'))
@@ -300,14 +450,19 @@ def api_grilla_guardar(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'ok': False, 'errores': [{'mensaje': 'JSON inválido.'}]}, status=400)
 
     cambios_raw = payload.get('cambios') or []
+    nuevos_raw = payload.get('nuevos') or []
     if not isinstance(cambios_raw, list):
         return JsonResponse(
             {'ok': False, 'errores': [{'mensaje': '"cambios" debe ser una lista.'}]},
             status=400,
         )
+    if not isinstance(nuevos_raw, list):
+        return JsonResponse(
+            {'ok': False, 'errores': [{'mensaje': '"nuevos" debe ser una lista.'}]},
+            status=400,
+        )
 
-    # Validamos todo primero, acumulando errores. Si hay errores,
-    # devolvemos sin tocar la DB.
+    # ---- Validación de cambios (existentes) ----
     normalizados: list[dict[str, Any]] = []
     errores_totales: list[dict[str, str]] = []
     for crudo in cambios_raw:
@@ -321,18 +476,28 @@ def api_grilla_guardar(request: HttpRequest) -> JsonResponse:
         if norm is not None:
             normalizados.append(norm)
 
+    # ---- Validación de nuevos ----
+    nuevos_normalizados: list[dict[str, Any]] = []
+    for crudo in nuevos_raw:
+        if not isinstance(crudo, dict):
+            errores_totales.append({'mensaje': 'Nuevo mal formado (no es objeto).'})
+            continue
+        norm, errs = _validar_y_normalizar_nuevo(crudo)
+        if errs:
+            errores_totales.extend(errs)
+            continue
+        if norm is not None:
+            nuevos_normalizados.append(norm)
+
     if errores_totales:
         return JsonResponse({'ok': False, 'errores': errores_totales}, status=400)
 
-    if not normalizados:
-        # Nada que hacer — devolvemos OK pero con 0 cambios para
-        # que el front no muestre un mensaje raro de éxito.
-        return JsonResponse({'ok': True, 'actualizados': 0})
+    if not normalizados and not nuevos_normalizados:
+        return JsonResponse({'ok': True, 'actualizados': 0, 'creados': []})
 
-    # Fetch en bloque de todos los Articulos que vamos a tocar
-    # (un solo query) en vez de un get() por fila.
+    # Fetch en bloque de los artículos a updatear.
     ids = [n['_id'] for n in normalizados]
-    articulos = {a.id: a for a in Articulo.objects.filter(id__in=ids)}
+    articulos = {a.id: a for a in Articulo.objects.filter(id__in=ids)} if ids else {}
 
     faltantes = [str(i) for i in ids if i not in articulos]
     if faltantes:
@@ -345,6 +510,7 @@ def api_grilla_guardar(request: HttpRequest) -> JsonResponse:
         )
 
     actualizados = 0
+    creados: list[dict[str, Any]] = []
     with transaction.atomic():
         for n in normalizados:
             articulo = articulos[n['_id']]
@@ -354,12 +520,36 @@ def api_grilla_guardar(request: HttpRequest) -> JsonResponse:
                     setattr(articulo, campo, n[campo])
                     cambiados.append(campo)
             if cambiados:
-                # update_fields hace dos cosas a la vez: minimiza el
-                # UPDATE a las columnas que realmente cambiaron Y
-                # le indica al override de save() que no recalcule
-                # codigo_interno (que mira a self.codigo_interno; si
-                # no está en update_fields, no se persiste igual).
                 articulo.save(update_fields=cambiados)
                 actualizados += 1
 
-    return JsonResponse({'ok': True, 'actualizados': actualizados})
+        # Creación de nuevos. Usamos `create` (no bulk_create) para
+        # que el override de save() dispare la auto-generación de
+        # codigo_interno y para que auditlog registre la creación.
+        for n in nuevos_normalizados:
+            kwargs = {
+                'nombre': n['nombre'],
+                'codigo': n['codigo'],
+                'marca': n['marca'],
+                'stock': n['stock'],
+                'precio_minorista': n['precio_minorista'],
+                'precio_mayorista': n['precio_mayorista'],
+                'cantidad_por_mayor': n['cantidad_por_mayor'],
+                'vencimiento': n['vencimiento'],
+                'categoria_id': n['categoria_id'],
+                'proveedor_id': n['proveedor_id'],
+            }
+            if 'codigo_interno' in n:
+                kwargs['codigo_interno'] = n['codigo_interno']
+            articulo = Articulo.objects.create(**kwargs)
+            creados.append({
+                '_temp_id': n['_temp_id'],
+                'id': articulo.id,
+                'codigo_interno': articulo.codigo_interno or '',
+            })
+
+    return JsonResponse({
+        'ok': True,
+        'actualizados': actualizados,
+        'creados': creados,
+    })
