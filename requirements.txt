@@ -71,6 +71,7 @@ Faker==24.14.1
 fastjsonschema==2.19.1
 filelock==3.13.1
 gunicorn==22.0.0
+honcho==1.1.0
 hiredis==2.3.2
 html-tag-names==0.1.2
 html-void-elements==0.1.0

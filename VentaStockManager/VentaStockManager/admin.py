@@ -39,6 +39,13 @@ class MyAdminSite(MaterialAdminSite):
                 # Si la tabla todavía no existe (caso muy raro: bootstrap
                 # con DB nueva y sin migrar), no rompemos el admin.
                 ctx['alertas_stock_pendientes'] = 0
+            try:
+                from articulo.models import SolicitudListaCliente
+                ctx['solicitudes_lista_pendientes'] = (
+                    SolicitudListaCliente.objects.filter(resuelta=False).count()
+                )
+            except Exception:
+                ctx['solicitudes_lista_pendientes'] = 0
         return ctx
 
     def get_app_list(self, request, app_label=None):
@@ -73,6 +80,38 @@ class MyAdminSite(MaterialAdminSite):
             app_config = apps.get_app_config(app['app_label'])
             app['icon'] = getattr(app_config, 'icon_name', 'default_icon')
 
+        # Inyectar un atajo "Conexión WhatsApp" dentro del app
+        # wa_campania para que aparezca como card en /admin/. El panel
+        # vive fuera del admin (es una pantalla custom en
+        # /wa-campania/conexion/) pero conceptualmente es admin operativo:
+        # el operador necesita llegar rápido para vincular el bot.
+        #
+        # Aprovechamos la estructura de `models` del app_list para meter
+        # un "modelo virtual" cuyo admin_url apunta al panel. Material
+        # admin lo renderiza como una card más, indistinguible de un
+        # modelo registrado real. Solo se muestra a superusers (la
+        # vista misma exige is_superuser).
+        if request.user.is_authenticated and request.user.is_superuser:
+            for app in app_list:
+                if app.get('app_label') == 'wa_campania':
+                    app['models'].insert(0, {
+                        'name': 'Conexión WhatsApp',
+                        'object_name': 'PanelConexionWA',
+                        'admin_url': '/wa-campania/conexion/',
+                        'add_url': None,
+                        'perms': {
+                            'add': False, 'change': False,
+                            'delete': False, 'view': True,
+                        },
+                        # Material admin lee el icono del campo `model`,
+                        # NO disponible para virtuales. Lo dejamos como
+                        # un dict con `_meta.app_label` para que el
+                        # template no rompa. Si la card sale sin icono
+                        # nice, no es bloqueante.
+                        'view_only': True,
+                    })
+                    break
+
         return app_list
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
@@ -96,10 +135,31 @@ admin_site.register(AlertaStock, AlertaStockAdmin)
 admin_site.register(Articulo, ArticuloAdmin)
 # Categorías de artículos y reglas de auto-asignación. Es metadata
 # local — no se sincroniza a Google Sheets.
-from articulo.models import Categoria, ListaPrecios, ReglaCategoria
-from articulo.admin import CategoriaAdmin, ListaPreciosAdmin, ReglaCategoriaAdmin
+#
+# IMPORTANTE: NO registramos ReglaCategoria como entrada propia del
+# admin. Las reglas se editan SOLO desde el inline de Categoría para
+# que el operador tenga UNA sola entrada mental ("categorías, y dentro
+# están sus reglas"). El admin class sigue existiendo en articulo/admin.py
+# por si alguna vez queremos exponerlo de nuevo o para acceso directo
+# por URL (/admin/articulo/reglacategoria/) en debug.
+from articulo.models import (
+    Categoria, ListaPrecios, DifusionListaPreciosEnvio,
+    SolicitudListaCliente,
+)
+from articulo.admin import (
+    CategoriaAdmin, ListaPreciosAdmin, DifusionListaPreciosEnvioAdmin,
+    SolicitudListaClienteAdmin,
+)
 admin_site.register(Categoria, CategoriaAdmin)
-admin_site.register(ReglaCategoria, ReglaCategoriaAdmin)
+# Historial de envíos de difusión (read-only desde admin, con bulk
+# action "Reintentar fallidos"). El operador entra acá cuando quiere
+# investigar por qué un cliente no recibió la lista, o reintentar los
+# que fallaron por algún motivo (bot caído, número mal, etc.).
+admin_site.register(DifusionListaPreciosEnvio, DifusionListaPreciosEnvioAdmin)
+# Bandeja de "clientes que pidieron lista pero no tienen una asignada".
+# Las crea el auto-responder del bot. El operador las ve en el badge
+# del header + entra acá para armarles una lista (un click va al editor).
+admin_site.register(SolicitudListaCliente, SolicitudListaClienteAdmin)
 # Listas de precios personalizadas por cliente (se exportan a PDF
 # y se mandan por WhatsApp). El alta a mano es por acá; la pantalla
 # custom con filtros y "agregar por categoría" viene en próxima fase.

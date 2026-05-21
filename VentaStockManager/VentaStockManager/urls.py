@@ -40,6 +40,8 @@ urlpatterns = [
     path("", include('vendedor.urls')),
     # Panel de tareas manuales y futuras vistas de la app configuración.
     path("configuracion/", include('configuracion.urls')),
+    # Panel de conexión WhatsApp (QR, status, logout) — solo superuser.
+    path("", include('wa_campania.urls')),
     path('login/', auth_views.LoginView.as_view(), name='login'),
     path('', RedirectView.as_view(url='/admin/', permanent=True)),  # Redirigir a admin
 ]

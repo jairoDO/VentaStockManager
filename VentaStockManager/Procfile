@@ -1,1 +1,22 @@
-web: gunicorn VentaStockManager.VentaStockManager.wsgi --log-file -
+# Procfile leído por honcho en Render (startCommand: honcho start).
+#
+# Dos procesos en el mismo dyno:
+#   - web    → gunicorn (HTTP)
+#   - worker → qcluster (django-q2, procesa async_task + schedules)
+#
+# Honcho los corre como hijos del mismo proceso: si uno muere, los
+# dos se reinician (Render relanza el dyno). Esto evita el caso de
+# "qcluster quedó muerto en silencio y nadie procesa la cola".
+#
+# Por qué no un Worker service aparte en Render: cuesta otros USD 7.
+# Compartiendo dyno con el web pagamos uno solo.
+#
+# Importante: bajamos Q_CLUSTER.workers a 2 en settings.py para que
+# gunicorn + qcluster compartan los 512MB de RAM del plan Starter sin
+# que el OOM-killer mate procesos.
+#
+# Nota path wsgi: rootDir en render.yaml = VentaStockManager/, así que
+# desde acá `VentaStockManager.wsgi` apunta al settings real (NO
+# `VentaStockManager.VentaStockManager.wsgi`, que era el bug viejo).
+web: gunicorn VentaStockManager.wsgi:application --log-file - --workers 2 --timeout 60
+worker: python manage.py qcluster

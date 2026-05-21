@@ -148,3 +148,72 @@ a.badge-alertas-stock:focus {
     color: white !important;
     text-decoration: none;
 }
+
+/*
+ * Atajo "💬 WhatsApp" en el header del admin (solo superuser).
+ *
+ * Mismo estilo de pill que el de alertas pero en verde WhatsApp.
+ * Apunta a /wa-campania/conexion/ — accesible desde TODAS las pantallas
+ * del admin, no solo desde Configuración general. Crítico porque sin
+ * bot conectado las campañas no se mandan.
+ */
+a.badge-wa-conexion,
+a.badge-wa-conexion:link,
+a.badge-wa-conexion:visited {
+    display: inline-block;
+    margin-right: 12px;
+    padding: 6px 12px;
+    background: #16a34a;       /* green-600 Tailwind */
+    color: white !important;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 12px;
+    text-decoration: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+    letter-spacing: 0.02em;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+a.badge-wa-conexion:hover,
+a.badge-wa-conexion:focus {
+    background: #15803d;       /* green-700 */
+    color: white !important;
+    text-decoration: none;
+}
+
+/*
+ * Atajo "📋 N pedidos de lista" en el header del admin.
+ *
+ * Se muestra cuando hay solicitudes de lista pendientes (clientes
+ * que pidieron la lista al bot via WhatsApp pero no tienen una
+ * asignada). Click → admin filtrado por resuelta=False para que el
+ * operador las atienda.
+ *
+ * Color ámbar/naranja: ni rojo (no es bug urgente) ni verde (no es OK).
+ * Es una acción pendiente — naranja transmite "atendé esto pronto".
+ */
+a.badge-solicitudes-lista,
+a.badge-solicitudes-lista:link,
+a.badge-solicitudes-lista:visited {
+    display: inline-block;
+    margin-right: 12px;
+    padding: 6px 12px;
+    background: #d97706;       /* amber-600 Tailwind */
+    color: white !important;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 12px;
+    text-decoration: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+    letter-spacing: 0.02em;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+a.badge-solicitudes-lista:hover,
+a.badge-solicitudes-lista:focus {
+    background: #b45309;       /* amber-700 */
+    color: white !important;
+    text-decoration: none;
+}

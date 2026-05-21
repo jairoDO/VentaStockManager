@@ -13,6 +13,12 @@ services:
     name: golosinas-insa-staging
     runtime: python
     region: oregon  # ajustá si Neon está en otra región
+    # Staging queda en FREE para no pagar dos instancias. Consecuencia:
+    # el dyno duerme tras 15 min de inactividad → qcluster TAMBIÉN se
+    # duerme → schedules cron NO disparan en staging hasta que alguien
+    # despierte el dyno con una request. Para staging es aceptable
+    # (lo usamos para tests manuales del web; los crons de archivado
+    # los probás en production).
     plan: free
     branch: staging
     autoDeploy: true
@@ -21,7 +27,11 @@ services:
       pip install -r ../requirements.txt
       python manage.py collectstatic --no-input
       python manage.py migrate --no-input
-    startCommand: gunicorn VentaStockManager.wsgi:application
+    # honcho start ejecuta `web` y `worker` del Procfile como hijos del
+    # mismo proceso. Si uno cae, los dos se reinician (Render relanza
+    # el dyno). Reemplaza al servicio "type: worker" separado, que
+    # costaría otros USD 7 por entorno.
+    startCommand: honcho start
     healthCheckPath: /admin/login/
     envVars:
       - key: PYTHON_VERSION
@@ -39,6 +49,9 @@ services:
         value: 1GiKCywO6-6ab_sfUgDXxxbPzvjNXmSYyZBLckh5vtDs
       - key: GOOGLE_SHEET_RANGE
         value: articulos!A1:Z1500
+      # NOTA: los flags de sync con Google Sheets se controlan ahora
+      # desde el singleton ConfiguracionGeneral (admin runtime). Ya
+      # no se setean acá. Para apagar/prender: /admin/configuracion/.
       # Secretos — se setean en el dashboard, no en este archivo
       - key: SECRET_KEY
         generateValue: true
@@ -57,7 +70,14 @@ services:
     name: golosinas-insa
     runtime: python
     region: oregon
-    plan: free
+    # PRODUCTION en Starter (USD 7/mes). Necesario porque:
+    #  1. Free duerme tras 15 min → qcluster muere → schedules cron
+    #     (archivado de ventas, futuros envíos de WA) no corren.
+    #  2. Starter mantiene el dyno siempre vivo + más RAM (512MB) para
+    #     que gunicorn + qcluster compartan sin OOM.
+    # Con esto evitamos pagar un servicio "type: worker" aparte
+    # (que serían otros USD 7). honcho corre los dos procesos juntos.
+    plan: starter
     branch: production
     autoDeploy: true
     rootDir: VentaStockManager
@@ -65,7 +85,9 @@ services:
       pip install -r ../requirements.txt
       python manage.py collectstatic --no-input
       python manage.py migrate --no-input
-    startCommand: gunicorn VentaStockManager.wsgi:application
+    # honcho lee VentaStockManager/Procfile y levanta `web` (gunicorn)
+    # + `worker` (qcluster) como hijos. Ver Procfile para detalles.
+    startCommand: honcho start
     healthCheckPath: /admin/login/
     envVars:
       - key: PYTHON_VERSION
@@ -82,6 +104,10 @@ services:
         value: 1Zv9TDVJRDG_Ar-U4qTvlTcTiJ7RUpZnawxGwPpL4IZI
       - key: GOOGLE_SHEET_RANGE
         value: articulos!A1:Z1500
+      # NOTA: los flags de sync con Google Sheets se controlan ahora
+      # desde el singleton ConfiguracionGeneral (admin runtime). Ya
+      # no se setean acá. Para apagar/prender en production:
+      # /admin/configuracion/configuraciongeneral/.
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL

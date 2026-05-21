@@ -216,7 +216,13 @@ MATERIAL_ADMIN_SITE = {
 # ---------------------------------------------------------------------------
 Q_CLUSTER = {
     'name': 'DjangoQ',
-    'workers': 4,
+    # En Render Starter (512MB) el qcluster comparte dyno con gunicorn
+    # (vía honcho). Con 4 workers de qcluster + 2 de gunicorn + Django
+    # cargado dos veces, el OOM-killer dispara fácil. 2 workers de
+    # qcluster alcanza para nuestro throughput (envío de WhatsApp uno
+    # por uno con rate limit, archivado de ventas 1x/día, sync delete
+    # esporádico). Si en algún momento se cuella, subir a 3 y medir.
+    'workers': 2,
     'recycle': 500,
     'timeout': 60,
     'queue_limit': 50,
@@ -243,13 +249,14 @@ GOOGLE_SHEET_RANGE = env.str(
     "GOOGLE_SHEET_RANGE",
     default="articulos!A1:Z1500",
 )
-# Sync de borrado (DB → Sheets). OFF por default: si lo prendés en
-# local apuntando al Sheet de producción, un delete accidental ahí
-# es destructivo. En staging/production se prende explícitamente
-# vía variable de entorno.
-# IMPORTANTE: requiere que el service account sea Editor del Sheet,
-# no solo Viewer. Si solo tiene Viewer, el delete falla con 403.
-SHEETS_DELETE_SYNC_ENABLED = env.bool("SHEETS_DELETE_SYNC_ENABLED", default=False)
+# NOTA: los flags `SHEETS_SYNC_ENABLED` y `SHEETS_DELETE_SYNC_ENABLED`
+# se movieron al singleton `configuracion.ConfiguracionGeneral` para
+# que Osvaldo los pueda prender/apagar desde /admin/configuracion/
+# sin redeploy. Ya no se leen del entorno.
+#
+# Si la env var todavía está seteada en render.yaml o en .env, no
+# pasa nada (Django no la usa para nada). El código que decide si
+# sincronizar lee únicamente del singleton.
 
 # Retención de ventas. Las ventas con `fecha_compra` mayor a este
 # umbral se "archivan" (soft archive: se setea `archivada_en`, no se

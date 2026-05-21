@@ -25,16 +25,39 @@ el link al final.
 
 {% block usertools %}
     {% comment %}
-    Badge "⚠ N alertas pendientes" arriba a la derecha, al lado de
-    Welcome jairo / Log out. La variable la inyecta `MyAdminSite.
-    each_context` (solo si el usuario es staff). Si no hay alertas,
-    no mostramos nada para no agregar ruido visual.
+    Atajos siempre visibles arriba a la derecha del admin. La idea:
+    cosas operativas que el operador toca seguido y se enterraban en
+    /admin/configuracion/.
+
+      - "💬 WhatsApp" → /wa-campania/conexion/ (solo superuser).
+        Estado del bot: vincular / desconectar / probar envío.
+        Crítico porque sin esto las campañas no se mandan.
+
+      - "⚠ N alertas de stock" → solo aparece si hay alertas pendientes
+        (ventas que se cargaron sin stock suficiente).
+
+    Variables inyectadas por `MyAdminSite.each_context` y permisos
+    chequeados ahí también.
     {% endcomment %}
+    {% if user.is_superuser %}
+        <a href="/wa-campania/conexion/"
+           class="badge-wa-conexion"
+           title="Vincular cuenta de WhatsApp, ver estado del bot, mandar prueba.">
+            💬 WhatsApp
+        </a>
+    {% endif %}
     {% if alertas_stock_pendientes %}
         <a href="/admin/venta/alertastock/?revisada__exact=0"
            class="badge-alertas-stock"
            title="Hay ventas que se cargaron con stock insuficiente. Click para revisarlas.">
             ⚠ {{ alertas_stock_pendientes }} alerta{{ alertas_stock_pendientes|pluralize }} de stock
+        </a>
+    {% endif %}
+    {% if solicitudes_lista_pendientes %}
+        <a href="/admin/articulo/solicitudlistacliente/?resuelta__exact=0"
+           class="badge-solicitudes-lista"
+           title="Clientes que pidieron la lista por WhatsApp pero no tienen una asignada. Click para armárselas.">
+            📋 {{ solicitudes_lista_pendientes }} pedido{{ solicitudes_lista_pendientes|pluralize }} de lista
         </a>
     {% endif %}
     {{ block.super }}
