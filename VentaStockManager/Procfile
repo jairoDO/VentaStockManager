@@ -18,5 +18,10 @@
 # Nota path wsgi: rootDir en render.yaml = VentaStockManager/, así que
 # desde acá `VentaStockManager.wsgi` apunta al settings real (NO
 # `VentaStockManager.VentaStockManager.wsgi`, que era el bug viejo).
-web: gunicorn VentaStockManager.wsgi:application --log-file - --workers 2 --timeout 60
+#
+# Por qué `python -m gunicorn` y no `gunicorn` directo: con rootDir
+# distinto al de requirements.txt, Render no siempre deja el bin del
+# venv en PATH al momento de ejecutar el Procfile. `python -m` evita
+# el problema importando el módulo (que SÍ está en sys.path).
+web: python -m gunicorn VentaStockManager.wsgi:application --log-file - --workers 2 --timeout 60
 worker: python manage.py qcluster

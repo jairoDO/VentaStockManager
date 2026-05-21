@@ -31,7 +31,13 @@ services:
     # mismo proceso. Si uno cae, los dos se reinician (Render relanza
     # el dyno). Reemplaza al servicio "type: worker" separado, que
     # costaría otros USD 7 por entorno.
-    startCommand: honcho start
+    #
+    # Usamos `python -m honcho` (no `honcho` directo) porque con
+    # rootDir=VentaStockManager el cwd de runtime queda en el subdir
+    # y el bin del venv (.../bin/honcho) NO siempre queda en PATH.
+    # `python -m` evita depender del PATH: importa el módulo y ya.
+    # El mismo razonamiento aplica a gunicorn dentro del Procfile.
+    startCommand: python -m honcho start
     healthCheckPath: /admin/login/
     envVars:
       - key: PYTHON_VERSION
@@ -87,7 +93,9 @@ services:
       python manage.py migrate --no-input
     # honcho lee VentaStockManager/Procfile y levanta `web` (gunicorn)
     # + `worker` (qcluster) como hijos. Ver Procfile para detalles.
-    startCommand: honcho start
+    # `python -m honcho` en vez de `honcho` por el problema de PATH
+    # con rootDir (ver comentario equivalente en el servicio staging).
+    startCommand: python -m honcho start
     healthCheckPath: /admin/login/
     envVars:
       - key: PYTHON_VERSION
@@ -112,6 +120,69 @@ services:
         generateValue: true
       - key: DATABASE_URL
         sync: false  # pegar manualmente la de Neon production
+      # ---- WhatsApp (Baileys, servicio `wa-bot` definido más abajo) ----
+      # Render expone los Private Services al resto del Blueprint por
+      # NOMBRE — el DNS interno `wa-bot` resuelve al pserv. NO usar
+      # https ni dominio público: el pserv no tiene URL externa.
+      - key: WHATSAPP_API_URL
+        value: http://wa-bot:3000
+      # Token compartido entre Django ↔ wa-bot. Tiene que matchear con
+      # `WA_BOT_TOKEN` del pserv (el bot usa el MISMO token tanto para
+      # validar requests entrantes como para autenticar el webhook que
+      # le manda a Django). Generar uno con
+      # `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+      # y pegar el MISMO valor en los dos envVars desde el dashboard.
+      - key: WHATSAPP_API_TOKEN
+        sync: false
+
+  # -------------------------------------------------------------------
+  # wa-bot — Private Service (Baileys) — PRODUCTION
+  # -------------------------------------------------------------------
+  # Bot de WhatsApp escrito en Node (ver carpeta /wa-bot del repo).
+  # Migrado de @open-wa/wa-automate (discontinuado, rompía en Apple
+  # Silicon y dejó de inyectar WAPI) a @whiskeysockets/baileys, que
+  # habla directo el protocolo Signal de WA por WebSocket — sin
+  # Puppeteer, sin Chromium, mucho más liviano y estable.
+  #
+  # `type: pserv` = Private Service. NO expuesto a internet, solo
+  # accesible desde otros servicios del mismo Blueprint vía el DNS
+  # interno `http://wa-bot:3000`. Eso protege el endpoint del bot
+  # (que de leakear permitiría mandar WA desde el número del cliente).
+  #
+  # Plan starter (USD 7/mes) porque pserv NO soporta plan free.
+  # El disco persistente guarda el auth state de Baileys (creds.json
+  # + keys/) — sin eso, cada redeploy te pediría escanear QR de nuevo.
+  - type: pserv
+    name: wa-bot
+    runtime: docker
+    region: oregon  # MISMA región que el web — si no, hops inter-AZ
+    plan: starter
+    branch: production
+    autoDeploy: true
+    rootDir: wa-bot
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: WA_BOT_PORT
+        value: "3000"
+      # Token compartido Django ↔ bot. Tiene que ser el MISMO valor que
+      # WHATSAPP_API_TOKEN del servicio web. El bot lo usa para dos cosas:
+      #   1. Validar el header `X-Bot-Token` en sus propios endpoints
+      #      (Django → bot: enviar mensaje, exists, qr, etc.)
+      #   2. Re-enviarlo como `X-Bot-Token` cuando llama al webhook de
+      #      Django (bot → Django: mensaje entrante para auto-responder).
+      # Generar con: python -c "import secrets; print(secrets.token_urlsafe(32))"
+      - key: WA_BOT_TOKEN
+        sync: false
+      # Base URL de Django para el webhook de mensajes entrantes. El bot
+      # agrega `/wa-campania/api/incoming/` por su cuenta — pasarle SOLO
+      # el origen. Es URL PÚBLICA (el bot llama desde fuera del Blueprint
+      # hacia el web; los pserv pueden hacer egress a internet sin problema).
+      - key: DJANGO_URL
+        value: https://golosinas-insa.onrender.com
+    disk:
+      name: wa-bot-sessions
+      mountPath: /sessions  # Baileys persiste creds + keys acá
+      sizeGB: 1             # ~USD 0.25/mes — sobra para el auth state
 
 # -------------------------------------------------------------------
 # CRON JOB — sync diario de Google Sheets → DB de production
