@@ -295,6 +295,50 @@ mimetypes.add_type("application/javascript", ".js", True)
 
 
 # ---------------------------------------------------------------------------
+# Logging — forzar tracebacks de errores 500 a stdout
+# ---------------------------------------------------------------------------
+# Por default, cuando DEBUG=False Django manda los errores 500 al handler
+# `mail_admins` (mail a ADMINS). Como no tenemos ADMINS seteados ni SMTP,
+# los tracebacks se PIERDEN — el log de gunicorn solo muestra el access
+# log con el código 500 pero sin contexto. Eso hace imposible debuggear
+# desde Render sin activar DEBUG=True (que es inseguro en prod).
+#
+# Este config explícitamente engancha `django.request` a un StreamHandler
+# que va a stdout → Render lo captura → vemos el traceback en la pestaña
+# Logs sin exponer nada al usuario final.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        # django.request loguea las excepciones 500 con traceback completo.
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        # django.server: requests del runserver (dev). En prod no impacta.
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Dev-only extras
 # ---------------------------------------------------------------------------
 if DEBUG:
