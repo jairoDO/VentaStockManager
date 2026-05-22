@@ -1,4 +1,41 @@
 from material.admin.sites import MaterialAdminSite
+
+# -----------------------------------------------------------------------
+# Monkey-patch: material-admin pide actions.min.js / prepopulate.min.js
+# cuando DEBUG=False, pero esos archivos YA NO EXISTEN en Django 4.2+
+# (el equipo de Django dejó de minificarlos hace varias versiones,
+# solo quedan actions.js, prepopulate.js sin sufijo). Material nunca
+# se actualizó.
+#
+# Síntoma sin este patch: TODOS los changelists del admin tiran 500
+# en producción con `ValueError: The file 'admin/js/actions.min.js'
+# could not be found`. Anda fino con DEBUG=True porque ahí material
+# usa `extra=''` (sin .min) y los archivos existen.
+#
+# Fix: forzamos `media` a usar siempre las versiones sin .min. Mantenemos
+# las de vendor (jquery, xregexp) con .min porque ESAS sí existen.
+from django import forms
+from material.admin.options import MaterialModelAdminMixin
+from django.contrib.admin.options import ModelAdmin as _DjangoModelAdmin
+
+
+@property
+def _patched_material_media(self):
+    js = [
+        'admin/js/vendor/jquery/jquery.min.js',  # sí existe
+        'admin/js/jquery.init.js',
+        'admin/js/core.js',
+        'admin/js/actions.js',                   # NO usar .min (no existe en 4.2+)
+        'admin/js/urlify.js',
+        'admin/js/prepopulate.js',               # NO usar .min (no existe en 4.2+)
+        'admin/js/vendor/xregexp/xregexp.min.js',  # sí existe
+        'material/admin/js/RelatedObjectLookups.min.js',
+    ]
+    return _DjangoModelAdmin.media.fget(self) + forms.Media(js=js)
+
+
+MaterialModelAdminMixin.media = _patched_material_media
+
 from venta.admin import VentaAdmin, PedidoAdmin, AlertaStockAdmin
 from articulo.admin import ArticuloAdmin
 from cliente.admin import ClienteAdmin, CuentaClienteAdmin, MovimientoCuentaAdmin, PrecioClienteAdmin
