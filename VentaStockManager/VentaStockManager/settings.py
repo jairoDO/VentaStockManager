@@ -180,6 +180,18 @@ STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
 ]
+# IMPORTANTE: por default whitenoise corre el ManifestStaticFilesStorage
+# en STRICT mode → si CUALQUIER template hace `{% static 'X' %}` con un
+# archivo que NO fue collectado, levanta ValueError y la página 500ea.
+# Como material-admin tiene N templates con N referencias estáticas, una
+# sola faltante (ej. un asset que cambió de path entre versiones) tira
+# todo el admin abajo en prod (DEBUG=False).
+#
+# Con strict=False: si el archivo no está en el manifest, devuelve la URL
+# sin hash. El browser pedirá ese asset y dará 404 silencioso (visible
+# en DevTools pero no rompe el render). Es el trade-off correcto: prefiero
+# un admin funcional con un asset roto que un admin caído entero.
+WHITENOISE_MANIFEST_STRICT = False
 
 
 # ---------------------------------------------------------------------------
