@@ -2,27 +2,43 @@
 
 Manual práctico para el día a día con el sistema. Si nunca lo abriste, empezá por la sección **1**.
 
-> Para sacar capturas y reemplazar los placeholders, ver instrucciones al final del documento (sección "Cómo actualizar este manual").
+> ⚠️ **Antes de seguir cualquier sección**, mirá la fecha de "Última revisión" arriba de cada una. Si pasaron **más de 3 meses** desde la fecha indicada, verificá con el técnico que el comportamiento descrito todavía sea válido — el sistema puede haber cambiado.
 
 ---
 
-## Índice
+## Índice + estado de cada sección
 
-1. [Acceso al sistema](#1-acceso-al-sistema)
-2. [Pantalla principal](#2-pantalla-principal)
-3. [Artículos](#3-artículos)
-4. [Clientes](#4-clientes)
-5. [Hacer una venta nueva](#5-hacer-una-venta-nueva)
-6. [Cuenta corriente y pagos](#6-cuenta-corriente-y-pagos)
-7. [Listas de precios](#7-listas-de-precios)
-8. [WhatsApp del negocio](#8-whatsapp-del-negocio)
-9. [Configuración general](#9-configuración-general)
-10. [Problemas frecuentes](#10-problemas-frecuentes)
-11. [Glosario](#11-glosario)
+| # | Sección | Última revisión | Estado |
+|---|---|---|---|
+| 1 | [Acceso al sistema](#1-acceso-al-sistema) | 2026-05-22 | ✅ Actualizada |
+| 2 | [Pantalla principal](#2-pantalla-principal) | 2026-05-22 | ✅ Actualizada |
+| 3 | [Artículos](#3-artículos) | 2026-05-22 | ✅ Actualizada |
+| 4 | [Clientes](#4-clientes) | 2026-05-22 | ✅ Actualizada |
+| 5 | [Hacer una venta nueva](#5-hacer-una-venta-nueva) | 2026-05-22 | ✅ Actualizada |
+| 6 | [Cuenta corriente y pagos](#6-cuenta-corriente-y-pagos) | 2026-05-22 | ✅ Actualizada |
+| 7 | [Listas de precios](#7-listas-de-precios) | 2026-05-22 | ✅ Actualizada |
+| 8 | [WhatsApp del negocio](#8-whatsapp-del-negocio) | 2026-05-22 | ✅ Actualizada |
+| 9 | [Configuración general](#9-configuración-general) | 2026-05-22 | ✅ Actualizada |
+| 10 | [Problemas frecuentes](#10-problemas-frecuentes) | 2026-05-22 | ✅ Actualizada |
+| 11 | [Glosario](#11-glosario) | 2026-05-22 | ✅ Actualizada |
+
+### Cómo leer la columna "Estado"
+
+| Símbolo | Significa |
+|---|---|
+| ✅ **Actualizada** | Última revisión < 3 meses. Confiable. |
+| ⚠️ **Verificar** | Última revisión entre 3 y 6 meses. Posiblemente desactualizada, chequeá antes de seguir el paso a paso. |
+| ❌ **Desactualizada** | Última revisión > 6 meses. **NO seguir sin verificar con el técnico**. El comportamiento descrito probablemente cambió. |
+
+Cuando se modifica una sección, hay que actualizar **dos cosas**: la fecha en esta tabla, y la fecha al inicio de la sección. Si pasan meses sin tocarla, el estado pasa solo de ✅ → ⚠️ → ❌ (a partir de cuánto tiempo decidamos, manualmente o con un script).
+
+> **Para el operador**: si una sección tiene ⚠️ o ❌, lo más seguro es preguntar al técnico antes de seguir los pasos.
 
 ---
 
 ## 1. Acceso al sistema
+
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
 
 ### URL
 
@@ -48,6 +64,8 @@ Avisale al técnico (Jairo). Hay un mecanismo para resetear sin perder datos: ca
 
 ## 2. Pantalla principal
 
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
+
 Después de loguearte vas al "dashboard". Está dividido en secciones por app:
 
 - **Artículo**: todo lo relacionado a los productos.
@@ -67,6 +85,8 @@ Después de loguearte vas al "dashboard". Está dividido en secciones por app:
 ---
 
 ## 3. Artículos
+
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
 
 ### Ver todos los artículos (grilla)
 
@@ -114,6 +134,8 @@ Ejemplo: categoría "Chocolates" con reglas `["chocolate", "alfajor", "bombón"]
 
 ## 4. Clientes
 
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
+
 ### Ver clientes
 
 Click en **"Clientes"** → lista con saldo de cuenta corriente.
@@ -136,6 +158,8 @@ Click en **"Clientes"** → lista con saldo de cuenta corriente.
 ---
 
 ## 5. Hacer una venta nueva
+
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
 
 Es la pantalla más usada. Click en **"+ Venta nueva"** en el menú lateral.
 
@@ -209,6 +233,8 @@ Click en **"Guardar venta"** abajo a la derecha. Si todo está OK:
 
 ## 6. Cuenta corriente y pagos
 
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
+
 ### Ver la cuenta de un cliente
 
 Desde la lista de clientes, click en el saldo. O desde el menú: **Cliente → Cuentas corrientes**.
@@ -248,6 +274,8 @@ El resultado es igual a un pago, pero con etiqueta distinta para tu memoria.
 ---
 
 ## 7. Listas de precios
+
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
 
 Las listas de precios son una herramienta para mandar al cliente un listado personalizado de productos con sus precios, descuentos especiales, etc. Se mandan por WhatsApp como link, PDF o texto.
 
@@ -306,6 +334,8 @@ Cuando creás una lista, **NO se guarda una foto del precio** del artículo. Cad
 
 ## 8. WhatsApp del negocio
 
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
+
 ### Vincular el bot
 
 1. Atajo **💬 WhatsApp** arriba a la derecha del admin (solo superusuario).
@@ -336,6 +366,8 @@ Si está habilitado (Configuración general → Auto-responder), cuando un clien
 
 ## 9. Configuración general
 
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
+
 Menú lateral → **"Configuración general"**. Es una pantalla única con varios fieldsets.
 
 ![Captura: configuración general](capturas/22-config-general.png)
@@ -353,6 +385,8 @@ Menú lateral → **"Configuración general"**. Es una pantalla única con vario
 ---
 
 ## 10. Problemas frecuentes
+
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
 
 ### "Hubo problemas al guardar: CuentaCliente matching query does not exist"
 
@@ -386,6 +420,8 @@ Si pasa después de un deploy reciente, es esperable (un cambio de SECRET_KEY in
 ---
 
 ## 11. Glosario
+
+> 📅 **Última revisión**: 2026-05-22 — ✅ Actualizada
 
 - **Articulo**: producto del kiosko.
 - **Cliente**: persona o empresa que compra. Tiene **cuenta corriente** automática.

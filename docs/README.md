@@ -21,3 +21,28 @@
 - **Tono**: directo, sin tecnicismos cuando es para Osvaldo. Más técnico en docs internas.
 - **Capturas**: en `docs/capturas/`. Numeradas para que se ordenen visualmente al listar el directorio.
 - **Versionado**: cada doc menciona la fecha de última actualización y la versión del sistema que cubre.
+- **Staleness por sección**: cada sección del manual tiene una línea `> 📅 **Última revisión**: YYYY-MM-DD — ESTADO` al principio. El ESTADO se calcula automáticamente con el script de abajo.
+
+## Verificar si la doc está desactualizada
+
+```bash
+# Ver qué secciones quedaron desactualizadas según las fechas
+python3 docs/check_docs_staleness.py
+
+# Aplicar los cambios al markdown (actualiza estados ✅ / ⚠️ / ❌)
+python3 docs/check_docs_staleness.py --fix
+```
+
+Reglas que aplica el script:
+
+| Edad de la última revisión | Estado |
+|---|---|
+| < 3 meses (90 días) | ✅ Actualizada |
+| 3–6 meses (90–180 días) | ⚠️ Verificar |
+| > 6 meses (180 días) | ❌ Desactualizada |
+
+**Cuándo correrlo**:
+
+- Cada vez que modificás una sección del manual, actualizá su fecha y corré `--fix`.
+- Mensualmente (recordatorio en calendario), para que las secciones que no se tocaron en un tiempo se marquen automáticamente.
+- Opcional: agregarlo a un pre-commit hook que falle si hay secciones ❌ Desactualizadas.
