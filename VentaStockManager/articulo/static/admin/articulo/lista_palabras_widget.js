@@ -271,13 +271,37 @@
     initAll();
   }
 
-  // Django admin inlines: cuando agregás una nueva fila inline, dispara
-  // el evento `formset:added` (jQuery). Re-corremos init para los widgets
-  // recién insertados. Si jQuery no está, no rompe — solo no se inicializa
-  // la fila nueva hasta que recargues. (Mejor que tirar excepción.)
-  if (window.django && window.django.jQuery) {
-    window.django.jQuery(document).on('formset:added', function () {
-      initAll();
+  // MutationObserver: detecta widgets nuevos cuando aparecen en el DOM,
+  // sin importar quién los agregó (Django jQuery, material-admin, JS
+  // vanilla, etc.). Reemplaza el listener de `formset:added` que solo
+  // funcionaba si `window.django.jQuery` existía — material-admin no
+  // siempre lo expone ahí, y el listener quedaba muerto.
+  //
+  // Detecta dos casos:
+  //   1. El nodo agregado ES un widget (raro, pero posible).
+  //   2. El nodo agregado CONTIENE widgets adentro (caso típico: Django
+  //      agrega un <tr> al inline que tiene el widget dentro).
+  function setupAutoInit() {
+    if (!window.MutationObserver) return;
+    const observer = new MutationObserver(function (mutations) {
+      mutations.forEach(function (mutation) {
+        mutation.addedNodes.forEach(function (node) {
+          if (node.nodeType !== 1) return; // skip text/comment nodes
+          if (node.classList && node.classList.contains('lista-palabras-widget')) {
+            initWidget(node);
+          }
+          if (node.querySelectorAll) {
+            node.querySelectorAll('.lista-palabras-widget').forEach(initWidget);
+          }
+        });
+      });
     });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupAutoInit);
+  } else {
+    setupAutoInit();
   }
 })();
