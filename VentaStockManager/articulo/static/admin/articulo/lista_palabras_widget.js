@@ -48,13 +48,11 @@
     if (container.closest('.empty-form')) return;
     // Algunos forks de Django/material usan `.dynamic-form` con
     // `__prefix__` en los IDs. Cubrimos esa variante también.
-    const hidden = container.querySelector('input[type="hidden"]');
-    if (hidden && hidden.name && hidden.name.indexOf('__prefix__') !== -1) return;
-
     if (container.dataset.initialized === '1') return;
     container.dataset.initialized = '1';
 
     const hidden = container.querySelector('input[type="hidden"]');
+    if (hidden && hidden.name && hidden.name.indexOf('__prefix__') !== -1) return;
     const itemsBox = container.querySelector('.lista-palabras-items');
     const addBtn = container.querySelector('.lista-palabras-add');
 
