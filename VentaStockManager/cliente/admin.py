@@ -232,20 +232,31 @@ class CuentaClienteAdmin(admin.ModelAdmin):
 
     def acciones(self, obj):
         """
-        Botón "Registrar pago" estilizado. El link va al add de
-        MovimientoCuenta con `cuenta` pre-seleccionado (el operador
-        no tiene que buscar al cliente de nuevo).
+        Dos botones lado a lado:
+          - "💰 Registrar pago" → cliente paga deuda existente
+          - "💵 Registrar saldo a favor" → cliente adelanta plata
+
+        Funcionalmente ambos son TIPO_PAGO con monto positivo en el
+        modelo. La diferencia es la UX: el operador piensa distinto
+        y el form los guía con labels y help_text apropiados a cada
+        caso (ver get_form en MovimientoCuentaAdmin con ?modo=saldo).
         """
         if not obj or not obj.pk:
             return '—'
         return format_html(
             '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}" '
-            'style="display:inline-block; padding:8px 16px; '
+            'style="display:inline-block; padding:8px 16px; margin-right:8px; '
             'background:#059669; color:white; border-radius:6px; '
             'text-decoration:none; font-weight:500;">'
             '💰 Registrar pago'
+            '</a>'
+            '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}&modo=saldo" '
+            'style="display:inline-block; padding:8px 16px; '
+            'background:#2563eb; color:white; border-radius:6px; '
+            'text-decoration:none; font-weight:500;">'
+            '💵 Registrar saldo a favor'
             '</a>',
-            obj.pk,
+            obj.pk, obj.pk,
         )
     acciones.short_description = 'Registrar movimiento'
 
@@ -367,32 +378,61 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
         return False
 
     # ---------- Add form simplificado ----------
-    # Cuando el operador clickea "AGREGAR MOVIMIENTO", le mostramos un
-    # form mínimo: cliente, monto y nota. NO le pedimos elegir tipo
-    # (le ponemos PAGO automáticamente). Es lo más intuitivo: "voy a
-    # registrar que tal cliente me pagó tantos pesos".
+    # Cuando el operador clickea "Registrar pago" o "Registrar saldo a
+    # favor", le mostramos un form mínimo: cliente, monto y nota. NO le
+    # pedimos elegir tipo (lo ponemos PAGO automáticamente).
+    #
+    # `raw_id_fields` en vez de `autocomplete_fields`: con autocomplete,
+    # material-admin renderiza un widget con styling raro donde el input
+    # queda casi invisible hasta clickearlo. raw_id_fields da un input
+    # de texto plano + ícono de lupa para buscar, que se ve MUY claro.
     fields = ('cuenta', 'monto', 'descripcion')  # solo en add
-    autocomplete_fields = ('cuenta',)
+    raw_id_fields = ('cuenta',)
 
     def get_form(self, request, obj=None, **kwargs):
         """
-        En el add, ajustamos help_text de los campos para que sea claro
-        QUÉ se está cargando. El usuario no tiene que saber qué es un
-        'movimiento' — solo que está registrando un pago.
+        En el add, ajustamos labels y help_text para que sea claro QUÉ
+        se está cargando. Soportamos dos "modos" via query param:
+
+          /add/?cuenta=N             → modo PAGO (default)
+          /add/?cuenta=N&modo=saldo  → modo SALDO A FAVOR
+
+        En ambos casos guardamos un MovimientoCuenta de tipo PAGO con
+        monto positivo. La diferencia es solo conceptual/UX:
+          - PAGO: cliente pagó una deuda existente
+          - SALDO A FAVOR: cliente adelantó plata sin deber
+
+        Hacia el modelo es lo mismo, pero el operador piensa distinto
+        y el form lo guía con palabras claras.
         """
         form = super().get_form(request, obj, **kwargs)
         if obj is None:  # estamos en /add/
+            modo = request.GET.get('modo', 'pago')
+            es_saldo = modo == 'saldo'
+
             if 'monto' in form.base_fields:
-                form.base_fields['monto'].label = 'Monto pagado'
-                form.base_fields['monto'].help_text = (
-                    'Cuánto pagó el cliente. Ingresá positivo (ej. 5000).'
-                )
+                if es_saldo:
+                    form.base_fields['monto'].label = 'Monto adelantado'
+                    form.base_fields['monto'].help_text = (
+                        'Cuánto trae el cliente como saldo a favor. '
+                        'Ej. 3000 (queda como crédito para próximas compras).'
+                    )
+                else:
+                    form.base_fields['monto'].label = 'Monto pagado'
+                    form.base_fields['monto'].help_text = (
+                        'Cuánto pagó el cliente. Ingresá positivo (ej. 5000).'
+                    )
             if 'descripcion' in form.base_fields:
                 form.base_fields['descripcion'].label = 'Nota (opcional)'
-                form.base_fields['descripcion'].help_text = (
-                    'Ej. "Pago en efectivo del 22/05" o "Transferencia '
-                    'BBVA". Para tu referencia futura.'
-                )
+                if es_saldo:
+                    form.base_fields['descripcion'].help_text = (
+                        'Ej. "Anticipo del 22/05" o "Pago previo lista X".'
+                    )
+                else:
+                    form.base_fields['descripcion'].help_text = (
+                        'Ej. "Pago en efectivo del 22/05" o "Transferencia '
+                        'BBVA". Para tu referencia futura.'
+                    )
             if 'cuenta' in form.base_fields:
                 form.base_fields['cuenta'].label = 'Cliente'
         return form
