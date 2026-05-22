@@ -726,7 +726,19 @@ def api_venta_guardar(request):
                 # Aplicación de saldo a favor. Validamos contra el saldo
                 # REAL del cliente al momento del guardado para evitar
                 # double-spend si dos ventas se guardan en paralelo.
-                cuenta = CuentaCliente.objects.select_for_update().get(cliente=cliente)
+                #
+                # `get_or_create` en lugar de `get`: hay clientes que NO
+                # tienen CuentaCliente todavía (importados desde sistemas
+                # legacy que no tenían cuenta corriente, o creados a mano
+                # sin pasar por el flujo que la auto-crea). Antes esto
+                # rompía con `CuentaCliente matching query does not exist`.
+                # La cuenta arranca con saldo 0 (no hay movimientos),
+                # entonces es seguro autogenerarla acá.
+                cuenta, _ = (
+                    CuentaCliente.objects
+                    .select_for_update()
+                    .get_or_create(cliente=cliente)
+                )
                 saldo_actual = cuenta.saldo
 
                 aplicado = Decimal('0')
