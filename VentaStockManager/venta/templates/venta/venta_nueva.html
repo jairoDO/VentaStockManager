@@ -703,6 +703,53 @@
         item.dropdownAbierto = true;
       },
       seleccionarArticulo(idx, a) {
+        // Detección de duplicados: si el artículo elegido ya está cargado
+        // en OTRA fila de la venta, preguntamos si sumar cantidad ahí en
+        // lugar de tener dos líneas iguales. Patrón típico de POS — evita
+        // el error de cargar el mismo producto dos veces sin querer.
+        //
+        // Heurística: buscamos otra fila con el mismo articulo_id (no la
+        // actual). Si la encontramos, modal Alpine pidiendo confirmación.
+        const otraFilaIdx = this.items.findIndex(
+          (it, i) => i !== idx && it.articulo_id === a.id
+        );
+        if (otraFilaIdx !== -1) {
+          const otra = this.items[otraFilaIdx];
+          const cantidadActual = Number(otra.cantidad) || 0;
+          const cantidadNueva = Number(this.items[idx].cantidad) || 1;
+          const cantidadTotal = cantidadActual + cantidadNueva;
+          this.abrirModal({
+            tipo: 'confirm',
+            titulo: 'Artículo duplicado',
+            mensaje: `"${a.marca} — ${a.nombre}" ya está cargado en la fila ${otraFilaIdx + 1} `
+                   + `con cantidad ${cantidadActual}. `
+                   + `¿Sumar ${cantidadNueva} → quedaría ${cantidadTotal}?`,
+            okLabel: `Sí, sumar (queda ${cantidadTotal})`,
+            cancelLabel: 'No, cancelar',
+            callback: () => {
+              // Sumar cantidad en la fila vieja y limpiar la actual
+              // (para que el operador siga agregando otros artículos
+              // sin que esta fila quede "trabada" con el duplicado).
+              otra.cantidad = cantidadTotal;
+              // Recalcular precio según nueva cantidad (puede pasar
+              // de minorista a mayorista si supera el umbral).
+              this._recalcularPrecioNormal(otraFilaIdx);
+              // Limpiar fila actual.
+              const item = this.items[idx];
+              item.articulo_id = null;
+              item.articulo_label = '';
+              item.query = '';
+              item.precio = 0;
+              item.cantidad = 1;
+              item.results = [];
+              item.dropdownAbierto = false;
+            },
+          });
+          // NO cargar el artículo en esta fila — esperamos la confirmación
+          // del modal. Si el usuario cancela, la fila queda como estaba.
+          return;
+        }
+
         const item = this.items[idx];
         item.articulo_id = a.id;
         item.articulo_label = `${a.marca} — ${a.nombre}`;

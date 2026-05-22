@@ -230,22 +230,73 @@ class _ClienteListFilter(admin.SimpleListFilter):
 
 class MovimientoCuentaAdmin(admin.ModelAdmin):
     """
-    Listado plano de movimientos. Útil para auditar ("¿qué pasó con
-    este cliente entre marzo y abril?"). El alta de movimientos
-    normalmente va por el inline de CuentaClienteAdmin.
+    Listado plano de movimientos — SOLO LECTURA desde el admin.
+
+    Por qué solo lectura: los movimientos son la fuente de verdad del
+    saldo. Si el operador edita o borra uno a mano, el saldo se
+    desfasa y nadie se entera. Los movimientos los crea SIEMPRE el
+    sistema cuando hay venta/pago/devolución. Para registrar un pago
+    manual, andá a la pantalla de cuenta corriente del cliente
+    (botón "Registrar pago" — próxima feature).
+
+    Útil para auditoría: "¿qué movimientos hubo en este cliente
+    entre marzo y abril?". Pero NO para edición.
     """
     icon_name = "swap_horiz"
-    list_display = ('created_at', 'cuenta_cliente', 'tipo', 'monto_display', 'venta', 'creado_por')
+    # Compacto: fecha corta (sin hora gigante), cliente, tipo legible,
+    # monto con color, link a la venta origen. El operador escanea la
+    # tabla rápido sin tener que hacer scroll horizontal.
+    list_display = (
+        'fecha_compacta',
+        'cuenta_cliente',
+        'tipo_legible',
+        'monto_display',
+        'venta_link',
+    )
     list_filter = (_ClienteListFilter, 'tipo', 'created_at')
     search_fields = ('cuenta__cliente__nombre', 'cuenta__cliente__apellido', 'descripcion')
-    readonly_fields = ('created_at', 'creado_por')
+    readonly_fields = ('created_at', 'creado_por', 'cuenta', 'tipo', 'monto', 'venta', 'descripcion')
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
+    list_per_page = 30  # Más densidad: el listado es de revisión rápida
+
+    # Read-only por defecto. Mantenemos `view` para que se pueda entrar
+    # a ver el detalle de un movimiento; bloqueamos add/change/delete.
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False  # ni siquiera el superuser puede modificar a mano
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def fecha_compacta(self, obj):
+        """Solo fecha + hora corta (sin segundos ni timezone)."""
+        return obj.created_at.strftime('%d/%m/%y %H:%M')
+    fecha_compacta.short_description = 'Fecha'
+    fecha_compacta.admin_order_field = 'created_at'
 
     def cuenta_cliente(self, obj):
         return obj.cuenta.cliente.nombre_completo()
     cuenta_cliente.short_description = 'Cliente'
     cuenta_cliente.admin_order_field = 'cuenta__cliente__nombre'
+
+    def tipo_legible(self, obj):
+        """`get_tipo_display()` con un ícono según el tipo."""
+        label = obj.get_tipo_display()
+        # Iconos suaves para distinguir de un vistazo qué tipo de
+        # movimiento es. Mejor que solo el texto.
+        icono = {
+            'PAGO': '💰',
+            'VENTA_A_CUENTA': '🛒',
+            'APLICACION_SALDO': '⬇️',
+            'EXCEDENTE': '⬆️',
+            'AJUSTE': '⚙️',
+        }.get(obj.tipo, '•')
+        return format_html('{} {}', icono, label)
+    tipo_legible.short_description = 'Tipo'
+    tipo_legible.admin_order_field = 'tipo'
 
     def monto_display(self, obj):
         """Monto con color: verde si suma al cliente, rojo si resta."""
@@ -263,13 +314,22 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
     monto_display.short_description = 'Monto'
     monto_display.admin_order_field = 'monto'
 
-    def save_model(self, request, obj, form, change):
-        # Si el movimiento se carga manualmente desde el admin, lo
-        # firmamos con el user que lo hizo (auditlog ya lo registra
-        # también pero acá queda el campo "duro" para reportes).
-        if not change and obj.creado_por is None:
-            obj.creado_por = request.user
-        super().save_model(request, obj, form, change)
+    def venta_link(self, obj):
+        """
+        Link directo a la venta origen del movimiento (si tiene una).
+        Reemplaza el campo `venta` plano que solo mostraba el ID.
+        Crítico para "ver qué venta generó este movimiento" sin tener
+        que buscar a mano.
+        """
+        if not obj.venta_id:
+            return format_html('<span style="color:#888;">—</span>')
+        return format_html(
+            '<a href="/admin/venta/venta/{}/change/" style="color:#2563eb;">'
+            'Venta #{}</a>',
+            obj.venta_id, obj.venta_id,
+        )
+    venta_link.short_description = 'Venta'
+    venta_link.admin_order_field = 'venta'
 
 
 class PrecioClienteAdmin(admin.ModelAdmin):
