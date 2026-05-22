@@ -260,16 +260,72 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
     ordering = ('-created_at',)
     list_per_page = 30  # Más densidad: el listado es de revisión rápida
 
-    # Read-only por defecto. Mantenemos `view` para que se pueda entrar
-    # a ver el detalle de un movimiento; bloqueamos add/change/delete.
-    def has_add_permission(self, request):
-        return False
-
+    # Permisos:
+    #   - ADD permitido: el operador puede registrar pagos a mano
+    #     desde acá (cliente paga en efectivo / transferencia / etc.
+    #     sin estar asociado a una venta puntual).
+    #   - CHANGE prohibido: una vez creado el movimiento, no se edita
+    #     a mano. Si hay un error, se carga otro movimiento opuesto
+    #     (TIPO_AJUSTE con signo contrario). Esto preserva el audit
+    #     trail — auditlog registra creates pero un edit silencioso
+    #     puede desbalancear el saldo y confundir.
+    #   - DELETE prohibido: idem. Si querés "anular" un pago, cargá
+    #     un AJUSTE negativo.
     def has_change_permission(self, request, obj=None):
-        return False  # ni siquiera el superuser puede modificar a mano
+        return False
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    # ---------- Add form simplificado ----------
+    # Cuando el operador clickea "AGREGAR MOVIMIENTO", le mostramos un
+    # form mínimo: cliente, monto y nota. NO le pedimos elegir tipo
+    # (le ponemos PAGO automáticamente). Es lo más intuitivo: "voy a
+    # registrar que tal cliente me pagó tantos pesos".
+    fields = ('cuenta', 'monto', 'descripcion')  # solo en add
+    autocomplete_fields = ('cuenta',)
+
+    def get_form(self, request, obj=None, **kwargs):
+        """
+        En el add, ajustamos help_text de los campos para que sea claro
+        QUÉ se está cargando. El usuario no tiene que saber qué es un
+        'movimiento' — solo que está registrando un pago.
+        """
+        form = super().get_form(request, obj, **kwargs)
+        if obj is None:  # estamos en /add/
+            if 'monto' in form.base_fields:
+                form.base_fields['monto'].label = 'Monto pagado'
+                form.base_fields['monto'].help_text = (
+                    'Cuánto pagó el cliente. Ingresá positivo (ej. 5000).'
+                )
+            if 'descripcion' in form.base_fields:
+                form.base_fields['descripcion'].label = 'Nota (opcional)'
+                form.base_fields['descripcion'].help_text = (
+                    'Ej. "Pago en efectivo del 22/05" o "Transferencia '
+                    'BBVA". Para tu referencia futura.'
+                )
+            if 'cuenta' in form.base_fields:
+                form.base_fields['cuenta'].label = 'Cliente'
+        return form
+
+    def save_model(self, request, obj, form, change):
+        """
+        Al guardar desde el add form, completamos los campos que no
+        pedimos al usuario:
+          - tipo = PAGO (siempre, este admin es solo para pagos)
+          - creado_por = el user actual (para auditoría)
+          - monto = forzar positivo (un pago siempre suma al saldo
+            del cliente, no resta)
+        """
+        from cliente.models import MovimientoCuenta
+        if not change:
+            obj.tipo = MovimientoCuenta.TIPO_PAGO
+            obj.creado_por = request.user
+            # Forzar monto positivo: el operador podría tipear "5000"
+            # o "-5000" por error. Para un PAGO, siempre suma.
+            if obj.monto < 0:
+                obj.monto = abs(obj.monto)
+        super().save_model(request, obj, form, change)
 
     def fecha_compacta(self, obj):
         """Solo fecha + hora corta (sin segundos ni timezone)."""
