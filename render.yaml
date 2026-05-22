@@ -60,8 +60,19 @@ services:
       # desde el singleton ConfiguracionGeneral (admin runtime). Ya
       # no se setean acá. Para apagar/prender: /admin/configuracion/.
       # Secretos — se setean en el dashboard, no en este archivo
+      # SECRET_KEY: lo seteás MANUALMENTE en el dashboard de Render
+      # (sync: false). Antes usábamos `generateValue: true` pero Render
+      # lo regenera en ciertos casos (Manual Sync del Blueprint, etc.)
+      # → cada regeneración invalida TODAS las sesiones de Django, lo
+      # que se traduce en "cada vez que hago un build se me cierra
+      # sesión". Con sync: false el valor lo controlás vos y se queda
+      # quieto pase lo que pase.
+      #
+      # Para setearlo: generar un valor random fuerte una vez con
+      #   python3 -c "import secrets; print(secrets.token_urlsafe(50))"
+      # y pegarlo en Render → Environment → SECRET_KEY.
       - key: SECRET_KEY
-        generateValue: true
+        sync: false
       - key: DATABASE_URL
         sync: false  # pegar manualmente la de Neon staging
       # Bootstrap del superuser admin sin necesidad de Render Shell.
@@ -126,8 +137,19 @@ services:
       # desde el singleton ConfiguracionGeneral (admin runtime). Ya
       # no se setean acá. Para apagar/prender en production:
       # /admin/configuracion/configuraciongeneral/.
+      # SECRET_KEY: lo seteás MANUALMENTE en el dashboard de Render
+      # (sync: false). Antes usábamos `generateValue: true` pero Render
+      # lo regenera en ciertos casos (Manual Sync del Blueprint, etc.)
+      # → cada regeneración invalida TODAS las sesiones de Django, lo
+      # que se traduce en "cada vez que hago un build se me cierra
+      # sesión". Con sync: false el valor lo controlás vos y se queda
+      # quieto pase lo que pase.
+      #
+      # Para setearlo: generar un valor random fuerte una vez con
+      #   python3 -c "import secrets; print(secrets.token_urlsafe(50))"
+      # y pegarlo en Render → Environment → SECRET_KEY.
       - key: SECRET_KEY
-        generateValue: true
+        sync: false
       - key: DATABASE_URL
         sync: false  # pegar manualmente la de Neon production
       # Bootstrap del superuser admin sin Render Shell (que requiere
