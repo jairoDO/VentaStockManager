@@ -445,9 +445,23 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
           - creado_por = el user actual (para auditoría)
           - monto = forzar positivo (un pago siempre suma al saldo
             del cliente, no resta)
+
+        Rechaza monto = 0 (no tiene sentido un movimiento de cero,
+        solo ensucia el extracto). help_text del form ya dice
+        "ingresá positivo" pero como UI nunca alcanza, validamos acá.
         """
         from cliente.models import MovimientoCuenta
+        from decimal import Decimal
+        from django.core.exceptions import ValidationError
         if not change:
+            # Validar monto > 0 ANTES de tocar nada. Si el operador
+            # deja en blanco o pone 0, abortar con mensaje claro.
+            if obj.monto is None or obj.monto == Decimal('0'):
+                raise ValidationError(
+                    'El monto del pago debe ser mayor a 0. '
+                    'Si querés anular un pago previo, cargá un movimiento '
+                    'de ajuste desde el admin clásico.'
+                )
             obj.tipo = MovimientoCuenta.TIPO_PAGO
             obj.creado_por = request.user
             # Forzar monto positivo: el operador podría tipear "5000"

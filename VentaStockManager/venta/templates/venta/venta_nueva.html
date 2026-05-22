@@ -715,22 +715,30 @@
         );
         if (otraFilaIdx !== -1) {
           const otra = this.items[otraFilaIdx];
-          const cantidadActual = Number(otra.cantidad) || 0;
-          const cantidadNueva = Number(this.items[idx].cantidad) || 1;
-          const cantidadTotal = cantidadActual + cantidadNueva;
+          // OJO: los valores que mostramos en el modal son un SNAPSHOT
+          // al momento de abrir. El operador podría modificar las
+          // cantidades en otras filas mientras el modal está abierto.
+          // Para evitar pisar esos cambios, en el callback RELEEMOS
+          // las cantidades actuales antes de sumar.
+          const cantActualSnapshot = Number(otra.cantidad) || 0;
+          const cantNuevaSnapshot = Number(this.items[idx].cantidad) || 1;
+          const totalSnapshot = cantActualSnapshot + cantNuevaSnapshot;
           this.abrirModal({
             tipo: 'confirm',
             titulo: 'Artículo duplicado',
             mensaje: `"${a.marca} — ${a.nombre}" ya está cargado en la fila ${otraFilaIdx + 1} `
-                   + `con cantidad ${cantidadActual}. `
-                   + `¿Sumar ${cantidadNueva} → quedaría ${cantidadTotal}?`,
-            okLabel: `Sí, sumar (queda ${cantidadTotal})`,
+                   + `con cantidad ${cantActualSnapshot}. `
+                   + `¿Sumar ${cantNuevaSnapshot}? (Quedaría ≈ ${totalSnapshot}, `
+                   + `o el valor que tenga la fila al confirmar si la modificaste.)`,
+            okLabel: 'Sí, sumar',
             cancelLabel: 'No, cancelar',
             callback: () => {
-              // Sumar cantidad en la fila vieja y limpiar la actual
-              // (para que el operador siga agregando otros artículos
-              // sin que esta fila quede "trabada" con el duplicado).
-              otra.cantidad = cantidadTotal;
+              // Releer cantidades FRESCAS — no usar snapshots porque
+              // el operador puede haber editado otra fila mientras el
+              // modal estaba abierto.
+              const cantActualReal = Number(otra.cantidad) || 0;
+              const cantNuevaReal = Number(this.items[idx].cantidad) || 1;
+              otra.cantidad = cantActualReal + cantNuevaReal;
               // Recalcular precio según nueva cantidad (puede pasar
               // de minorista a mayorista si supera el umbral).
               this._recalcularPrecioNormal(otraFilaIdx);
