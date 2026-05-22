@@ -135,30 +135,119 @@ class ClienteAdmin(admin.ModelAdmin):
 
 
 class MovimientoCuentaInline(admin.TabularInline):
-    """Listado de movimientos dentro del admin de CuentaCliente."""
+    """
+    Listado de movimientos READ-ONLY dentro del admin de CuentaCliente.
+
+    Antes este inline era editable: el operador podía cambiar el tipo,
+    el monto, borrar movimientos enteros con un click. Eso es PELIGROSO
+    porque los movimientos son la fuente de verdad del saldo —
+    cualquier edit silencioso desbalancea la cuenta.
+
+    Ahora el inline es 100% read-only y compacto. Para registrar un
+    PAGO el operador clickea el botón "Registrar pago" que aparece
+    arriba (definido como readonly_field en CuentaClienteAdmin), que
+    lo lleva al form simplificado de /admin/cliente/movimientocuenta/add/.
+    """
     model = MovimientoCuenta
     extra = 0
-    fields = ('created_at', 'tipo', 'monto', 'venta', 'descripcion', 'creado_por')
-    readonly_fields = ('created_at', 'creado_por')
+    max_num = 0  # No mostrar el botón "Agregar movimiento de cuenta adicional"
+    can_delete = False  # No checkbox "Eliminar?" en cada fila
+    fields = ('fecha_compacta', 'tipo_legible', 'monto_display', 'venta_link', 'descripcion')
+    readonly_fields = fields  # Absolutamente todo read-only
     ordering = ('-created_at',)
-    show_change_link = True
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        # Necesario False para que NO aparezcan los dropdowns/inputs.
+        # Solo el detail standalone admin (también read-only) permite
+        # ver el detalle de un movimiento si hace falta.
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def fecha_compacta(self, obj):
+        return obj.created_at.strftime('%d/%m/%y %H:%M')
+    fecha_compacta.short_description = 'Fecha'
+
+    def tipo_legible(self, obj):
+        from django.utils.html import format_html
+        icono = {
+            'pago': '💰',
+            'venta_a_cuenta': '🛒',
+            'aplicacion_saldo': '⬇️',
+            'excedente_venta': '⬆️',
+            'ajuste': '⚙️',
+        }.get(obj.tipo, '•')
+        return format_html('{} {}', icono, obj.get_tipo_display())
+    tipo_legible.short_description = 'Tipo'
+
+    def monto_display(self, obj):
+        from django.utils.html import format_html
+        if obj.monto > 0:
+            return format_html(
+                '<span style="color:#2e7d32; font-weight:bold;">+${}</span>',
+                f'{obj.monto:,.2f}',
+            )
+        if obj.monto < 0:
+            return format_html(
+                '<span style="color:#c62828; font-weight:bold;">-${}</span>',
+                f'{abs(obj.monto):,.2f}',
+            )
+        return format_html('<span style="color:#888;">$0,00</span>')
+    monto_display.short_description = 'Monto'
+
+    def venta_link(self, obj):
+        from django.utils.html import format_html
+        if not obj.venta_id:
+            return format_html('<span style="color:#888;">—</span>')
+        return format_html(
+            '<a href="/admin/venta/venta/{}/change/" style="color:#2563eb;">'
+            'Venta #{}</a>',
+            obj.venta_id, obj.venta_id,
+        )
+    venta_link.short_description = 'Venta'
 
 
 class CuentaClienteAdmin(admin.ModelAdmin):
     """
     Admin de cuentas corrientes. Lista todas las cuentas con saldo
-    actual, y al entrar muestra los movimientos. La forma normal de
-    "registrar un pago" es:
-      1. Entrar a /admin/cliente/cuentacliente/<id>/change/
-      2. En el inline de movimientos, "Add another" con tipo=Pago y
-         monto positivo.
-      3. Guardar.
+    actual, y al entrar muestra los movimientos como lista read-only.
+
+    Para registrar un PAGO: click en el botón "💰 Registrar pago" que
+    aparece arriba del detalle. Te lleva al form simplificado de
+    /admin/cliente/movimientocuenta/add/ con la cuenta preseleccionada.
     """
     icon_name = "account_balance_wallet"
     list_display = ('cliente_nombre', 'saldo_display', 'created_at')
     search_fields = ('cliente__nombre',)
-    readonly_fields = ('cliente', 'created_at', 'saldo_display')
+    # `acciones` es un readonly_field method que renderiza el botón
+    # "Registrar pago" como link HTML al add form del movimiento.
+    # Lo ponemos antes del inline para que sea lo PRIMERO que ve el
+    # operador cuando entra a la cuenta del cliente.
+    readonly_fields = ('cliente', 'created_at', 'saldo_display', 'acciones')
     inlines = [MovimientoCuentaInline]
+
+    def acciones(self, obj):
+        """
+        Botón "Registrar pago" estilizado. El link va al add de
+        MovimientoCuenta con `cuenta` pre-seleccionado (el operador
+        no tiene que buscar al cliente de nuevo).
+        """
+        if not obj or not obj.pk:
+            return '—'
+        return format_html(
+            '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}" '
+            'style="display:inline-block; padding:8px 16px; '
+            'background:#059669; color:white; border-radius:6px; '
+            'text-decoration:none; font-weight:500;">'
+            '💰 Registrar pago'
+            '</a>',
+            obj.pk,
+        )
+    acciones.short_description = 'Registrar movimiento'
 
     def get_queryset(self, request):
         """
