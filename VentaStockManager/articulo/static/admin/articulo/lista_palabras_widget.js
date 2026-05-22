@@ -39,6 +39,18 @@
   }
 
   function initWidget(container) {
+    // Skip el "template" invisible de Django inline (class .empty-form).
+    // Django lo tiene en el DOM al cargar la página y lo clona cuando
+    // clickeás "+ Agregar Regla". Si lo inicializáramos, el dataset
+    // initialized=1 se copiaría a las filas clonadas → init() saldría
+    // antes de bindear el botón "+ agregar palabra" → el botón aparece
+    // pero no hace nada. Era el bug "no me deja agregar palabras".
+    if (container.closest('.empty-form')) return;
+    // Algunos forks de Django/material usan `.dynamic-form` con
+    // `__prefix__` en los IDs. Cubrimos esa variante también.
+    const hidden = container.querySelector('input[type="hidden"]');
+    if (hidden && hidden.name && hidden.name.indexOf('__prefix__') !== -1) return;
+
     if (container.dataset.initialized === '1') return;
     container.dataset.initialized = '1';
 
