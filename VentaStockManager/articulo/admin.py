@@ -365,6 +365,96 @@ class CategoriaAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     list_select_related = ('rubro',)
     search_fields = ('nombre', 'descripcion')
     inlines = [ReglaCategoriaInline]
+    actions = ['aplicar_reglas_a_seleccionadas', 'aplicar_reglas_a_seleccionadas_forzando']
+
+    @admin.action(description='Aplicar reglas a las categorías seleccionadas (artículos sin categoría)')
+    def aplicar_reglas_a_seleccionadas(self, request, queryset):
+        """
+        Bulk action: corre las reglas de las categorías marcadas y
+        auto-asigna artículos que NO tengan categoría todavía.
+        Equivalente a `python manage.py aplicar_reglas_categoria`
+        pero limitado a las categorías seleccionadas.
+        """
+        self._aplicar_reglas(request, queryset, forzar=False)
+
+    @admin.action(description='Aplicar reglas FORZANDO (pisa categorías existentes) — usar con cuidado')
+    def aplicar_reglas_a_seleccionadas_forzando(self, request, queryset):
+        """
+        Como la anterior pero pisa la categoría existente del artículo
+        si una regla matchea. Útil cuando recategorizás un lote.
+        """
+        self._aplicar_reglas(request, queryset, forzar=True)
+
+    def _aplicar_reglas(self, request, queryset, forzar: bool):
+        """Lógica compartida — usa la misma estrategia que el management command."""
+        from collections import defaultdict
+        from django.db import transaction
+        from django.contrib import messages
+        from .models import Articulo, ReglaCategoria
+
+        # Solo reglas activas y de las categorías seleccionadas.
+        # Ordenadas por prioridad (igual al management command).
+        reglas = list(
+            ReglaCategoria.objects
+            .filter(activa=True, categoria__in=queryset)
+            .select_related('categoria')
+            .order_by('prioridad', 'id')
+        )
+        if not reglas:
+            messages.warning(
+                request,
+                'Las categorías seleccionadas no tienen reglas activas. Cargá '
+                'palabras_clave primero en el inline de cada categoría.',
+            )
+            return
+
+        reglas_lc = [
+            (r, [kw.lower() for kw in (r.palabras_clave or []) if kw])
+            for r in reglas
+        ]
+
+        # Filtro de artículos: si no es `forzar`, solo los sin categoría.
+        qs = Articulo.objects.all().only('id', 'nombre', 'categoria_id')
+        if not forzar:
+            qs = qs.filter(categoria__isnull=True)
+
+        contador = defaultdict(int)
+        sin_match = 0
+        total = qs.count()
+
+        with transaction.atomic():
+            for art in qs.iterator(chunk_size=500):
+                nombre_lc = (art.nombre or '').lower()
+                matched_cat = None
+                for regla, keywords in reglas_lc:
+                    if any(kw in nombre_lc for kw in keywords):
+                        matched_cat = regla.categoria
+                        break
+                if matched_cat:
+                    # update() puntual — evita signals (no queremos
+                    # regenerar codigo_interno ni nada en cascade).
+                    Articulo.objects.filter(pk=art.pk).update(categoria=matched_cat)
+                    contador[matched_cat.nombre] += 1
+                else:
+                    sin_match += 1
+
+        # Reporte: contador como bullets + total que quedó sin match.
+        if contador:
+            asignaciones = ', '.join(
+                f'{n} → {cat}'
+                for cat, n in sorted(contador.items(), key=lambda kv: -kv[1])
+            )
+            messages.success(
+                request,
+                f'✓ Procesados {total} artículos{" (forzando)" if forzar else " sin categoría"}. '
+                f'Asignaciones: {asignaciones}. Sin match: {sin_match}.',
+            )
+        else:
+            messages.info(
+                request,
+                f'Procesados {total} artículos pero ninguno matcheó las reglas '
+                f'de las categorías seleccionadas. Revisá las palabras_clave.',
+            )
 
     def get_queryset(self, request):
         """
