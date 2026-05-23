@@ -23,3 +23,8 @@ urlpatterns = [
     # visuales irresolubles con material-admin (inputs invisibles).
     path('<int:cliente_id>/movimiento/', registrar_movimiento, name='cliente_registrar_movimiento'),
 ]
+
+# NOTA: la gestión de usuarios (/usuarios/...) vive en cliente/urls_usuarios.py
+# y se monta en raíz desde VentaStockManager/urls.py. Va en módulo aparte
+# porque conceptualmente NO es de clientes (es admin del sistema) y queremos
+# que la URL pública sea /usuarios/, no /clientes/usuarios/.

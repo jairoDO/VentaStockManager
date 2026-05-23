@@ -34,6 +34,13 @@ urlpatterns = [
     # path('admin/', include('material.admin.urls')),
     
     path("clientes/", include('cliente.urls')),
+    # Gestión de usuarios — pantalla custom para que el superusuario
+    # cree/edite vendedores sin pasar por el admin de auth.User.
+    # Las views están en cliente.views_usuarios pero las exponemos en
+    # la raíz (no bajo /clientes/) porque conceptualmente es admin
+    # del sistema, no de clientes. El módulo está separado para no
+    # mezclar con cliente/urls.py (que cuelga de /clientes/).
+    path("", include('cliente.urls_usuarios')),
     path("", include('compra.urls')),
     path("", include('articulo.urls')),
     path("", include('venta.urls')),

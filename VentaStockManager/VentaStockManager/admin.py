@@ -205,6 +205,30 @@ class MyAdminSite(MaterialAdminSite):
                     })
                     break
 
+            # Atajo "Gestión de Usuarios" dentro del app `auth`. Apunta
+            # a la pantalla custom Alpine en /usuarios/ que reemplaza
+            # el admin clásico de auth.User (demasiado complejo: tiene
+            # 20+ campos, permisos granulares, grupos). La pantalla
+            # custom expone solo lo necesario: crear vendedor/superuser
+            # con flags correctos, resetear password, activar/desactivar.
+            #
+            # Lo metemos como primer item de `auth` para que sea lo
+            # primero que ve el operador (antes que "Users" clásico).
+            for app in app_list:
+                if app.get('app_label') == 'auth':
+                    app['models'].insert(0, {
+                        'name': 'Gestión de Usuarios',
+                        'object_name': 'GestionUsuarios',
+                        'admin_url': '/usuarios/',
+                        'add_url': '/usuarios/#crear',
+                        'perms': {
+                            'add': True, 'change': True,
+                            'delete': False, 'view': True,
+                        },
+                        'view_only': True,
+                    })
+                    break
+
         return app_list
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
