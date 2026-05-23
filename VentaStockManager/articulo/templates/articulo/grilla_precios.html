@@ -68,6 +68,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
 {% for %} en JS-encoded text.
 {% endcomment %}
 {{ categorias|json_script:"opt-categorias" }}
+{{ rubros|json_script:"opt-rubros" }}
 {{ proveedores|json_script:"opt-proveedores" }}
 
 <div x-data="grillaPrecios()" x-init="init()" class="max-w-screen-2xl mx-auto p-6 pb-32">
@@ -113,7 +114,19 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
 
   {# ---- Filtros ---- #}
   <div class="bg-white shadow rounded-lg p-4 mb-4">
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Rubro</label>
+        <select x-model="filtros.rubro"
+                @change="onRubroCambia()"
+                class="w-full border border-slate-300 rounded px-3 py-2">
+          <option value="">— Todos —</option>
+          <option value="0">— Sin rubro —</option>
+          <template x-for="r in opcionesRubros" :key="r.id">
+            <option :value="r.id" x-text="r.nombre"></option>
+          </template>
+        </select>
+      </div>
       <div>
         <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Categoría</label>
         <select x-model="filtros.categoria"
@@ -121,7 +134,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                 class="w-full border border-slate-300 rounded px-3 py-2">
           <option value="">— Todas —</option>
           <option value="0">— Sin categoría —</option>
-          <template x-for="c in opcionesCategorias" :key="c.id">
+          <template x-for="c in opcionesCategoriasFiltradas" :key="c.id">
             <option :value="c.id" x-text="c.nombre"></option>
           </template>
         </select>
@@ -519,11 +532,24 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
       // ---- Estado ----
       opcionesCategorias: [],
       opcionesProveedores: [],
+      opcionesRubros: [],
       filtros: {
+        rubro: '',
         categoria: '',
         proveedor: '',
         q: '',
         page: 1,
+      },
+
+      // Computed: si hay rubro elegido, el dropdown de categorías
+      // se restringe a las del rubro. rubro='0' (sin rubro) muestra
+      // las categorías sin rubro asignado.
+      get opcionesCategoriasFiltradas() {
+        const r = this.filtros.rubro;
+        if (r === '' || r === null || r === undefined) return this.opcionesCategorias;
+        if (r === '0') return this.opcionesCategorias.filter(c => !c.rubro_id);
+        const rid = parseInt(r, 10);
+        return this.opcionesCategorias.filter(c => c.rubro_id === rid);
       },
       items: [],
       totalItems: 0,
@@ -568,6 +594,8 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         if (cats) this.opcionesCategorias = JSON.parse(cats.textContent);
         const provs = document.getElementById('opt-proveedores');
         if (provs) this.opcionesProveedores = JSON.parse(provs.textContent);
+        const rubrs = document.getElementById('opt-rubros');
+        if (rubrs) this.opcionesRubros = JSON.parse(rubrs.textContent);
 
         // Escuchamos el evento del botón sticky (que vive fuera del
         // root de Alpine porque queremos que sea fixed independiente
@@ -583,6 +611,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         this.errores = [];
         try {
           const params = new URLSearchParams();
+          if (this.filtros.rubro !== '') params.set('rubro', this.filtros.rubro);
           if (this.filtros.categoria !== '') params.set('categoria', this.filtros.categoria);
           if (this.filtros.proveedor !== '') params.set('proveedor', this.filtros.proveedor);
           if (this.filtros.q) params.set('q', this.filtros.q);
@@ -614,6 +643,22 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         // página 1 porque el set de resultados cambió.
         this.filtros.page = 1;
         this.cargar();
+      },
+
+      // Al cambiar de rubro: si la categoría seleccionada NO pertenece
+      // al rubro nuevo, la limpiamos. Sino el filtro daría 0 resultados
+      // sin que el operador entienda por qué.
+      onRubroCambia() {
+        const r = this.filtros.rubro;
+        if (r !== '' && r !== '0' && this.filtros.categoria !== '') {
+          const rid = parseInt(r, 10);
+          const cat = this.opcionesCategorias.find(c => String(c.id) === String(this.filtros.categoria));
+          if (!cat || cat.rubro_id !== rid) this.filtros.categoria = '';
+        } else if (r === '0' && this.filtros.categoria !== '') {
+          const cat = this.opcionesCategorias.find(c => String(c.id) === String(this.filtros.categoria));
+          if (cat && cat.rubro_id) this.filtros.categoria = '';
+        }
+        this.onFiltroCambia();
       },
 
       cambiarPagina(n) {

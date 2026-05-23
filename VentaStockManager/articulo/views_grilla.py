@@ -44,7 +44,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import Articulo, Categoria
+from .models import Articulo, Categoria, Rubro
 
 try:
     # `compra.Proveedor` es la fuente del listado del filtro. Lo
@@ -94,7 +94,14 @@ def grilla_precios(request: HttpRequest) -> HttpResponse:
     cargan vía la API JSON desde Alpine, así no duplicamos la
     lógica de filtrado entre Python y JS.
     """
-    categorias = list(Categoria.objects.order_by('nombre').values('id', 'nombre', 'color'))
+    # Las categorías incluyen `rubro_id` para que el front pueda
+    # filtrar el dropdown de categoría a las del rubro elegido.
+    categorias = list(
+        Categoria.objects.order_by('nombre').values('id', 'nombre', 'color', 'rubro_id')
+    )
+    rubros = list(
+        Rubro.objects.order_by('orden', 'nombre').values('id', 'nombre', 'color')
+    )
     proveedores: list[dict[str, Any]] = []
     if Proveedor is not None:
         proveedores = list(Proveedor.objects.order_by('nombre').values('id', 'nombre'))
@@ -104,6 +111,7 @@ def grilla_precios(request: HttpRequest) -> HttpResponse:
         'articulo/grilla_precios.html',
         {
             'categorias': categorias,
+            'rubros': rubros,
             'proveedores': proveedores,
         },
     )
@@ -118,6 +126,7 @@ def _parse_filtros(request: HttpRequest) -> dict[str, Any]:
     """
     raw_categoria = request.GET.get('categoria', '').strip()
     raw_proveedor = request.GET.get('proveedor', '').strip()
+    raw_rubro = request.GET.get('rubro', '').strip()
     q = request.GET.get('q', '').strip()
     raw_page = request.GET.get('page', '1').strip()
 
@@ -131,6 +140,7 @@ def _parse_filtros(request: HttpRequest) -> dict[str, Any]:
 
     categoria_id = _to_int(raw_categoria)
     proveedor_id = _to_int(raw_proveedor)
+    rubro_id = _to_int(raw_rubro)
 
     try:
         page = max(1, int(raw_page))
@@ -140,6 +150,7 @@ def _parse_filtros(request: HttpRequest) -> dict[str, Any]:
     return {
         'categoria_id': categoria_id,
         'proveedor_id': proveedor_id,
+        'rubro_id': rubro_id,
         'q': q,
         'page': page,
     }
@@ -176,6 +187,15 @@ def api_grilla_listar(request: HttpRequest) -> JsonResponse:
         .order_by('categoria__nombre', 'nombre')
     )
 
+    # Filtro por rubro: incluye TODAS las categorías que pertenecen al
+    # rubro. Si además hay filtro de categoría, la categoría es el más
+    # restrictivo (el rubro queda redundante pero no rompe).
+    if filtros['rubro_id'] is not None:
+        if filtros['rubro_id'] == 0:
+            # rubro=0 → artículos cuya categoría no tiene rubro asignado.
+            qs = qs.filter(categoria__rubro__isnull=True)
+        else:
+            qs = qs.filter(categoria__rubro_id=filtros['rubro_id'])
     if filtros['categoria_id'] is not None:
         if filtros['categoria_id'] == 0:
             qs = qs.filter(categoria__isnull=True)
