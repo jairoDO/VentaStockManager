@@ -279,6 +279,23 @@ VENTAS_RETENCION_MESES = env.int("VENTAS_RETENCION_MESES", default=18)
 
 
 # ---------------------------------------------------------------------------
+# URL pública del sitio — para armar share URLs de listas en tasks async
+# ---------------------------------------------------------------------------
+# `tasks_difusion.procesar_difusion` corre en qcluster sin un `request`,
+# pero necesita armar la URL completa de la lista (ej. el link público
+# que se manda por WhatsApp). Sin esta var caería al fallback hardcoded
+# "http://localhost:8000" — bug visible en producción donde los clientes
+# recibían links rotos.
+#
+# Setear en Render como env var:
+#   PUBLIC_SITE_URL=https://golosinas-insa.onrender.com
+# (sin barra al final).
+#
+# En dev local queda como localhost:8000 (default), suficiente para tests.
+PUBLIC_SITE_URL = env.str("PUBLIC_SITE_URL", default="http://localhost:8000")
+
+
+# ---------------------------------------------------------------------------
 # WhatsApp (open-wa)
 # ---------------------------------------------------------------------------
 # URL del service Node.js que corre open-wa. En local apunta al

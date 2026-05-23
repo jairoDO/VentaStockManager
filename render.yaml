@@ -127,6 +127,12 @@ services:
         value: golosinas-insa.onrender.com
       - key: CSRF_TRUSTED_ORIGINS
         value: https://golosinas-insa.onrender.com
+      # URL pública del sitio para armar links absolutos en tasks
+      # async (qcluster no tiene `request` para llamar a
+      # build_absolute_uri). Sin esto los links que manda el bot
+      # serían "http://localhost:8000/..." → rotos al click.
+      - key: PUBLIC_SITE_URL
+        value: https://golosinas-insa.onrender.com
       - key: GOOGLE_CREDENTIALS_PATH
         value: /etc/secrets/google-credentials.json
       - key: GOOGLE_SHEET_ID
