@@ -14,7 +14,9 @@
  * !important que pisan los nuestros si no usamos lo mismo.
  */
 
-/* Scope: solo el form de add/change de MovimientoCuenta */
+/* Scope: forms de MovimientoCuenta Y CuentaCliente (este último para
+ * que los readonly fields se vean bien — el label flotante de material
+ * se solapa con el valor en /admin/cliente/cuentacliente/N/change/). */
 .app-cliente.model-movimientocuenta input[type="text"],
 .app-cliente.model-movimientocuenta input[type="number"],
 .app-cliente.model-movimientocuenta input[type="email"],
@@ -55,10 +57,16 @@
     outline: none !important;
 }
 
-/* Labels: que se vean BIEN encima de cada input, NO floating */
+/* Labels: que se vean BIEN encima de cada input/valor, NO floating.
+ * Aplicamos también a CuentaClienteAdmin (model-cuentacliente) porque
+ * tiene el MISMO bug visual con readonly_fields: el label "Cliente:",
+ * "Created at:", "Saldo:" flota sobre el valor → ilegible. */
 .app-cliente.model-movimientocuenta .form-row label,
 .app-cliente.model-movimientocuenta .form-row > label,
-.app-cliente.model-movimientocuenta .input-field > label {
+.app-cliente.model-movimientocuenta .input-field > label,
+.app-cliente.model-cuentacliente .form-row label,
+.app-cliente.model-cuentacliente .form-row > label,
+.app-cliente.model-cuentacliente .input-field > label {
     display: block !important;
     margin-bottom: 4px !important;
     margin-top: 16px !important;
@@ -72,6 +80,21 @@
     top: auto !important;
     left: auto !important;
     opacity: 1 !important;
+}
+
+/* Para readonly fields: el valor se renderiza en un <div class="readonly">
+ * o como texto plano. Agregamos espacio entre el label y el valor para
+ * que no se solapen. */
+.app-cliente.model-cuentacliente .form-row .readonly,
+.app-cliente.model-cuentacliente .form-row p {
+    display: block !important;
+    margin-top: 4px !important;
+    padding: 8px 12px !important;
+    background: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 6px !important;
+    color: #334155 !important;
+    font-size: 14px !important;
 }
 
 /* Help text legible */

@@ -11,26 +11,20 @@ from django.utils.html import format_html
 from cliente.models import Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente
 
 
-class RegistrarPagoForm(forms.ModelForm):
+class _RegistrarMovimientoBase(forms.ModelForm):
     """
-    Form explícito para "Registrar pago" / "Registrar saldo a favor".
+    Base común para los forms de "Registrar pago" y "Registrar deuda".
 
-    Antes intentábamos modificar labels/help_text en `get_form()` del
-    ModelAdmin, pero por alguna interacción con material-admin esos
-    overrides no se aplicaban en el render. Definir un ModelForm con
-    los campos hardcoded es 100% confiable.
-
-    El "modo" (pago vs saldo a favor) se setea con un método
-    `set_modo()` que el admin llama desde `get_form()`. Cambia labels
-    y help_text en runtime.
+    UX: el operador piensa en "qué pasó con el cliente" (le pagó o le
+    debe más), NO en "número positivo o negativo". Por eso son dos
+    forms con labels distintos pero igual estructura. El SIGNO del
+    monto lo resuelve el admin en save_model según qué form viste,
+    no el operador.
     """
 
     class Meta:
         model = MovimientoCuenta
         fields = ('cuenta', 'monto', 'descripcion')
-        # Widgets explícitos con clases CSS controladas. Sin esto el
-        # form usa el widget default de material-admin que es invisible
-        # hasta clickear.
         widgets = {
             'monto': forms.NumberInput(attrs={
                 'class': 'registrar-pago-input',
@@ -39,6 +33,32 @@ class RegistrarPagoForm(forms.ModelForm):
                 'min': '0.01',
                 'autofocus': 'autofocus',
             }),
+            'descripcion': forms.Textarea(attrs={
+                'class': 'registrar-pago-input',
+                'rows': 2,
+            }),
+        }
+
+    def clean_monto(self):
+        """
+        Forzar monto > 0. El operador siempre ingresa POSITIVO, sin
+        importar si es pago o deuda. El signo lo aplica el admin
+        después según el tipo de form.
+        """
+        monto = self.cleaned_data.get('monto')
+        if monto is None or monto <= 0:
+            raise ValidationError(
+                'El monto tiene que ser mayor a 0.'
+            )
+        return monto
+
+
+class RegistrarPagoForm(_RegistrarMovimientoBase):
+    """Form para cargar un pago — cliente trajo plata."""
+
+    class Meta(_RegistrarMovimientoBase.Meta):
+        widgets = {
+            **_RegistrarMovimientoBase.Meta.widgets,
             'descripcion': forms.Textarea(attrs={
                 'class': 'registrar-pago-input',
                 'rows': 2,
@@ -56,29 +76,40 @@ class RegistrarPagoForm(forms.ModelForm):
             'descripcion': 'Ej. "Pago en efectivo del 22/05" o "Transferencia BBVA". Para referencia futura.',
         }
 
-    def set_modo_saldo(self):
-        """
-        Cuando viene `?modo=saldo` en GET, cambiamos los textos para
-        guiar al operador hacia "saldo a favor" (cliente adelantó plata
-        sin tener deuda) en lugar de "pago" (cancelar deuda).
-        """
-        self.fields['monto'].label = 'Monto adelantado'
-        self.fields['monto'].help_text = (
-            'Cuánto trae el cliente como saldo a favor. '
-            'Ej. 3000 (queda como crédito para próximas compras).'
-        )
-        self.fields['descripcion'].help_text = (
-            'Ej. "Anticipo del 22/05" o "Pago previo lista X".'
-        )
 
-    def clean_monto(self):
-        """Rechazar monto <= 0 con mensaje claro."""
-        monto = self.cleaned_data.get('monto')
-        if monto is None or monto <= 0:
-            raise ValidationError(
-                'El monto del pago tiene que ser mayor a 0.'
-            )
-        return monto
+class RegistrarDeudaForm(_RegistrarMovimientoBase):
+    """
+    Form para cargar una DEUDA manual del cliente.
+
+    Casos típicos:
+    - Anular un pago previo que se cargó por error (deuda = monto del pago).
+    - Cargar una deuda histórica que no entra como venta (consumo a fiar
+      sin facturar, ajuste a favor del kiosko).
+
+    El signo lo aplica MovimientoCuentaAdmin.save_model: monto positivo
+    del form → -monto en la DB (resta del saldo del cliente = aumenta
+    deuda).
+    """
+
+    class Meta(_RegistrarMovimientoBase.Meta):
+        widgets = {
+            **_RegistrarMovimientoBase.Meta.widgets,
+            'descripcion': forms.Textarea(attrs={
+                'class': 'registrar-pago-input',
+                'rows': 2,
+                'placeholder': 'Ej. Consumo a fiar del 22/05',
+            }),
+        }
+        labels = {
+            'cuenta': 'Cliente',
+            'monto': 'Monto adeudado',
+            'descripcion': 'Motivo (opcional)',
+        }
+        help_texts = {
+            'cuenta': 'Cliente al que se le carga la deuda.',
+            'monto': 'Cuánto debe el cliente. Ingresá positivo (ej. 5000) — el sistema lo registra como deuda.',
+            'descripcion': 'Ej. "Consumo a fiar" o "Anulación pago erróneo del 21/05".',
+        }
 
 
 class ClienteAdmin(admin.ModelAdmin):
@@ -295,30 +326,53 @@ class CuentaClienteAdmin(admin.ModelAdmin):
     icon_name = "account_balance_wallet"
     list_display = ('cliente_nombre', 'saldo_display', 'created_at')
     search_fields = ('cliente__nombre',)
-    # `acciones` es un readonly_field method que renderiza el botón
-    # "Registrar pago" como link HTML al add form del movimiento.
+    # `acciones` es un readonly_field method que renderiza los botones
+    # "Registrar pago" / "Registrar deuda" como links al add form.
     # Lo ponemos antes del inline para que sea lo PRIMERO que ve el
     # operador cuando entra a la cuenta del cliente.
     readonly_fields = ('cliente', 'created_at', 'saldo_display', 'acciones')
     inlines = [MovimientoCuentaInline]
 
+    class Media:
+        # CSS para arreglar el bug visual de los readonly fields donde
+        # el label se solapa con el valor (floating label de material).
+        # Mismo archivo que el form de pago — reusamos los selectores
+        # genéricos por app/model.
+        css = {
+            'all': ('admin/cliente/movimiento_form.css',),
+        }
+
     def acciones(self, obj):
         """
-        Botón "Registrar pago" prominente. Funcionalmente cubre tanto
-        pago de deuda como saldo a favor (ambos son TIPO_PAGO con
-        monto positivo). Por ahora un solo botón hasta que tengamos
-        una view custom para diferenciar la UX.
+        Dos botones lado a lado, pensados para que el operador NO tenga
+        que pensar en signos contables:
+
+          - 💰 "Registrar pago" (verde): cliente trajo plata. Suma al
+            saldo a favor / cancela deuda. → modo=pago.
+
+          - 🧾 "Registrar deuda" (rojo): cliente debe más. Anula un pago
+            mal cargado o agrega una deuda histórica fuera de venta.
+            → modo=deuda.
+
+          El admin del MovimientoCuenta interpreta el modo y aplica el
+          signo correcto al monto. El operador siempre ingresa positivo.
         """
         if not obj or not obj.pk:
             return '—'
         return format_html(
-            '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}" '
-            'style="display:inline-block; padding:8px 16px; '
+            '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}&modo=pago" '
+            'style="display:inline-block; padding:8px 16px; margin-right:8px; '
             'background:#059669; color:white; border-radius:6px; '
             'text-decoration:none; font-weight:500;">'
-            '💰 Registrar pago / saldo a favor'
+            '💰 Registrar pago'
+            '</a>'
+            '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}&modo=deuda" '
+            'style="display:inline-block; padding:8px 16px; '
+            'background:#dc2626; color:white; border-radius:6px; '
+            'text-decoration:none; font-weight:500;">'
+            '🧾 Registrar deuda'
             '</a>',
-            obj.pk,
+            obj.pk, obj.pk,
         )
     acciones.short_description = 'Registrar movimiento'
 
@@ -440,12 +494,14 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
         return False
 
     # ---------- Add form simplificado ----------
-    # Usamos un ModelForm EXPLÍCITO (RegistrarPagoForm) en lugar del
-    # form default + get_form. El form default + modificar
-    # form.base_fields[...] en get_form() no surtía efecto en producción
-    # por alguna interacción con material-admin. Definir un ModelForm
-    # con `labels`, `help_texts` y `widgets` en su Meta es 100% confiable.
-    form = RegistrarPagoForm
+    # DOS forms posibles según `?modo=` en GET:
+    #   - modo=pago (default) → RegistrarPagoForm → tipo=PAGO, monto positivo (a favor del cliente)
+    #   - modo=deuda → RegistrarDeudaForm → tipo=AJUSTE, monto negativo (cliente debe más)
+    #
+    # El operador piensa en "qué pasó", no en signos. Los labels y la
+    # lógica de signo viven en el admin/form, no en la cabeza del
+    # operador.
+    form = RegistrarPagoForm  # default; get_form() lo cambia según ?modo
     fields = ('cuenta', 'monto', 'descripcion')  # solo en add
     raw_id_fields = ('cuenta',)
 
@@ -460,28 +516,49 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
             'all': ('admin/cliente/movimiento_form.css',),
         }
 
-    # NOTA: el modo "saldo a favor" (?modo=saldo) lo desactivé porque la
-    # subclase on-the-fly del form tiraba 500 en producción (algún issue
-    # con la metaclass de ModelForm que el factory de Django arma).
-    # Funcionalmente es lo mismo que un pago (TIPO_PAGO + monto positivo),
-    # así que mientras tanto el operador usa "Registrar pago" para los
-    # dos casos. Si más adelante hace falta separar, hacemos una view
-    # custom completamente fuera del admin.
+    def get_form(self, request, obj=None, **kwargs):
+        """
+        Elegir entre RegistrarPagoForm o RegistrarDeudaForm según el
+        query param `?modo=`:
+          - modo=pago (default)  → RegistrarPagoForm  → signo positivo en save
+          - modo=deuda           → RegistrarDeudaForm → signo NEGATIVO en save
+
+        Los forms ya tienen sus labels y help_text fijos en su Meta.
+        save_model() lee el tipo de form (form.__class__) para decidir el
+        tipo de movimiento y el signo correcto.
+        """
+        modo = (request.GET.get('modo') or 'pago').lower()
+        if modo == 'deuda':
+            self.form = RegistrarDeudaForm
+        else:
+            self.form = RegistrarPagoForm
+        return super().get_form(request, obj, **kwargs)
 
     def save_model(self, request, obj, form, change):
         """
-        Al guardar desde el add form, completamos los campos que no
-        pedimos al usuario:
-          - tipo = PAGO (siempre, este admin es solo para pagos)
-          - creado_por = el user actual (para auditoría)
+        Setear tipo + signo del monto según el form usado:
 
-        La validación de monto > 0 ya la hace `RegistrarPagoForm.clean_monto`,
-        así que acá solo confiamos en que es positivo.
+          - RegistrarPagoForm  → tipo=PAGO,   monto SE QUEDA positivo
+          - RegistrarDeudaForm → tipo=AJUSTE, monto se INVIERTE a negativo
+
+        En el modelo, monto > 0 = a favor del cliente (paga deuda).
+        monto < 0 = cliente debe más (deuda). El operador siempre tipea
+        positivo desde el form; el signo lo aplicamos acá.
         """
         from cliente.models import MovimientoCuenta
         if not change:
-            obj.tipo = MovimientoCuenta.TIPO_PAGO
             obj.creado_por = request.user
+            if isinstance(form, RegistrarDeudaForm):
+                obj.tipo = MovimientoCuenta.TIPO_AJUSTE
+                # Invertir signo: el form pidió positivo, lo guardamos
+                # negativo para que reste del saldo del cliente.
+                if obj.monto > 0:
+                    obj.monto = -obj.monto
+            else:
+                obj.tipo = MovimientoCuenta.TIPO_PAGO
+                # Asegurar positivo (defensivo, el form ya valida).
+                if obj.monto < 0:
+                    obj.monto = abs(obj.monto)
         super().save_model(request, obj, form, change)
 
     def fecha_compacta(self, obj):
