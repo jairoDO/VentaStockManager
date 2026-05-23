@@ -694,6 +694,13 @@
               this.totalFinal() || Number(this.cliente.saldo),
             );
           }
+          // Auto-tildar "cobrar deuda anterior" si el cliente DEBE.
+          // Mismo razonamiento: el operador veía la deuda y se
+          // olvidaba de tildar el checkbox, dejando la deuda viva.
+          // Default tildado; si no quiere cobrarla ahora, la destilda.
+          if (Number(this.cliente.saldo) < 0) {
+            this.cobrarDeudaAnterior = true;
+          }
         } catch (e) {
           // No bloqueamos la pantalla por un fetch de saldo fallido.
           console.warn('No se pudo refrescar el saldo:', e);
