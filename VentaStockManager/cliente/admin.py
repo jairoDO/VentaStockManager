@@ -344,35 +344,37 @@ class CuentaClienteAdmin(admin.ModelAdmin):
 
     def acciones(self, obj):
         """
-        Dos botones lado a lado, pensados para que el operador NO tenga
-        que pensar en signos contables:
+        Dos botones lado a lado. Apuntan a una pantalla CUSTOM Alpine
+        fuera del admin (porque el admin material tiene bugs visuales
+        irresolubles con readonly fields e inputs invisibles).
 
-          - 💰 "Registrar pago" (verde): cliente trajo plata. Suma al
-            saldo a favor / cancela deuda. → modo=pago.
+          - 💰 "Registrar pago" (verde): cliente trajo plata.
+            URL: /clientes/<id>/movimiento/?modo=pago
 
-          - 🧾 "Registrar deuda" (rojo): cliente debe más. Anula un pago
-            mal cargado o agrega una deuda histórica fuera de venta.
-            → modo=deuda.
+          - 🧾 "Registrar deuda" (rojo): cliente debe más (consumo
+            a fiar, anulación de pago erróneo, etc.).
+            URL: /clientes/<id>/movimiento/?modo=deuda
 
-          El admin del MovimientoCuenta interpreta el modo y aplica el
-          signo correcto al monto. El operador siempre ingresa positivo.
+        En ambos casos el operador ingresa POSITIVO. La view aplica el
+        signo (pago = +, deuda = -) automáticamente al guardar.
         """
         if not obj or not obj.pk:
             return '—'
+        cliente_id = obj.cliente_id
         return format_html(
-            '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}&modo=pago" '
+            '<a href="/clientes/{}/movimiento/?modo=pago" '
             'style="display:inline-block; padding:8px 16px; margin-right:8px; '
             'background:#059669; color:white; border-radius:6px; '
             'text-decoration:none; font-weight:500;">'
             '💰 Registrar pago'
             '</a>'
-            '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}&modo=deuda" '
+            '<a href="/clientes/{}/movimiento/?modo=deuda" '
             'style="display:inline-block; padding:8px 16px; '
             'background:#dc2626; color:white; border-radius:6px; '
             'text-decoration:none; font-weight:500;">'
             '🧾 Registrar deuda'
             '</a>',
-            obj.pk, obj.pk,
+            cliente_id, cliente_id,
         )
     acciones.short_description = 'Registrar movimiento'
 

@@ -609,8 +609,44 @@ las lee sin riesgo de XSS.
         // pantalla vacía y se confunde.
         const params = new URLSearchParams(window.location.search);
         const listaIdParam = params.get('lista_id');
+        const clienteIdParam = params.get('cliente_id');
         if (listaIdParam) {
           await this._precargarLista(Number(listaIdParam));
+        } else if (clienteIdParam) {
+          // Caso "Armar lista para cliente X": vinimos del botón de
+          // SolicitudListaCliente o del admin de Cliente. NO hay lista
+          // todavía — solo precargamos el cliente para que el operador
+          // empiece a agregar artículos sin tener que buscarlo de nuevo.
+          await this._precargarCliente(Number(clienteIdParam));
+        }
+      },
+
+      async _precargarCliente(clienteId) {
+        // Trae datos del cliente y sus listas previas (si tiene).
+        // Si tiene listas previas, las muestra en el dropdown pero NO
+        // selecciona ninguna automáticamente — el operador decide si
+        // crea una nueva o edita una existente.
+        try {
+          const r = await fetch(`/articulos/api/lista-precios/cliente/${clienteId}/listas/`, {
+            credentials: 'same-origin',
+          });
+          if (!r.ok) {
+            console.warn('No se pudo precargar el cliente', clienteId);
+            return;
+          }
+          const data = await r.json();
+          this.cliente = {
+            id: clienteId,
+            nombre: data.cliente_nombre || '',
+            saldo: data.cliente_saldo != null ? String(data.cliente_saldo) : '0',
+            listas_activas: data.listas_activas || [],
+          };
+          this.clienteQuery = data.cliente_nombre || '';
+          this.listasDelCliente = data.listas || [];
+          // No precargar ningún ítem — quedamos listos para que el
+          // operador empiece a agregar productos.
+        } catch (e) {
+          console.warn('Error precargando cliente desde URL', e);
         }
       },
 

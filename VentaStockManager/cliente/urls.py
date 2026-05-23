@@ -6,6 +6,7 @@ from .views import (
     ClienteAutocomplete,
     extracto_cliente,
 )
+from .views_movimientos import registrar_movimiento
 
 urlpatterns = [
     path('mostrar_todos_los_clientes/', mostrar_todos_los_clientes, name='clientes'),
@@ -17,4 +18,8 @@ urlpatterns = [
     # Este urls.py cuelga de /clientes/ en el root URLconf, así que
     # la URL pública final es /clientes/<id>/extracto/.
     path('<int:cliente_id>/extracto/', extracto_cliente, name='cliente_extracto'),
+    # Pantalla custom Alpine para registrar pagos/deudas. Reemplaza el
+    # form de /admin/cliente/movimientocuenta/add/ que tenía bugs
+    # visuales irresolubles con material-admin (inputs invisibles).
+    path('<int:cliente_id>/movimiento/', registrar_movimiento, name='cliente_registrar_movimiento'),
 ]
