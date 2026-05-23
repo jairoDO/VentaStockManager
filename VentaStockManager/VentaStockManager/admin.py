@@ -110,12 +110,68 @@ class MyAdminSite(MaterialAdminSite):
                 continue
             valid_apps.append(app)
 
-        app_list = sorted(valid_apps, key=lambda x: x["name"].lower())
+        # Orden CUSTOM del dashboard pensado para el flow del operador.
+        # No alfabético — el alfabético deja "Auditoría" arriba y "Venta"
+        # abajo, que es lo contrario a lo que el operador necesita.
+        #
+        # Especialmente importante en mobile: las primeras 2-3 apps son
+        # las que ve al abrir el admin sin scrollear. Tienen que ser las
+        # que más usa (Venta, Cliente, Articulo).
+        APP_ORDER = {
+            'venta': 1,        # más usado: cargar ventas todos los días
+            'cliente': 2,       # asociado a ventas
+            'articulo': 3,      # consulta de precios/stock
+            'compra': 4,        # menos frecuente: cargar facturas de proveedores
+            'vendedor': 5,
+            'factura_config': 6,
+            'wa_campania': 7,   # solo superuser
+            'configuracion': 8, # solo superuser
+            'auth': 9,          # User admin — superuser only en la práctica
+            'auditlog': 10,
+            'django_q': 11,     # tareas internas, último
+        }
+        app_list = sorted(
+            valid_apps,
+            # apps no listadas (futuras) van al final, ordenadas alfa.
+            key=lambda x: (APP_ORDER.get(x['app_label'], 99), x['name'].lower()),
+        )
 
         # Add icons to the app list
         for app in app_list:
             app_config = apps.get_app_config(app['app_label'])
             app['icon'] = getattr(app_config, 'icon_name', 'default_icon')
+
+        # Orden custom de modelos DENTRO de cada app. Django default los
+        # ordena alfa también, que pone "Alerta de stock" antes de "Venta"
+        # (lo principal). Forzamos un orden razonable.
+        MODEL_ORDER = {
+            'venta': {
+                'venta': 1, 'pedido': 2, 'alertastock': 3,
+            },
+            'cliente': {
+                'cliente': 1, 'cuentacliente': 2,
+                'movimientocuenta': 3, 'preciocliente': 4,
+            },
+            'articulo': {
+                'articulo': 1, 'categoria': 2, 'reglacategoria': 3,
+                'listaprecios': 4, 'difusionlistapreciosenvio': 5,
+                'solicitudlistacliente': 6,
+            },
+            'wa_campania': {
+                'panelconexionwa': 0,  # el "virtual" que insertamos abajo
+                'campania': 1, 'enviowhatsapp': 2,
+            },
+        }
+        for app in app_list:
+            label = app.get('app_label')
+            if label in MODEL_ORDER:
+                order = MODEL_ORDER[label]
+                app['models'].sort(
+                    key=lambda m: (
+                        order.get((m.get('object_name') or '').lower(), 99),
+                        (m.get('name') or '').lower(),
+                    ),
+                )
 
         # Inyectar un atajo "Conexión WhatsApp" dentro del app
         # wa_campania para que aparezca como card en /admin/. El panel
