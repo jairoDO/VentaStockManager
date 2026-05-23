@@ -39,7 +39,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.decorators import user_passes_test
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, ProtectedError
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -584,4 +584,96 @@ def api_grilla_guardar(request: HttpRequest) -> JsonResponse:
         'ok': True,
         'actualizados': actualizados,
         'creados': creados,
+    })
+
+
+@superuser_required
+@require_POST
+def api_grilla_eliminar(request: HttpRequest) -> JsonResponse:
+    """
+    POST /articulos/api/grilla/eliminar/
+
+    Body JSON: {"ids": [1, 2, 3]}
+
+    Borra los artículos uno por uno (NO en bulk delete). El motivo es
+    que algunos van a fallar con `ProtectedError` por tener
+    `ArticuloVenta` asociado (FK PROTECT — preserva historial), y
+    queremos reportar específicamente cuáles fueron para que el
+    operador sepa qué pasó. Un bulk `.delete()` abortaría todo si
+    UNO fallara.
+
+    Responde:
+      {
+        "ok": True,
+        "borrados": [<ids>],
+        "fallidos": [{"id": N, "nombre": "...", "razon": "..."}, ...]
+      }
+    """
+    try:
+        payload = json.loads(request.body or b'{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON inválido'}, status=400)
+
+    raw_ids = payload.get('ids') or []
+    if not isinstance(raw_ids, list):
+        return JsonResponse({'ok': False, 'error': 'Se esperaba ids: lista'}, status=400)
+
+    # Coerción defensiva.
+    ids: list[int] = []
+    for x in raw_ids:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+
+    if not ids:
+        return JsonResponse({'ok': True, 'borrados': [], 'fallidos': []})
+
+    # Limitamos a 500 por seguridad. Si el operador necesita más,
+    # mejor que lo haga en tandas — un delete masivo gigante puede
+    # bloquear la DB y disparar timeouts.
+    if len(ids) > 500:
+        return JsonResponse({
+            'ok': False,
+            'error': 'Demasiados artículos en un solo request (max 500). '
+                     'Eliminá en tandas más chicas.',
+        }, status=400)
+
+    borrados: list[int] = []
+    fallidos: list[dict] = []
+
+    # NO usamos `transaction.atomic` envolviendo todo: queremos que los
+    # borrados exitosos persistan aunque algunos fallen. Cada delete()
+    # ya es atómico per-row.
+    qs = Articulo.objects.filter(id__in=ids)
+    arts_by_id = {a.id: a for a in qs}
+    for aid in ids:
+        art = arts_by_id.get(aid)
+        if art is None:
+            fallidos.append({
+                'id': aid, 'nombre': '(no encontrado)',
+                'razon': 'No existe en la DB.',
+            })
+            continue
+        nombre = art.nombre  # capturamos antes del delete
+        try:
+            art.delete()
+            borrados.append(aid)
+        except ProtectedError:
+            # FK PROTECT — el artículo tiene ArticuloVenta asociado.
+            # Django no lo deja borrar para preservar historial de ventas.
+            fallidos.append({
+                'id': aid, 'nombre': nombre,
+                'razon': 'Tiene ventas asociadas (FK PROTECT).',
+            })
+        except Exception as e:
+            fallidos.append({
+                'id': aid, 'nombre': nombre,
+                'razon': f'Error inesperado: {e}',
+            })
+
+    return JsonResponse({
+        'ok': True,
+        'borrados': borrados,
+        'fallidos': fallidos,
     })
