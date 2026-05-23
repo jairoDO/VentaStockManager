@@ -217,3 +217,69 @@ a.badge-solicitudes-lista:focus {
     color: white !important;
     text-decoration: none;
 }
+
+/*
+ * RESPONSIVE — fix de header encimado en mobile.
+ *
+ * Material-admin pone todo (badges + links VER EL SITIO/THEMES/CAMBIAR
+ * CONTRASEÑA/CERRAR SESIÓN) en una sola línea con position absoluta
+ * o flexbox sin wrap. En pantallas chicas se solapan unos sobre otros,
+ * resultado ilegible (visible especialmente en celular).
+ *
+ * Fix: en pantallas < 700px (mobile), forzar wrap del contenedor y
+ * compactar los badges para que entren en menos espacio. No lo
+ * desactivamos del todo en mobile porque el operador usa el celu y
+ * necesita ver alertas + accesos.
+ */
+@media (max-width: 700px) {
+    /* Reducir tamaño de badges para que entren más cosas en una línea */
+    a.badge-wa-conexion,
+    a.badge-alertas-stock,
+    a.badge-solicitudes-lista {
+        padding: 4px 8px;
+        font-size: 11px;
+        margin-right: 6px;
+        margin-bottom: 6px;
+        display: inline-block;
+    }
+
+    /* Contenedor de user tools: que haga wrap a varias líneas */
+    .user-tools,
+    #user-tools,
+    .module .user-tools {
+        white-space: normal !important;
+        line-height: 2 !important;
+        position: static !important;
+        padding: 8px !important;
+        text-align: center !important;
+    }
+
+    /* Los links de admin (VER EL SITIO, etc) que también wrappeen */
+    .user-tools a,
+    #user-tools a {
+        display: inline-block !important;
+        margin: 2px 4px !important;
+        white-space: nowrap !important;
+        font-size: 11px !important;
+    }
+
+    /* Header del admin material: que no use absolute positioning en mobile */
+    header#header,
+    #branding,
+    .admin-title {
+        position: relative !important;
+        height: auto !important;
+    }
+}
+
+/* Pantalla MUY chica (< 400px): badges aún más compactos para
+ * que entren en celulares pequeños sin overlap. */
+@media (max-width: 400px) {
+    a.badge-wa-conexion,
+    a.badge-alertas-stock,
+    a.badge-solicitudes-lista {
+        padding: 3px 6px;
+        font-size: 10px;
+        margin-right: 4px;
+    }
+}
