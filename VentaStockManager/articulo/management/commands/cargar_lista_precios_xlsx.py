@@ -218,6 +218,13 @@ class Command(BaseCommand):
             '--minorista-igual-mayorista', action='store_true',
             help='Al CREAR un artículo, copiar mayorista a minorista también.',
         )
+        parser.add_argument(
+            '--crear-nuevos', action='store_true',
+            help='Crear artículos que no existan en la DB (default: NO crear, '
+                 'solo actualizar los que existen). Útil para boot inicial '
+                 'desde Excel; en escenarios de cutover con dump cargado, '
+                 'NO usar este flag para evitar duplicados.',
+        )
         parser.add_argument('--verbose', action='store_true')
 
     def handle(self, *args, **opts):
@@ -258,6 +265,7 @@ class Command(BaseCommand):
         dry_run = opts['dry_run']
         update_precios = opts['update_precios']
         minorista_igual = opts['minorista_igual_mayorista']
+        crear_nuevos = opts['crear_nuevos']
         verbose = opts['verbose']
 
         stats = {
@@ -268,6 +276,7 @@ class Command(BaseCommand):
             'articulos_creados': 0,
             'articulos_actualizados': 0,
             'articulos_sin_cambios': 0,
+            'articulos_no_encontrados': 0,
             'skipped': 0,
         }
 
@@ -428,6 +437,19 @@ class Command(BaseCommand):
                     else:
                         stats['articulos_sin_cambios'] += 1
                 else:
+                    # Artículo no encontrado en DB. Por default NO lo creamos
+                    # (evita inflar la DB con duplicados cuando el operador
+                    # ya cargó datos desde un dump). El flag --crear-nuevos
+                    # opt-in habilita el comportamiento viejo de creación.
+                    if not crear_nuevos:
+                        stats['articulos_no_encontrados'] += 1
+                        if verbose:
+                            self.stdout.write(
+                                f'  R{cell_nombre.row:>4} SKIP → {nombre_art[:40]} '
+                                f'(cod={codigo or "—"}, no existe en DB — usá '
+                                f'--crear-nuevos si querés crearlo)'
+                            )
+                        continue
                     if not dry_run:
                         Articulo.objects.create(
                             codigo=codigo,
@@ -467,4 +489,9 @@ class Command(BaseCommand):
         self.stdout.write(f'  Articulos creados:       {stats["articulos_creados"]}')
         self.stdout.write(f'  Articulos actualizados:  {stats["articulos_actualizados"]}')
         self.stdout.write(f'  Articulos sin cambios:   {stats["articulos_sin_cambios"]}')
+        if stats['articulos_no_encontrados']:
+            self.stdout.write(self.style.WARNING(
+                f'  Articulos NO en DB (skip): {stats["articulos_no_encontrados"]} '
+                f'(usá --crear-nuevos si los querés crear)'
+            ))
         self.stdout.write(f'  Filas skipeadas:         {stats["skipped"]}')
