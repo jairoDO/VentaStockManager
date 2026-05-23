@@ -55,6 +55,25 @@ def _clean_categoria(s: str) -> str:
     return s.strip()
 
 
+def _normalizar_nombre(s: str) -> str:
+    """
+    Normaliza un nombre para matching tolerante:
+    - lowercase
+    - sin bullets iniciales (•, *, .)
+    - sin tildes
+    - whitespace colapsado a un solo espacio
+    """
+    import unicodedata
+    s = (s or '').strip().lower()
+    s = re.sub(r'^[•\.\*\s]+', '', s)
+    s = re.sub(r'\s+', ' ', s)
+    s = ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn'
+    )
+    return s.strip()
+
+
 def _login_sheets():
     """
     Cliente Sheets API con credenciales de service account.
@@ -198,6 +217,21 @@ def categorizar_desde_sheet(
         c.nombre.lower(): c for c in Categoria.objects.all()
     }
 
+    # Pre-cache de TODOS los artículos en memoria — vamos a hacer fallback
+    # match por nombre normalizado cuando el codigo del Sheet no matchea
+    # ningún codigo de la DB (típico cuando el dump tiene codigos numéricos
+    # internos como '548' y el Sheet tiene etiquetas humanas como 'H44').
+    # Para ~5000 artículos esto entra cómodo en memoria.
+    from collections import defaultdict
+    cache_por_nombre: dict[str, list[Articulo]] = defaultdict(list)
+    cache_por_codigo: dict[str, list[Articulo]] = defaultdict(list)
+    for art in Articulo.objects.all().only('id', 'nombre', 'codigo', 'categoria_id'):
+        key_n = _normalizar_nombre(art.nombre)
+        if key_n:
+            cache_por_nombre[key_n].append(art)
+        if art.codigo:
+            cache_por_codigo[art.codigo.strip()].append(art)
+
     stats = {
         'rows_procesadas': 0,
         'categorias_detectadas': 0,
@@ -206,6 +240,9 @@ def categorizar_desde_sheet(
         'articulos_reasignados': 0,
         'articulos_sin_cambios': 0,
         'articulos_no_encontrados_en_db': 0,
+        'articulos_matched_por_codigo': 0,
+        'articulos_matched_por_nombre': 0,
+        'articulos_ambiguos_por_nombre': 0,
         'filas_sin_categoria_activa': 0,
     }
 
@@ -265,15 +302,47 @@ def categorizar_desde_sheet(
                 continue
 
             codigo = str(val_b).strip()
-            # Match por código. Puede haber duplicados (codigo no es
-            # unique en DB), procesamos TODOS los que matchean.
-            qs = Articulo.objects.filter(codigo=codigo)
-            arts = list(qs)
+            nombre_sheet = str(val_a or '').strip()
+            nombre_norm = _normalizar_nombre(nombre_sheet)
+
+            # Matching estratégico:
+            #   1) Por codigo en DB (rápido y exacto)
+            #   2) Si no hay match, fallback por nombre normalizado.
+            #      Útil cuando el dump tiene codigos numéricos internos
+            #      (548, 549, ...) distintos a los del Sheet (A1, H44, ...).
+            #   3) Si el nombre matchea N>1 artículos (ambigüedad), skip
+            #      y reportar — no asignamos al azar.
+            arts = list(cache_por_codigo.get(codigo, []))
+            metodo = 'codigo' if arts else None
+
+            if not arts and nombre_norm:
+                candidatos = cache_por_nombre.get(nombre_norm, [])
+                if len(candidatos) == 1:
+                    arts = candidatos
+                    metodo = 'nombre'
+                elif len(candidatos) > 1:
+                    stats['articulos_ambiguos_por_nombre'] += 1
+                    if verbose:
+                        log(
+                            f'  R{i+1:>4} AMBIGUO → {nombre_sheet[:40]!r} '
+                            f'(cod={codigo}, {len(candidatos)} artículos en DB '
+                            f'con ese nombre — skip)'
+                        )
+                    continue
+
             if not arts:
                 stats['articulos_no_encontrados_en_db'] += 1
                 if verbose:
-                    log(f'  R{i+1:>4} NO-MATCH → cod={codigo} (no existe en DB)')
+                    log(
+                        f'  R{i+1:>4} NO-MATCH → cod={codigo} '
+                        f'nombre={nombre_sheet[:40]!r} (no existe en DB)'
+                    )
                 continue
+
+            if metodo == 'codigo':
+                stats['articulos_matched_por_codigo'] += 1
+            elif metodo == 'nombre':
+                stats['articulos_matched_por_nombre'] += 1
 
             for art in arts:
                 if art.categoria_id == categoria_actual.id:
@@ -291,11 +360,19 @@ def categorizar_desde_sheet(
                     stats['articulos_reasignados'] += 1
 
                 if not dry_run:
-                    art.categoria = categoria_actual
-                    art.save(update_fields=['categoria'])
+                    # `art` viene del cache (solo tiene id/nombre/codigo/
+                    # categoria_id por el .only()). Usamos update() puntual
+                    # en lugar de art.save() para NO disparar signals.
+                    Articulo.objects.filter(pk=art.id).update(
+                        categoria=categoria_actual,
+                    )
+                    art.categoria_id = categoria_actual.id  # mantener cache fresco
 
                 if verbose:
-                    log(f'  R{i+1:>4} {accion} → cod={codigo} → {categoria_actual.nombre}')
+                    log(
+                        f'  R{i+1:>4} {accion} [{metodo}] → '
+                        f'cod={codigo} "{nombre_sheet[:35]}" → {categoria_actual.nombre}'
+                    )
 
         if dry_run:
             transaction.set_rollback(True)
@@ -318,11 +395,16 @@ def categorizar_desde_sheet_scheduled() -> str:
     msg = (
         f"✓ Procesadas {stats['rows_procesadas']} filas. "
         f"{stats['categorias_detectadas']} categorías detectadas. "
+        f"Match: {stats['articulos_matched_por_codigo']} por código, "
+        f"{stats['articulos_matched_por_nombre']} por nombre. "
         f"Artículos: {stats['articulos_asignados']} asignados, "
         f"{stats['articulos_reasignados']} reasignados, "
         f"{stats['articulos_sin_cambios']} sin cambios, "
-        f"{stats['articulos_no_encontrados_en_db']} no encontrados en DB. "
+        f"{stats['articulos_no_encontrados_en_db']} no encontrados en DB"
     )
+    if stats['articulos_ambiguos_por_nombre']:
+        msg += f", {stats['articulos_ambiguos_por_nombre']} ambiguos por nombre"
+    msg += ". "
     if stats['categorias_no_existen']:
         msg += (
             f"Categorías del Sheet que NO existen en DB "
@@ -368,10 +450,17 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('━━━ Resumen ━━━'))
         self.stdout.write(f'  Filas procesadas:               {stats["rows_procesadas"]}')
         self.stdout.write(f'  Categorías detectadas en Sheet: {stats["categorias_detectadas"]}')
+        self.stdout.write(f'  Artículos matched por código:   {stats["articulos_matched_por_codigo"]}')
+        self.stdout.write(f'  Artículos matched por nombre:   {stats["articulos_matched_por_nombre"]} (fallback)')
         self.stdout.write(f'  Artículos asignados (sin cat):  {stats["articulos_asignados"]}')
         self.stdout.write(f'  Artículos reasignados:          {stats["articulos_reasignados"]}')
         self.stdout.write(f'  Artículos sin cambios:          {stats["articulos_sin_cambios"]}')
         self.stdout.write(f'  Artículos NO encontrados en DB: {stats["articulos_no_encontrados_en_db"]}')
+        if stats['articulos_ambiguos_por_nombre']:
+            self.stdout.write(self.style.WARNING(
+                f'  Artículos ambiguos por nombre:  {stats["articulos_ambiguos_por_nombre"]} '
+                f'(hay >1 articulo en DB con ese nombre, no asignamos al azar)'
+            ))
         self.stdout.write(f'  Filas sin categoría activa:     {stats["filas_sin_categoria_activa"]}')
         if stats['categorias_no_existen']:
             self.stdout.write(self.style.WARNING(
