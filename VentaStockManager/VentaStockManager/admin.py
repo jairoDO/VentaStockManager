@@ -264,10 +264,11 @@ class MyAdminSite(MaterialAdminSite):
                             'add': False, 'change': False,
                             'delete': False, 'view': True,
                         },
-                        # `monetization_on` ya está confirmado funcional en
-                        # VentaAdmin.icon_name. `point_of_sale` no estaba en
-                        # la versión de Material Icons que sirve material-admin.
-                        'icon': 'monetization_on',
+                        # `local_atm` — cash dispenser / caja registradora.
+                        # Está en Material Icons desde la v1 (a diferencia de
+                        # `point_of_sale` que es post-2020 y no está en la
+                        # versión que sirve material-admin).
+                        'icon': 'local_atm',
                         'view_only': True,
                     })
                     break
