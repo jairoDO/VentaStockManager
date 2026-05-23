@@ -41,6 +41,10 @@ urlpatterns = [
     # del sistema, no de clientes. El módulo está separado para no
     # mezclar con cliente/urls.py (que cuelga de /clientes/).
     path("", include('cliente.urls_usuarios')),
+    # Gestión de rubros — pantalla custom Alpine para que el admin
+    # cree rubros y asigne categorías de un saque (más eficiente que
+    # el admin clásico de Django, sobre todo en el setup inicial).
+    path("", include('articulo.urls_rubros')),
     path("", include('compra.urls')),
     path("", include('articulo.urls')),
     path("", include('venta.urls')),

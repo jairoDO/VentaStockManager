@@ -44,7 +44,10 @@ class ArticuloAdmin(ArticulosReadOnlyForNonSuperuser, admin.ModelAdmin):
         'precio_minorista', 'categoria_badge', 'proveedor_nombre',
         'vence_dentro_de_60_dias', 'total_venta_por_articulo',
     )
-    list_filter = ('categoria', 'proveedor', 'marca')
+    # Filtros: primero rubro (más amplio), después categoría (más fino),
+    # después proveedor y marca. `categoria__rubro` permite filtrar todos
+    # los artículos cuya categoría pertenezca al rubro X.
+    list_filter = ('categoria__rubro', 'categoria', 'proveedor', 'marca')
     list_select_related = ('categoria', 'proveedor')  # evita N+1 al renderizar columnas FK
     search_fields = ("nombre", 'codigo')
     # fields = ("__all__",)

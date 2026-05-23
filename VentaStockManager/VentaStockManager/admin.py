@@ -232,6 +232,28 @@ class MyAdminSite(MaterialAdminSite):
                     })
                     break
 
+            # Atajo "Gestión de Rubros" — pantalla Alpine custom en
+            # /rubros/ que reemplaza la edición de Rubros del admin
+            # clásico de Django para el setup inicial (asignar 34
+            # categorías a 10 rubros es muy tedioso ir una por una).
+            # La entry de "Rubros" del admin clásico sigue existiendo
+            # para ediciones puntuales (rename, color, etc.).
+            for app in app_list:
+                if app.get('app_label') == 'articulo':
+                    app['models'].insert(0, {
+                        'name': 'Gestión de Rubros',
+                        'object_name': 'GestionRubros',
+                        'admin_url': '/rubros/',
+                        'add_url': '/rubros/',
+                        'perms': {
+                            'add': True, 'change': True,
+                            'delete': False, 'view': True,
+                        },
+                        'icon': 'folder_special',
+                        'view_only': True,
+                    })
+                    break
+
         return app_list
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User

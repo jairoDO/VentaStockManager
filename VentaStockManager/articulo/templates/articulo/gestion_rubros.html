@@ -1,0 +1,429 @@
+{% comment %}
+Gestión de Rubros — pantalla Alpine + Tailwind para crear rubros y
+asignar categorías de un click (más eficiente que el admin clásico
+para el setup inicial donde hay decenas de categorías para distribuir).
+
+UX:
+  - Card "Crear nuevo rubro" arriba con form + checkbox grid de
+    categorías existentes para incluir en el rubro al crearlo.
+  - Lista de rubros existentes en cards, cada uno mostrando sus
+    categorías. Botón "Editar categorías" abre modal con checkboxes
+    para reasignar.
+  - Banner amarillo arriba si hay categorías sin rubro asignado.
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Gestión de Rubros — Golosinas Insa</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>[x-cloak] { display: none !important; }</style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+{{ rubros|json_script:"data-rubros" }}
+{{ categorias|json_script:"data-categorias" }}
+<form style="display:none">{% csrf_token %}</form>
+
+<div class="max-w-6xl mx-auto p-4 sm:p-6"
+     x-data="gestionRubros()" x-init="init()">
+
+  <header class="mb-6">
+    <a href="/admin/" class="text-sm text-blue-600 hover:underline">← Volver al inicio</a>
+    <h1 class="text-2xl font-bold mt-1">Gestión de Rubros</h1>
+    <p class="text-sm text-slate-500">
+      Agrupá las categorías en rubros (Golosinas, Bebidas, etc.) para
+      armar listas de precios más rápido. Al elegir un rubro en el
+      editor de lista de precios, se cargan todas las categorías del rubro.
+    </p>
+  </header>
+
+  {# ---- Mensajes ---- #}
+  <div x-show="mensaje" x-cloak
+       class="bg-emerald-50 border border-emerald-300 text-emerald-800 px-4 py-3 rounded mb-4 text-sm"
+       x-text="mensaje"></div>
+  <div x-show="error" x-cloak
+       class="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded mb-4 text-sm"
+       x-text="error"></div>
+
+  {# ---- Banner: categorías sin rubro ---- #}
+  <div x-show="countSinRubro > 0" x-cloak
+       class="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-3 rounded-lg mb-4 text-sm">
+    <strong>⚠ Hay <span x-text="countSinRubro"></span> categorías sin rubro asignado.</strong>
+    Asignalas a un rubro existente o creá un rubro nuevo abajo.
+  </div>
+
+  {# ---- Form: crear nuevo rubro ---- #}
+  <div class="bg-white shadow rounded-lg p-5 mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-lg">Crear nuevo rubro</h2>
+      <button type="button" @click="formCrearAbierto = !formCrearAbierto"
+              class="text-sm text-blue-600 hover:underline">
+        <span x-text="formCrearAbierto ? 'Cerrar' : 'Abrir formulario'"></span>
+      </button>
+    </div>
+
+    <div x-show="formCrearAbierto" x-cloak>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+        <div class="sm:col-span-2">
+          <label class="block font-medium text-sm text-slate-700 mb-1">Nombre del rubro</label>
+          <input type="text" x-model="nuevoRubro.nombre" placeholder="Ej: Golosinas"
+                 class="w-full px-3 py-2 border-2 border-slate-300 rounded-lg
+                        focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none">
+        </div>
+        <div>
+          <label class="block font-medium text-sm text-slate-700 mb-1">Color</label>
+          <input type="color" x-model="nuevoRubro.color"
+                 class="w-full h-10 border-2 border-slate-300 rounded-lg cursor-pointer">
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label class="block font-medium text-sm text-slate-700 mb-2">
+          Categorías a incluir <span class="text-xs font-normal text-slate-500">
+            (marcá las que pertenecen a este rubro — podés cambiar después)
+          </span>
+        </label>
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <template x-for="c in categorias" :key="c.id">
+              <label class="flex items-center gap-2 p-2 rounded hover:bg-white cursor-pointer">
+                <input type="checkbox" :value="c.id"
+                       @change="toggleCategoriaNueva(c.id)"
+                       :checked="nuevoRubro.categoria_ids.includes(c.id)">
+                <span class="inline-block w-3 h-3 rounded-full flex-shrink-0"
+                      :style="'background:' + c.color"></span>
+                <span class="text-sm" x-text="c.nombre"></span>
+                <span x-show="c.rubro_nombre" x-cloak
+                      class="text-xs text-amber-600 ml-auto"
+                      :title="'Actualmente en rubro: ' + c.rubro_nombre">
+                  ↗ <span x-text="c.rubro_nombre"></span>
+                </span>
+              </label>
+            </template>
+          </div>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">
+          Si marcás una categoría que ya pertenece a otro rubro, se moverá al rubro nuevo.
+        </p>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button type="button" @click="resetForm()"
+                class="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 font-medium">
+          Limpiar
+        </button>
+        <button type="button" @click="crearRubro()"
+                :disabled="creando || !nuevoRubro.nombre.trim()"
+                class="px-6 py-2 rounded-lg text-white font-semibold shadow-sm transition
+                       bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+          <span x-text="creando ? 'Creando...' : 'Crear rubro'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ---- Lista de rubros existentes ---- #}
+  <h2 class="font-semibold text-lg mb-3">
+    Rubros (<span x-text="rubros.length"></span>)
+  </h2>
+
+  <div x-show="rubros.length === 0" x-cloak
+       class="bg-white shadow rounded-lg p-8 text-center text-slate-500">
+    No hay rubros creados todavía. Creá el primero arriba.
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <template x-for="r in rubros" :key="r.id">
+      <div class="bg-white shadow rounded-lg overflow-hidden">
+        {# Header del rubro con color #}
+        <div class="px-4 py-3 flex items-center justify-between"
+             :style="'background:' + r.color + '; color: white;'">
+          <div>
+            <h3 class="font-bold text-lg" x-text="r.nombre"></h3>
+            <p class="text-xs opacity-90">
+              <span x-text="r.n_categorias"></span> categorías ·
+              <span x-text="r.n_articulos"></span> artículos
+            </p>
+          </div>
+          <div class="flex gap-1">
+            <button type="button" @click="abrirAsignar(r)"
+                    class="px-3 py-1.5 rounded bg-white/20 hover:bg-white/30 text-xs font-medium">
+              Categorías
+            </button>
+            <button type="button" @click="abrirEditar(r)"
+                    class="px-3 py-1.5 rounded bg-white/20 hover:bg-white/30 text-xs font-medium">
+              Editar
+            </button>
+            <button type="button" @click="confirmarEliminar = r"
+                    class="px-2 py-1.5 rounded bg-white/20 hover:bg-red-500 text-xs font-medium"
+                    title="Eliminar">
+              🗑
+            </button>
+          </div>
+        </div>
+        {# Categorías que pertenecen #}
+        <div class="p-4">
+          <template x-if="categoriasDelRubro(r.id).length > 0">
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="c in categoriasDelRubro(r.id)" :key="c.id">
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-white"
+                      :style="'background:' + c.color"
+                      :title="c.n_articulos + ' artículos'">
+                  <span x-text="c.nombre"></span>
+                  <span class="opacity-75">(<span x-text="c.n_articulos"></span>)</span>
+                </span>
+              </template>
+            </div>
+          </template>
+          <template x-if="categoriasDelRubro(r.id).length === 0">
+            <p class="text-sm text-slate-400 italic">
+              Sin categorías asignadas. Click en "Categorías" para asignarle.
+            </p>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  {# ---- Modal: Asignar categorías ---- #}
+  <div x-show="modalAsignar" x-cloak
+       class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+      <div class="px-5 py-4 border-b">
+        <h3 class="font-bold text-lg">
+          Categorías de "<span x-text="modalAsignar?.nombre"></span>"
+        </h3>
+        <p class="text-xs text-slate-500">
+          Marcá las categorías que pertenecen a este rubro.
+        </p>
+      </div>
+      <div class="px-5 py-4 overflow-y-auto flex-1">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <template x-for="c in categorias" :key="c.id">
+            <label class="flex items-center gap-2 p-2 rounded hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" :value="c.id"
+                     @change="toggleCategoriaAsignar(c.id)"
+                     :checked="asignarSeleccion.includes(c.id)">
+              <span class="inline-block w-3 h-3 rounded-full flex-shrink-0"
+                    :style="'background:' + c.color"></span>
+              <span class="text-sm" x-text="c.nombre"></span>
+              <template x-if="c.rubro_id && c.rubro_id !== modalAsignar?.id">
+                <span class="text-xs text-amber-600 ml-auto"
+                      :title="'Actualmente en: ' + c.rubro_nombre">
+                  ↗ <span x-text="c.rubro_nombre"></span>
+                </span>
+              </template>
+            </label>
+          </template>
+        </div>
+      </div>
+      <div class="px-5 py-4 border-t flex justify-end gap-2">
+        <button type="button" @click="modalAsignar = null"
+                class="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100">
+          Cancelar
+        </button>
+        <button type="button" @click="guardarAsignacion()"
+                :disabled="guardandoAsignacion"
+                class="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50">
+          <span x-text="guardandoAsignacion ? 'Guardando...' : 'Guardar cambios'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ---- Modal: Editar rubro ---- #}
+  <div x-show="modalEditar" x-cloak
+       class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+      <div class="px-5 py-4 border-b">
+        <h3 class="font-bold text-lg">Editar rubro</h3>
+      </div>
+      <div class="px-5 py-4">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Nombre</label>
+        <input type="text" x-model="modalEditar.nombre"
+               class="w-full px-3 py-2 border-2 border-slate-300 rounded-lg mb-3
+                      focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Color</label>
+        <input type="color" x-model="modalEditar.color"
+               class="w-full h-10 border-2 border-slate-300 rounded-lg cursor-pointer mb-3">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Orden (menor = primero)</label>
+        <input type="number" x-model.number="modalEditar.orden"
+               class="w-full px-3 py-2 border-2 border-slate-300 rounded-lg
+                      focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none">
+      </div>
+      <div class="px-5 py-4 border-t flex justify-end gap-2">
+        <button type="button" @click="modalEditar = null"
+                class="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100">
+          Cancelar
+        </button>
+        <button type="button" @click="guardarEdicion()"
+                class="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium">
+          Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ---- Modal: Confirmar borrado ---- #}
+  <div x-show="confirmarEliminar" x-cloak
+       class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-5">
+      <h3 class="font-bold text-lg mb-2">¿Eliminar rubro?</h3>
+      <p class="text-sm text-slate-600 mb-4">
+        Vas a eliminar el rubro "<span class="font-semibold" x-text="confirmarEliminar?.nombre"></span>".
+        Las <span x-text="confirmarEliminar?.n_categorias"></span> categorías que tenía quedarán
+        SIN rubro (no se borran ni los artículos tampoco).
+      </p>
+      <div class="flex justify-end gap-2">
+        <button type="button" @click="confirmarEliminar = null"
+                class="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100">
+          Cancelar
+        </button>
+        <button type="button" @click="eliminarRubro()"
+                class="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium">
+          Eliminar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function gestionRubros() {
+  return {
+    rubros: [],
+    categorias: [],
+    countSinRubro: {{ count_sin_rubro }},
+
+    formCrearAbierto: true,
+    nuevoRubro: { nombre: '', color: '#9CA3AF', descripcion: '', categoria_ids: [] },
+    creando: false,
+
+    modalAsignar: null,
+    asignarSeleccion: [],
+    guardandoAsignacion: false,
+
+    modalEditar: null,
+    confirmarEliminar: null,
+
+    mensaje: '',
+    error: '',
+
+    init() {
+      this.rubros = JSON.parse(document.getElementById('data-rubros').textContent);
+      this.categorias = JSON.parse(document.getElementById('data-categorias').textContent);
+    },
+
+    categoriasDelRubro(rubroId) {
+      return this.categorias.filter(c => c.rubro_id === rubroId);
+    },
+
+    toggleCategoriaNueva(id) {
+      const i = this.nuevoRubro.categoria_ids.indexOf(id);
+      if (i >= 0) this.nuevoRubro.categoria_ids.splice(i, 1);
+      else this.nuevoRubro.categoria_ids.push(id);
+    },
+
+    toggleCategoriaAsignar(id) {
+      const i = this.asignarSeleccion.indexOf(id);
+      if (i >= 0) this.asignarSeleccion.splice(i, 1);
+      else this.asignarSeleccion.push(id);
+    },
+
+    resetForm() {
+      this.nuevoRubro = { nombre: '', color: '#9CA3AF', descripcion: '', categoria_ids: [] };
+    },
+
+    csrf() {
+      const el = document.querySelector('[name=csrfmiddlewaretoken]');
+      return el ? el.value : '';
+    },
+
+    async post(url, body) {
+      this.error = '';
+      const r = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': this.csrf(),
+        },
+        body: JSON.stringify(body || {}),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) {
+        this.error = data.error || 'Error desconocido';
+        return null;
+      }
+      return data;
+    },
+
+    flash(msg) {
+      this.mensaje = msg;
+      setTimeout(() => { this.mensaje = ''; }, 3500);
+    },
+
+    async crearRubro() {
+      if (!this.nuevoRubro.nombre.trim()) return;
+      this.creando = true;
+      const data = await this.post('/rubros/crear/', this.nuevoRubro);
+      this.creando = false;
+      if (data) {
+        this.flash(data.message);
+        this.resetForm();
+        // Recargamos para tener los counts y la nueva estructura.
+        location.reload();
+      }
+    },
+
+    abrirAsignar(rubro) {
+      this.modalAsignar = rubro;
+      // Pre-seleccionamos las categorías que YA pertenecen a este rubro.
+      this.asignarSeleccion = this.categorias
+        .filter(c => c.rubro_id === rubro.id)
+        .map(c => c.id);
+    },
+
+    async guardarAsignacion() {
+      this.guardandoAsignacion = true;
+      const data = await this.post(
+        '/rubros/' + this.modalAsignar.id + '/asignar-categorias/',
+        { categoria_ids: this.asignarSeleccion },
+      );
+      this.guardandoAsignacion = false;
+      if (data) {
+        this.flash(data.message);
+        this.modalAsignar = null;
+        location.reload();
+      }
+    },
+
+    abrirEditar(rubro) {
+      this.modalEditar = { ...rubro };
+    },
+
+    async guardarEdicion() {
+      const data = await this.post('/rubros/' + this.modalEditar.id + '/editar/', this.modalEditar);
+      if (data) {
+        this.flash(data.message);
+        this.modalEditar = null;
+        location.reload();
+      }
+    },
+
+    async eliminarRubro() {
+      const data = await this.post('/rubros/' + this.confirmarEliminar.id + '/eliminar/');
+      if (data) {
+        this.flash(data.message);
+        this.confirmarEliminar = null;
+        location.reload();
+      }
+    },
+  };
+}
+</script>
+</body>
+</html>
