@@ -153,9 +153,9 @@ class MyAdminSite(MaterialAdminSite):
                 'movimientocuenta': 3, 'preciocliente': 4,
             },
             'articulo': {
-                'articulo': 1, 'categoria': 2, 'reglacategoria': 3,
-                'listaprecios': 4, 'difusionlistapreciosenvio': 5,
-                'solicitudlistacliente': 6,
+                'articulo': 1, 'rubro': 2, 'categoria': 3, 'reglacategoria': 4,
+                'listaprecios': 5, 'difusionlistapreciosenvio': 6,
+                'solicitudlistacliente': 7,
             },
             'wa_campania': {
                 'panelconexionwa': 0,  # el "virtual" que insertamos abajo
@@ -264,12 +264,15 @@ admin_site.register(Articulo, ArticuloAdmin)
 # por URL (/admin/articulo/reglacategoria/) en debug.
 from articulo.models import (
     Categoria, ListaPrecios, DifusionListaPreciosEnvio,
-    SolicitudListaCliente,
+    SolicitudListaCliente, Rubro,
 )
 from articulo.admin import (
     CategoriaAdmin, ListaPreciosAdmin, DifusionListaPreciosEnvioAdmin,
-    SolicitudListaClienteAdmin,
+    SolicitudListaClienteAdmin, RubroAdmin,
 )
+# Rubro: agrupador de Categorías. Lo registramos ANTES que Categoria
+# en el código para que aparezca primero en el MODEL_ORDER del index.
+admin_site.register(Rubro, RubroAdmin)
 admin_site.register(Categoria, CategoriaAdmin)
 # Historial de envíos de difusión (read-only desde admin, con bulk
 # action "Reintentar fallidos"). El operador entra acá cuando quiere

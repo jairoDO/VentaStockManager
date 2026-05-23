@@ -10,6 +10,54 @@ from django.utils.html import format_html
 
 
 # ---------------------------------------------------------------------------
+# Rubros — agrupador de Categorías
+# ---------------------------------------------------------------------------
+class Rubro(models.Model):
+    """
+    Nivel superior a Categoría. Un Rubro contiene N categorías.
+
+    Ejemplo (negocio real "Golosinas Insa"):
+      - Rubro "Golosinas" → Categorías [Chupetines, Alfajores,
+        Masticables, Gomitas, Pastillas, Chocolates, ...]
+      - Rubro "Bebidas" → Categorías [Gaseosas, Aguas, Jugos, Cervezas, ...]
+      - Rubro "Almacén" → Categorías [Condimentos, Fideos, ...]
+
+    Caso de uso principal: al armar una Lista de Precios el operador
+    elegía categoría por categoría (chupetines, después alfajores,
+    etc.). Con Rubros, elige UN rubro ("Golosinas") y se cargan todos
+    los artículos cuya categoría pertenezca al rubro.
+
+    El Rubro es OPCIONAL en Categoria — una categoría puede no tener
+    rubro asignado, en cuyo caso no aparece en ningún filtro de rubro.
+    """
+
+    nombre = models.CharField(max_length=80, unique=True)
+    descripcion = models.TextField(blank=True, default='')
+    # Color hex para distinguir visualmente en el selector del editor.
+    color = models.CharField(
+        max_length=7,
+        default='#9CA3AF',
+        help_text='Color hex (ej. #FF5733) para mostrar el rubro en el selector.',
+    )
+    # `orden` permite controlar manualmente en qué orden aparecen los
+    # rubros en el selector. Menor número = primero. Default 0 → orden
+    # alfabético entre los empatados.
+    orden = models.PositiveIntegerField(
+        default=0,
+        help_text='Para ordenar en el selector. Menor = aparece primero.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('orden', 'nombre')
+        verbose_name = 'rubro'
+        verbose_name_plural = 'rubros'
+
+    def __str__(self):
+        return self.nombre
+
+
+# ---------------------------------------------------------------------------
 # Categorías
 # ---------------------------------------------------------------------------
 class Categoria(models.Model):
@@ -21,6 +69,11 @@ class Categoria(models.Model):
     con Google Sheets. Si en el futuro decidimos migrar Sheets a la
     app, las categorías ya están listas y se exportan a una columna
     extra de la planilla.
+
+    Una Categoría puede (opcionalmente) pertenecer a un `Rubro`.
+    El Rubro es el nivel superior (Golosinas, Bebidas, etc.) — sirve
+    para que el operador agrupe varias categorías al armar listas
+    de precios.
     """
 
     nombre = models.CharField(max_length=80, unique=True)
@@ -30,6 +83,16 @@ class Categoria(models.Model):
         max_length=7,
         default='#607d8b',
         help_text='Color hex (ej. #2196f3) para mostrar la categoría en badges.',
+    )
+    # FK opcional al rubro. SET_NULL para que borrar un rubro no
+    # arrastre las categorías (que es lo que haría CASCADE).
+    rubro = models.ForeignKey(
+        'Rubro',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='categorias',
+        help_text='Rubro al que pertenece (Golosinas, Bebidas, Almacén, etc.). Opcional.',
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

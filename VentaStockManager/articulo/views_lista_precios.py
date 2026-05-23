@@ -60,7 +60,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from cliente.models import Cliente
-from .models import Articulo, Categoria, ListaPrecios, ListaPreciosItem
+from .models import Articulo, Categoria, ListaPrecios, ListaPreciosItem, Rubro
 from .precios import cargar_precios_pactados, precio_efectivo
 
 try:
@@ -86,8 +86,14 @@ def lista_precios_pantalla(request: HttpRequest) -> HttpResponse:
     y proveedores). El cliente, los artículos y la lista en sí los
     carga el front a demanda vía API.
     """
+    # Las categorías llevan `rubro_id` para que el front pueda filtrar
+    # el dropdown de categoría a las que pertenecen al rubro elegido.
     categorias = list(
-        Categoria.objects.order_by('nombre').values('id', 'nombre', 'color')
+        Categoria.objects.order_by('nombre').values('id', 'nombre', 'color', 'rubro_id')
+    )
+    # Rubros ordenados por `orden` (manual del operador) y después nombre.
+    rubros = list(
+        Rubro.objects.order_by('orden', 'nombre').values('id', 'nombre', 'color')
     )
     proveedores: list[dict[str, Any]] = []
     if Proveedor is not None:
@@ -100,6 +106,7 @@ def lista_precios_pantalla(request: HttpRequest) -> HttpResponse:
         'articulo/lista_precios.html',
         {
             'categorias': categorias,
+            'rubros': rubros,
             'proveedores': proveedores,
         },
     )
@@ -279,6 +286,7 @@ def api_articulos_disponibles(request: HttpRequest) -> JsonResponse:
 
     raw_categoria = request.GET.get('categoria', '').strip()
     raw_proveedor = request.GET.get('proveedor', '').strip()
+    raw_rubro = request.GET.get('rubro', '').strip()
     q = request.GET.get('q', '').strip()
     raw_page = request.GET.get('page', '1').strip()
 
@@ -292,6 +300,7 @@ def api_articulos_disponibles(request: HttpRequest) -> JsonResponse:
 
     categoria_id = _to_int(raw_categoria)
     proveedor_id = _to_int(raw_proveedor)
+    rubro_id = _to_int(raw_rubro)
     try:
         page = max(1, int(raw_page))
     except (TypeError, ValueError):
@@ -302,6 +311,16 @@ def api_articulos_disponibles(request: HttpRequest) -> JsonResponse:
         .select_related('categoria', 'proveedor')
         .order_by('categoria__nombre', 'nombre')
     )
+    # Filtro por rubro: incluye TODAS las categorías que pertenecen al
+    # rubro elegido. El front además filtra el dropdown de categoría
+    # a esas mismas, pero acá enforce-amos en backend igual (defensa
+    # en profundidad y soporte para llamadas directas a la API).
+    if rubro_id is not None:
+        if rubro_id == 0:
+            # rubro=0 → artículos en categorías sin rubro asignado.
+            qs = qs.filter(categoria__rubro__isnull=True)
+        else:
+            qs = qs.filter(categoria__rubro_id=rubro_id)
     if categoria_id is not None:
         if categoria_id == 0:
             qs = qs.filter(categoria__isnull=True)

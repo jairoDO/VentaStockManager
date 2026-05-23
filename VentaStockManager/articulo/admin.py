@@ -301,9 +301,65 @@ class ReglaCategoriaInline(admin.TabularInline):
     }
 
 
+class CategoriaInlineEnRubro(admin.TabularInline):
+    """
+    Inline para que el operador, al abrir un Rubro, vea/edite las
+    categorías que pertenecen a él en una sola pantalla (más rápido
+    que ir categoría por categoría seteando el FK).
+    """
+    from .models import Categoria as _CatModel  # evita ciclo en import-time
+    model = _CatModel
+    fk_name = 'rubro'
+    fields = ('nombre', 'color', 'descripcion')
+    extra = 0
+    show_change_link = True
+
+
+class RubroAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
+    """
+    Admin del Rubro (Golosinas, Bebidas, Almacén, …). Lo edita el
+    superuser/admin al setear la estructura inicial; el vendedor lo
+    consume al elegir Rubro en el editor de Lista de Precios.
+    """
+    icon_name = 'folder_special'
+    list_display = ('nombre_con_color', 'orden', 'descripcion_corta', 'cantidad_categorias')
+    list_editable = ('orden',)
+    search_fields = ('nombre', 'descripcion')
+    ordering = ('orden', 'nombre')
+    inlines = [CategoriaInlineEnRubro]
+
+    def get_queryset(self, request):
+        from django.db.models import Count
+        return (
+            super().get_queryset(request)
+            .annotate(_n_categorias=Count('categorias', distinct=True))
+        )
+
+    def nombre_con_color(self, obj):
+        return format_html(
+            '<span style="background: {}; color: white; padding: 4px 10px; '
+            'border-radius: 12px; font-weight: 500;">{}</span>',
+            obj.color, obj.nombre,
+        )
+    nombre_con_color.short_description = 'Rubro'
+    nombre_con_color.admin_order_field = 'nombre'
+
+    def descripcion_corta(self, obj):
+        desc = obj.descripcion or ''
+        return desc[:60] + ('…' if len(desc) > 60 else '')
+    descripcion_corta.short_description = 'Descripción'
+
+    def cantidad_categorias(self, obj):
+        return getattr(obj, '_n_categorias', None) or obj.categorias.count()
+    cantidad_categorias.short_description = 'Categorías'
+    cantidad_categorias.admin_order_field = '_n_categorias'
+
+
 class CategoriaAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     icon_name = 'category'
-    list_display = ('nombre_con_color', 'descripcion_corta', 'cantidad_articulos', 'cantidad_reglas')
+    list_display = ('nombre_con_color', 'rubro', 'descripcion_corta', 'cantidad_articulos', 'cantidad_reglas')
+    list_filter = ('rubro',)
+    list_select_related = ('rubro',)
     search_fields = ('nombre', 'descripcion')
     inlines = [ReglaCategoriaInline]
 

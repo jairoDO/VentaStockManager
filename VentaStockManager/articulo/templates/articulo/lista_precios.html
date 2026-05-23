@@ -51,6 +51,7 @@ las lee sin riesgo de XSS.
 {% endcomment %}
 {{ categorias|json_script:"opt-categorias" }}
 {{ proveedores|json_script:"opt-proveedores" }}
+{{ rubros|json_script:"opt-rubros" }}
 
 <div x-data="listaPrecios()" x-init="init()" class="max-w-screen-2xl mx-auto p-6 pb-32">
 
@@ -142,14 +143,29 @@ las lee sin riesgo de XSS.
 
     {# ---- Filtros para sumar items ---- #}
     <div class="bg-white shadow rounded-lg p-4 mb-4">
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Rubro</label>
+          <select x-model="filtros.rubro" @change="onRubroCambia()"
+                  class="w-full border border-slate-300 rounded px-3 py-2">
+            <option value="">— Todos —</option>
+            <option value="0">— Sin rubro —</option>
+            <template x-for="r in opcionesRubros" :key="r.id">
+              <option :value="r.id" x-text="r.nombre"></option>
+            </template>
+          </select>
+          <p x-show="filtros.rubro && filtros.rubro !== '0'" x-cloak
+             class="text-[10px] text-slate-500 mt-0.5">
+            Filtra categorías y artículos al rubro.
+          </p>
+        </div>
         <div>
           <label class="block text-xs font-medium text-slate-600 mb-1 uppercase tracking-wide">Categoría</label>
           <select x-model="filtros.categoria" @change="onFiltroCambia()"
                   class="w-full border border-slate-300 rounded px-3 py-2">
             <option value="">— Todas —</option>
             <option value="0">— Sin categoría —</option>
-            <template x-for="c in opcionesCategorias" :key="c.id">
+            <template x-for="c in opcionesCategoriasFiltradas" :key="c.id">
               <option :value="c.id" x-text="c.nombre"></option>
             </template>
           </select>
@@ -524,6 +540,21 @@ las lee sin riesgo de XSS.
       // ---- Opciones de filtros ----
       opcionesCategorias: [],
       opcionesProveedores: [],
+      opcionesRubros: [],
+
+      // Computed: si hay rubro elegido, restringimos el dropdown de
+      // categorías al subconjunto que pertenece al rubro. Sino, todas.
+      // Caso especial: rubro=0 ("Sin rubro") muestra solo categorías
+      // sin rubro asignado.
+      get opcionesCategoriasFiltradas() {
+        const r = this.filtros.rubro;
+        if (r === '' || r === null || r === undefined) return this.opcionesCategorias;
+        if (r === '0') {
+          return this.opcionesCategorias.filter(c => !c.rubro_id);
+        }
+        const rid = parseInt(r, 10);
+        return this.opcionesCategorias.filter(c => c.rubro_id === rid);
+      },
 
       // ---- Cliente ----
       // Estado separado entre el "input de búsqueda" (clienteQuery) y
@@ -556,7 +587,7 @@ las lee sin riesgo de XSS.
       totalDisponibles: 0,
       totalPagesDisponibles: 1,
       cargandoDisponibles: false,
-      filtros: { categoria: '', proveedor: '', q: '', page: 1 },
+      filtros: { rubro: '', categoria: '', proveedor: '', q: '', page: 1 },
 
       // ---- En la lista (panel derecho) ----
       // Cada item: {articulo_id, articulo_codigo, articulo_nombre,
@@ -602,6 +633,8 @@ las lee sin riesgo de XSS.
         if (cats) this.opcionesCategorias = JSON.parse(cats.textContent);
         const provs = document.getElementById('opt-proveedores');
         if (provs) this.opcionesProveedores = JSON.parse(provs.textContent);
+        const rubrs = document.getElementById('opt-rubros');
+        if (rubrs) this.opcionesRubros = JSON.parse(rubrs.textContent);
 
         // Si vinimos desde el admin con ?lista_id=N (botón "Editar
         // visual" en el changelist o redirect del change_view),
@@ -832,6 +865,7 @@ las lee sin riesgo de XSS.
         try {
           const params = new URLSearchParams();
           params.set('cliente_id', this.cliente.id);
+          if (this.filtros.rubro !== '') params.set('rubro', this.filtros.rubro);
           if (this.filtros.categoria !== '') params.set('categoria', this.filtros.categoria);
           if (this.filtros.proveedor !== '') params.set('proveedor', this.filtros.proveedor);
           if (this.filtros.q) params.set('q', this.filtros.q);
@@ -853,6 +887,26 @@ las lee sin riesgo de XSS.
       onFiltroCambia() {
         this.filtros.page = 1;
         this.cargarDisponibles();
+      },
+      // Al cambiar el rubro: si la categoría seleccionada NO pertenece
+      // al rubro nuevo, la limpiamos (sino el operador se queda con un
+      // filtro inconsistente, ej. "Rubro: Bebidas + Categoría: Chupetines"
+      // que daría 0 resultados sin que entienda por qué).
+      onRubroCambia() {
+        const r = this.filtros.rubro;
+        if (r !== '' && r !== '0' && this.filtros.categoria !== '') {
+          const rid = parseInt(r, 10);
+          const cat = this.opcionesCategorias.find(c => String(c.id) === String(this.filtros.categoria));
+          if (!cat || cat.rubro_id !== rid) {
+            this.filtros.categoria = '';
+          }
+        } else if (r === '0' && this.filtros.categoria !== '') {
+          const cat = this.opcionesCategorias.find(c => String(c.id) === String(this.filtros.categoria));
+          if (cat && cat.rubro_id) {
+            this.filtros.categoria = '';
+          }
+        }
+        this.onFiltroCambia();
       },
       cambiarPaginaDisponibles(n) {
         if (n < 1 || n > this.totalPagesDisponibles) return;
@@ -901,6 +955,7 @@ las lee sin riesgo de XSS.
         const ejecutar = async () => {
           const params = new URLSearchParams();
           if (this.cliente.id) params.set('cliente_id', this.cliente.id);
+          if (this.filtros.rubro !== '') params.set('rubro', this.filtros.rubro);
           if (this.filtros.categoria !== '') params.set('categoria', this.filtros.categoria);
           if (this.filtros.proveedor !== '') params.set('proveedor', this.filtros.proveedor);
           if (this.filtros.q) params.set('q', this.filtros.q);
