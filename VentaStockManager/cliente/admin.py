@@ -304,31 +304,21 @@ class CuentaClienteAdmin(admin.ModelAdmin):
 
     def acciones(self, obj):
         """
-        Dos botones lado a lado:
-          - "💰 Registrar pago" → cliente paga deuda existente
-          - "💵 Registrar saldo a favor" → cliente adelanta plata
-
-        Funcionalmente ambos son TIPO_PAGO con monto positivo en el
-        modelo. La diferencia es la UX: el operador piensa distinto
-        y el form los guía con labels y help_text apropiados a cada
-        caso (ver get_form en MovimientoCuentaAdmin con ?modo=saldo).
+        Botón "Registrar pago" prominente. Funcionalmente cubre tanto
+        pago de deuda como saldo a favor (ambos son TIPO_PAGO con
+        monto positivo). Por ahora un solo botón hasta que tengamos
+        una view custom para diferenciar la UX.
         """
         if not obj or not obj.pk:
             return '—'
         return format_html(
             '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}" '
-            'style="display:inline-block; padding:8px 16px; margin-right:8px; '
+            'style="display:inline-block; padding:8px 16px; '
             'background:#059669; color:white; border-radius:6px; '
             'text-decoration:none; font-weight:500;">'
-            '💰 Registrar pago'
-            '</a>'
-            '<a href="/admin/cliente/movimientocuenta/add/?cuenta={}&modo=saldo" '
-            'style="display:inline-block; padding:8px 16px; '
-            'background:#2563eb; color:white; border-radius:6px; '
-            'text-decoration:none; font-weight:500;">'
-            '💵 Registrar saldo a favor'
+            '💰 Registrar pago / saldo a favor'
             '</a>',
-            obj.pk, obj.pk,
+            obj.pk,
         )
     acciones.short_description = 'Registrar movimiento'
 
@@ -470,32 +460,13 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
             'all': ('admin/cliente/movimiento_form.css',),
         }
 
-    def get_form(self, request, obj=None, **kwargs):
-        """
-        Soportamos dos "modos" via query param:
-
-          /add/?cuenta=N             → modo PAGO (default)
-          /add/?cuenta=N&modo=saldo  → modo SALDO A FAVOR
-
-        En ambos casos guardamos un MovimientoCuenta de tipo PAGO con
-        monto positivo. La diferencia es solo conceptual/UX — el operador
-        piensa distinto y el form lo guía con palabras claras.
-
-        Los labels/help_texts BASE (modo pago) vienen del Meta de
-        `RegistrarPagoForm`. Cuando es modo=saldo, llamamos al método
-        `set_modo_saldo()` del form para overridear esos textos.
-        """
-        FormClass = super().get_form(request, obj, **kwargs)
-        if obj is None and request.GET.get('modo') == 'saldo':
-            # Subclase on-the-fly que invoca set_modo_saldo en __init__.
-            # Más simple que pasarlo como param y mantiene el form
-            # contenido en si mismo.
-            class FormSaldoModo(FormClass):
-                def __init__(self, *args, **kw):
-                    super().__init__(*args, **kw)
-                    self.set_modo_saldo()
-            return FormSaldoModo
-        return FormClass
+    # NOTA: el modo "saldo a favor" (?modo=saldo) lo desactivé porque la
+    # subclase on-the-fly del form tiraba 500 en producción (algún issue
+    # con la metaclass de ModelForm que el factory de Django arma).
+    # Funcionalmente es lo mismo que un pago (TIPO_PAGO + monto positivo),
+    # así que mientras tanto el operador usa "Registrar pago" para los
+    # dos casos. Si más adelante hace falta separar, hacemos una view
+    # custom completamente fuera del admin.
 
     def save_model(self, request, obj, form, change):
         """

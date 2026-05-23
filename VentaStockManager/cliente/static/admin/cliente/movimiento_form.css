@@ -9,69 +9,106 @@
  *
  * Fix: forzar borde visible siempre, padding decente, fondo claro. Solo
  * aplicado a los forms de movimientocuenta — NO afecta el resto del admin.
+ *
+ * Selectores agresivos con !important porque material tiene reglas con
+ * !important que pisan los nuestros si no usamos lo mismo.
  */
 
 /* Scope: solo el form de add/change de MovimientoCuenta */
-body.app-cliente.model-movimientocuenta .form-row input[type="text"],
-body.app-cliente.model-movimientocuenta .form-row input[type="number"],
-body.app-cliente.model-movimientocuenta .form-row textarea,
-body.app-cliente.model-movimientocuenta .form-row select,
-body.app-cliente.model-movimientocuenta .form-row .vTextField,
-body.app-cliente.model-movimientocuenta .form-row .vIntegerField,
-body.app-cliente.model-movimientocuenta .form-row .vForeignKeyRawIdAdminField {
+.app-cliente.model-movimientocuenta input[type="text"],
+.app-cliente.model-movimientocuenta input[type="number"],
+.app-cliente.model-movimientocuenta input[type="email"],
+.app-cliente.model-movimientocuenta textarea,
+.app-cliente.model-movimientocuenta select,
+.app-cliente.model-movimientocuenta input.vTextField,
+.app-cliente.model-movimientocuenta input.vIntegerField,
+.app-cliente.model-movimientocuenta input.vForeignKeyRawIdAdminField,
+.app-cliente.model-movimientocuenta .registrar-pago-input {
     /* Borde claro visible siempre */
     border: 1px solid #cbd5e1 !important;
     border-radius: 6px !important;
-    padding: 8px 12px !important;
+    padding: 10px 14px !important;
     background: white !important;
-    font-size: 14px !important;
-    min-width: 250px !important;
-    width: auto !important;
-    /* Anti-floating-label: el input se ve aunque esté vacío */
+    color: #0f172a !important;
+    font-size: 15px !important;
+    width: 100% !important;
+    max-width: 400px !important;
+    min-width: 200px !important;
+    box-sizing: border-box !important;
+    /* Override Materialize defaults */
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+    margin: 8px 0 !important;
+    display: block !important;
+    height: auto !important;
+    line-height: normal !important;
 }
 
-body.app-cliente.model-movimientocuenta .form-row input[type="text"]:focus,
-body.app-cliente.model-movimientocuenta .form-row input[type="number"]:focus,
-body.app-cliente.model-movimientocuenta .form-row textarea:focus,
-body.app-cliente.model-movimientocuenta .form-row .vTextField:focus,
-body.app-cliente.model-movimientocuenta .form-row .vIntegerField:focus,
-body.app-cliente.model-movimientocuenta .form-row .vForeignKeyRawIdAdminField:focus {
+.app-cliente.model-movimientocuenta input[type="text"]:focus,
+.app-cliente.model-movimientocuenta input[type="number"]:focus,
+.app-cliente.model-movimientocuenta textarea:focus,
+.app-cliente.model-movimientocuenta input.vTextField:focus,
+.app-cliente.model-movimientocuenta input.vIntegerField:focus,
+.app-cliente.model-movimientocuenta input.vForeignKeyRawIdAdminField:focus,
+.app-cliente.model-movimientocuenta .registrar-pago-input:focus {
     border-color: #2563eb !important;
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
     outline: none !important;
 }
 
-/* Labels: que se vean bien encima de cada input */
-body.app-cliente.model-movimientocuenta .form-row label {
+/* Labels: que se vean BIEN encima de cada input, NO floating */
+.app-cliente.model-movimientocuenta .form-row label,
+.app-cliente.model-movimientocuenta .form-row > label,
+.app-cliente.model-movimientocuenta .input-field > label {
     display: block !important;
-    margin-bottom: 6px !important;
+    margin-bottom: 4px !important;
+    margin-top: 16px !important;
     font-weight: 600 !important;
-    color: #334155 !important;
+    color: #1e293b !important;
     font-size: 14px !important;
-    /* Sacar el floating label que material-admin pone */
+    /* Anular el "floating label" de Materialize */
     position: static !important;
     transform: none !important;
     pointer-events: auto !important;
+    top: auto !important;
+    left: auto !important;
+    opacity: 1 !important;
 }
 
-/* Help text: legible */
-body.app-cliente.model-movimientocuenta .form-row .help,
-body.app-cliente.model-movimientocuenta .form-row .help-block {
+/* Help text legible */
+.app-cliente.model-movimientocuenta .form-row .help,
+.app-cliente.model-movimientocuenta .form-row .help-block,
+.app-cliente.model-movimientocuenta .input-field .help {
     display: block !important;
-    margin-top: 6px !important;
-    font-size: 12px !important;
+    margin-top: 4px !important;
+    margin-bottom: 12px !important;
+    font-size: 13px !important;
     color: #64748b !important;
+    font-style: normal !important;
 }
 
-/* Espaciado entre filas */
-body.app-cliente.model-movimientocuenta .form-row {
-    margin-bottom: 20px !important;
+/* Espaciado entre rows */
+.app-cliente.model-movimientocuenta .form-row {
+    margin-bottom: 24px !important;
+    padding: 0 !important;
 }
 
-/* Botón "Guardar" un poco más obvio */
-body.app-cliente.model-movimientocuenta .submit-row {
-    margin-top: 24px;
-    padding: 16px 0;
-    border-top: 1px solid #e2e8f0;
+/* Material-admin wrap del input-field: que no le coma el padding */
+.app-cliente.model-movimientocuenta .input-field {
+    margin: 0 !important;
+    padding: 0 !important;
+    position: static !important;
+}
+
+/* Lupa del raw_id_field bien al lado */
+.app-cliente.model-movimientocuenta .related-lookup {
+    margin-left: 8px !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+}
+
+/* Botón Guardar destacado */
+.app-cliente.model-movimientocuenta .submit-row {
+    margin-top: 32px !important;
+    padding: 16px 0 !important;
+    border-top: 1px solid #e2e8f0 !important;
 }
