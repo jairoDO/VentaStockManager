@@ -371,18 +371,36 @@ def generar_pdf_pedidos_(request, pedido_ids=None):
         # Tabla del total. El total ahora respeta descuentos (línea
         # y global). Si hay descuento global, mostramos también el
         # subtotal y el monto del descuento para que sea claro.
+        # Si además se aplicó saldo a favor del cliente, lo restamos
+        # como línea extra y mostramos "Total a pagar" abajo.
         from venta.utils import subtotal_venta_sin_desc_global
+        from cliente.models import MovimientoCuenta
         total_final = calcular_total_venta(pedido.venta)
         desc_global = pedido.venta.descuento_porcentaje or 0
+
+        # Saldo a favor aplicado en esta venta (si lo hubo). Lo busco
+        # como MovimientoCuenta(tipo='aplicacion_saldo', venta=esta).
+        # El monto está en NEGATIVO (resta saldo de la cuenta), por eso
+        # uso abs() para mostrarlo como número positivo en el PDF.
+        saldo_aplicado = MovimientoCuenta.objects.filter(
+            venta=pedido.venta,
+            tipo=MovimientoCuenta.TIPO_APLICACION_SALDO,
+        ).aggregate(total=models.Sum('monto'))['total'] or 0
+        saldo_aplicado_abs = abs(saldo_aplicado)
+
+        data_total = []
         if desc_global > 0:
             subtotal_bruto = subtotal_venta_sin_desc_global(pedido.venta)
-            data_total = [
-                ['Subtotal:', '', '', f'{subtotal_bruto:.2f}'],
-                [f'Descuento {desc_global:g}%:', '', '', f'-{(subtotal_bruto - total_final):.2f}'],
-                ['Total:', '', '', f'{total_final:.2f}'],
-            ]
+            data_total.append(['Subtotal:', '', '', f'{subtotal_bruto:.2f}'])
+            data_total.append([f'Descuento {desc_global:g}%:', '', '', f'-{(subtotal_bruto - total_final):.2f}'])
+            data_total.append(['Total venta:', '', '', f'{total_final:.2f}'])
         else:
-            data_total = [['Total:', '', '', f'{total_final:.2f}']]
+            data_total.append(['Total venta:', '', '', f'{total_final:.2f}'])
+
+        if saldo_aplicado_abs > 0:
+            # Mostramos la línea de saldo aplicado + total a pagar.
+            data_total.append(['Saldo a favor aplicado:', '', '', f'-{saldo_aplicado_abs:.2f}'])
+            data_total.append(['Total a pagar:', '', '', f'{(total_final - saldo_aplicado_abs):.2f}'])
         tabla_total = Table(data_total, colWidths=[
             config.column_width_article * cm,
             config.column_width_quantity * cm,
@@ -603,19 +621,28 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         tabla_articulos.setStyle(estilo_tabla_articulos)
 
         # Tabla del total. Si hay descuento global, mostramos 3 líneas
-        # (subtotal, descuento, total). Si no, solo el total — pero
-        # calculado con `calcular_total_venta` que respeta los
-        # descuentos por línea aunque no haya global.
+        # (subtotal, descuento, total). Si además hubo saldo a favor
+        # del cliente aplicado a esta venta, se muestra como línea
+        # negativa + "Total a pagar" abajo.
+        from cliente.models import MovimientoCuenta
         total_final = calcular_total_venta(pedido.venta)
+        saldo_aplicado = MovimientoCuenta.objects.filter(
+            venta=pedido.venta,
+            tipo=MovimientoCuenta.TIPO_APLICACION_SALDO,
+        ).aggregate(total=models.Sum('monto'))['total'] or 0
+        saldo_aplicado_abs = abs(saldo_aplicado)
+
+        data_total = []
         if descuento_global > 0:
             subtotal_bruto = subtotal_venta_sin_desc_global(pedido.venta)
-            data_total = [
-                ['Subtotal:', f'{subtotal_bruto:.2f}'],
-                [f'Descuento {descuento_global:g}%:', f'-{(subtotal_bruto - total_final):.2f}'],
-                ['Total:', f'{total_final:.2f}'],
-            ]
+            data_total.append(['Subtotal:', f'{subtotal_bruto:.2f}'])
+            data_total.append([f'Descuento {descuento_global:g}%:', f'-{(subtotal_bruto - total_final):.2f}'])
+            data_total.append(['Total venta:', f'{total_final:.2f}'])
         else:
-            data_total = [['Total:', f'{total_final:.2f}']]
+            data_total.append(['Total venta:', f'{total_final:.2f}'])
+        if saldo_aplicado_abs > 0:
+            data_total.append(['Saldo a favor aplicado:', f'-{saldo_aplicado_abs:.2f}'])
+            data_total.append(['Total a pagar:', f'{(total_final - saldo_aplicado_abs):.2f}'])
         tabla_total = Table(data_total, colWidths=[5 * cm, 3 * cm])
         estilo_tabla_total = TableStyle([
             ('GRID', (0, 0), (-1, -1), 1, config.content_color),
