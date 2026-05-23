@@ -809,22 +809,34 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
         this.eliminando = true;
         try {
           const ids = Array.from(this.seleccionados);
+          // CSRF: usamos getCookie('csrftoken') igual que api_grilla_guardar
+          // (que sí funciona en producción). El selector del form a veces
+          // devuelve un token distinto al de la cookie y Django lo rechaza
+          // con 403 silencioso.
           const r = await fetch('/articulos/api/grilla/eliminar/', {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
               'Content-Type': 'application/json',
-              'X-CSRFToken': (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '',
+              'X-CSRFToken': getCookie('csrftoken'),
             },
             body: JSON.stringify({ ids }),
           });
-          const data = await r.json();
+          // Si CSRF falla u otro error de protocolo, mostramos info concreta.
           if (!r.ok) {
-            this.errores = [{ mensaje: data.error || 'Error al eliminar' }];
+            let detalle = '';
+            try {
+              const data = await r.json();
+              detalle = data.error || JSON.stringify(data);
+            } catch {
+              detalle = `HTTP ${r.status}: ${r.statusText}`;
+            }
+            this.errores = [{ mensaje: 'Error al eliminar: ' + detalle }];
             this.eliminando = false;
             this.modalEliminarAbierto = false;
             return;
           }
+          const data = await r.json();
           // Reporte: cuántos se borraron y cuáles fallaron.
           const borrados = (data.borrados || []).length;
           const fallidos = data.fallidos || [];
