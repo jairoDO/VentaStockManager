@@ -436,6 +436,11 @@ class Command(BaseCommand):
                             precio_minorista=precio if minorista_igual else None,
                             categoria=categoria_actual,
                             stock=0,
+                            # Cargamos con stock_minimo=0 para que el primer
+                            # ciclo de ventas (todavía con stock=0) NO dispare
+                            # alertas "reponer" hasta que el operador setee
+                            # umbrales reales por artículo.
+                            stock_minimo=0,
                             vencimiento=VENCIMIENTO_SENTINEL,
                             marca='Generico',
                         )

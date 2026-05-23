@@ -534,6 +534,16 @@ class Articulo(models.Model):
     nombre = models.CharField(max_length=255)
     descripcion = models.TextField(blank=True, null=True)
     stock = models.PositiveIntegerField()
+    # Umbral de "stock bajo": cuando `stock` cae al/debajo de este número
+    # después de una venta, se crea una AlertaStock(tipo='reponer') para
+    # que la administración sepa que hay que pedir reposición.
+    # Default 5: razonable para artículos chicos rotativos. El operador
+    # puede ajustarlo por artículo desde el admin o desde la grilla.
+    stock_minimo = models.PositiveIntegerField(
+        default=5,
+        help_text='Cuando el stock cae a este número o menos, se genera '
+                  'una alerta "Reponer" para la administración.',
+    )
     precio_minorista = models.DecimalField(max_digits=10, decimal_places=2,  null=True)
     precio_mayorista = models.DecimalField(max_digits=10, decimal_places=2, null=True)
     vencimiento = models.DateField(blank=True)

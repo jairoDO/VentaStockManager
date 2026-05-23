@@ -170,8 +170,50 @@ class ArticuloVenta(models.Model):
             if delta != 0:
                 self.articulo.stock = max(0, (self.articulo.stock or 0) - delta)
                 self.articulo.save(update_fields=['stock'])
+                # Crear alerta "Reponer" si el stock cae al/debajo del
+                # umbral mínimo del artículo Y la venta DESCUENTA (delta > 0).
+                # Anti-spam: solo si NO hay ya una alerta "reponer" sin
+                # revisar para este artículo. Si la hay, ya está en la
+                # bandeja del operador — no inflar con duplicados.
+                if delta > 0:
+                    self._crear_alerta_reponer_si_corresponde()
 
         super().save(*args, **kwargs)
+
+    def _crear_alerta_reponer_si_corresponde(self):
+        """
+        Crea AlertaStock(tipo='reponer') si:
+          - el articulo tiene stock_minimo > 0 (si es 0, el operador
+            desactivó la alerta para ese articulo)
+          - el stock del articulo es <= stock_minimo
+          - NO hay ya una alerta tipo='reponer' sin revisar para este articulo
+
+        Se llama solo desde save() después de descontar stock.
+        """
+        art = self.articulo
+        if (art.stock_minimo or 0) <= 0:
+            return  # Stock mínimo en 0 → operador desactivó alertas para este art.
+        if (art.stock or 0) > art.stock_minimo:
+            return  # Stock sigue por arriba del umbral, nada que hacer.
+
+        # Import local — AlertaStock está en el mismo módulo pero no
+        # estaba importado en el scope de la función arriba todavía.
+        existe = AlertaStock.objects.filter(
+            articulo=art,
+            tipo=AlertaStock.TIPO_REPONER,
+            revisada=False,
+        ).exists()
+        if existe:
+            return
+
+        AlertaStock.objects.create(
+            articulo=art,
+            tipo=AlertaStock.TIPO_REPONER,
+            venta=self.venta,
+            cantidad_pedida=0,
+            cantidad_faltante=0,
+            stock_disponible_al_momento=art.stock or 0,
+        )
 
     def get_precio_total(self):
         if self.articulo:
@@ -221,6 +263,24 @@ class AlertaStock(models.Model):
         "ajusté stock manualmente +20", "preguntar a Juan").
     """
 
+    # Dos tipos de alerta — comparten tabla porque tienen el mismo
+    # workflow (revisar/marcar como atendida) y el operador las trata
+    # como una sola bandeja de entrada en el admin.
+    TIPO_INSUFICIENTE = 'insuficiente'
+    TIPO_REPONER = 'reponer'
+    TIPO_CHOICES = [
+        (TIPO_INSUFICIENTE, 'Stock insuficiente al vender'),
+        (TIPO_REPONER, 'Stock bajo umbral (reponer)'),
+    ]
+
+    tipo = models.CharField(
+        max_length=20,
+        choices=TIPO_CHOICES,
+        default=TIPO_INSUFICIENTE,
+        help_text='"insuficiente": se vendió más de lo que había. '
+                  '"reponer": el stock cayó al/debajo del stock_minimo del articulo.',
+    )
+
     venta = models.ForeignKey(
         'Venta',
         related_name='alertas_stock',
@@ -233,14 +293,20 @@ class AlertaStock(models.Model):
         related_name='alertas_stock',
         on_delete=models.PROTECT,
     )
+    # Para alertas tipo 'reponer', `cantidad_pedida` y `cantidad_faltante`
+    # pueden ser 0 — no hubo faltante, solo el stock bajó del umbral.
     cantidad_pedida = models.PositiveIntegerField(
-        help_text='Cuántas unidades pidió el operador en la venta.',
+        default=0,
+        help_text='Cuántas unidades pidió el operador en la venta. '
+                  '0 para alertas tipo "reponer".',
     )
     stock_disponible_al_momento = models.IntegerField(
         help_text='Stock que había justo antes de la venta. Puede ser 0.',
     )
     cantidad_faltante = models.PositiveIntegerField(
-        help_text='cantidad_pedida − stock_disponible_al_momento. > 0 por definición.',
+        default=0,
+        help_text='cantidad_pedida − stock_disponible_al_momento para "insuficiente". '
+                  '0 para "reponer" (no hubo faltante, solo se cruzó el umbral).',
     )
     creado_por = models.ForeignKey(
         'auth.User',

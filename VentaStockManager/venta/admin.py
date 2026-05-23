@@ -399,6 +399,7 @@ class AlertaStockAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     icon_name = 'notification_important'
     list_display = (
         'created_at',
+        'tipo_badge',
         'articulo_nombre',
         'cantidad_pedida',
         'cantidad_faltante',
@@ -409,13 +410,27 @@ class AlertaStockAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     )
     # Por default mostramos solo las sin revisar. El operador puede
     # cambiar al filter "Sí" para ver las revisadas o "Todas".
-    list_filter = ('revisada', 'created_at', 'articulo__categoria')
+    list_filter = ('revisada', 'tipo', 'created_at', 'articulo__categoria')
     search_fields = ('articulo__nombre', 'articulo__codigo_interno', 'notas')
     readonly_fields = (
-        'venta', 'articulo', 'cantidad_pedida', 'stock_disponible_al_momento',
+        'tipo', 'venta', 'articulo', 'cantidad_pedida', 'stock_disponible_al_momento',
         'cantidad_faltante', 'creado_por', 'created_at',
         'revisada_at', 'revisada_por',
     )
+
+    def tipo_badge(self, obj):
+        from django.utils.html import format_html
+        if obj.tipo == 'reponer':
+            return format_html(
+                '<span style="background:#F59E0B;color:white;padding:2px 8px;'
+                'border-radius:8px;font-size:11px;font-weight:600;">REPONER</span>'
+            )
+        return format_html(
+            '<span style="background:#EF4444;color:white;padding:2px 8px;'
+            'border-radius:8px;font-size:11px;font-weight:600;">INSUFIC.</span>'
+        )
+    tipo_badge.short_description = 'Tipo'
+    tipo_badge.admin_order_field = 'tipo'
     fields = (
         ('articulo', 'venta'),
         ('cantidad_pedida', 'stock_disponible_al_momento', 'cantidad_faltante'),
