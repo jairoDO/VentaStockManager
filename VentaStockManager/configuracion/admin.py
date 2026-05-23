@@ -49,6 +49,8 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
         'link_panel_whatsapp',
         'recordatorios_saldo_ultima_corrida_at',
         'recordatorios_saldo_preview',
+        'auditlog_ultima_purga_at',
+        'auditlog_ultima_purga_borrados',
     )
     fieldsets = (
         ('Retención de ventas', {
@@ -128,6 +130,27 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
                 '<b>Preview</b>: muestra cuántos clientes serían contactados '
                 '<i>ahora mismo</i> con la config actual. Es el chequeo más '
                 'rápido para validar antes de prender el master switch.'
+            ),
+        }),
+        ('Purga de auditoría', {
+            'fields': (
+                'auditlog_purge_habilitado',
+                'auditlog_retencion_dias',
+                'auditlog_ultima_purga_at',
+                'auditlog_ultima_purga_borrados',
+            ),
+            'description': (
+                'django-auditlog guarda 1 registro por cada cambio en los '
+                'modelos auditados (ventas, clientes, artículos, etc). '
+                'Con el tiempo la tabla crece y degrada queries — esta '
+                'task corre <b>semanalmente</b> y borra los registros '
+                'más viejos que la retención configurada.<br><br>'
+                '<b>Default 180 días</b> (6 meses). Suficiente para '
+                'auditar incidentes razonables sin guardar historial '
+                'infinito. Si necesitás más para atrás, subilo. Si la '
+                'tabla crece muy rápido (kioskos muy activos), bajalo. '
+                'Apagar el master switch desactiva la purga (la tabla '
+                'crecerá sin límite — solo recomendado en debug).'
             ),
         }),
         ('Estado', {

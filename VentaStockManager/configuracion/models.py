@@ -193,6 +193,47 @@ class ConfiguracionGeneral(models.Model):
         ),
     )
 
+    # ------------------------------------------------------------------
+    # Purga de audit log (django-auditlog)
+    # ------------------------------------------------------------------
+    # django-auditlog crea una fila en LogEntry por CADA create/update/
+    # delete de los modelos auditados. Con el tiempo eso infla la tabla
+    # `auditlog_logentry` y degrada queries. En kioskos con cientos de
+    # ventas por mes, puede llegar a millones de filas en 1-2 años.
+    #
+    # La task `purgar_auditlog_antiguos` corre periódicamente y borra
+    # los registros más viejos que `auditlog_retencion_dias` días.
+    # Default 180 (6 meses) — suficiente para auditar incidentes
+    # razonables sin guardar historia infinita.
+    auditlog_retencion_dias = models.PositiveIntegerField(
+        default=180,
+        help_text=(
+            'Cantidad de días que se mantienen los registros de auditoría '
+            '(historial de cambios) antes de borrarlos. Default: 180 (6 meses). '
+            'Subilo si necesitás auditar más para atrás; bajalo si la tabla '
+            'crece muy rápido y querés ahorrar espacio.'
+        ),
+    )
+    auditlog_purge_habilitado = models.BooleanField(
+        default=True,
+        help_text=(
+            'Si está prendido, la task de purga corre periódicamente y '
+            'borra registros viejos de auditoría. Apagalo solo si querés '
+            'guardar el historial completo (consume espacio en disco).'
+        ),
+    )
+    auditlog_ultima_purga_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text='Cuándo corrió por última vez la task de purga (read-only).',
+    )
+    auditlog_ultima_purga_borrados = models.PositiveIntegerField(
+        default=0,
+        editable=False,
+        help_text='Cuántos registros borró la última corrida (read-only).',
+    )
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
