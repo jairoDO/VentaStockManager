@@ -52,6 +52,30 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 
+# ---------------------------------------------------------------------------
+# Sesiones: hacerlas lo más resilientes posible para el operador del kiosko
+# ---------------------------------------------------------------------------
+# Default de Django: la cookie de sesión expira en 2 semanas DESDE EL LOGIN,
+# no se renueva con cada request. Para el operador que pasa toda la jornada
+# en el admin, eso significa que cada 2 semanas se desloguea sin razón.
+#
+# Con SESSION_SAVE_EVERY_REQUEST=True, la expire_date de la sesión se
+# RENUEVA con cada request. Mientras esté activo, no se desloguea. Solo
+# expira si no hace nada por 2 semanas seguidas.
+#
+# Trade-off: 1 UPDATE a django_session por cada request del operador
+# logueado. Mínimo overhead — el row tiene índice por session_key.
+SESSION_SAVE_EVERY_REQUEST = True
+
+# 30 días — más largo que el default de 2 semanas. Para un kiosko que se
+# usa todos los días, 1 logout cada 30 días es más que razonable.
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 30  # 30 días en segundos
+
+# Cerrar el browser NO mata la sesión. Algunos sistemas lo activan por
+# seguridad, pero para un usuario único en una compu del local del cliente
+# es contraproducente — re-loguearse cada mañana es molesto.
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
 
 # ---------------------------------------------------------------------------
 # Apps + middleware
