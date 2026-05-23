@@ -1,12 +1,84 @@
 from decimal import Decimal
 
+from django import forms
 from django.contrib import admin, messages
+from django.core.exceptions import ValidationError
 from django.db.models import Sum, Subquery, OuterRef, Value, Count
 from django.db.models.functions import Coalesce
 from django.urls import reverse
 from django.utils.html import format_html
 
 from cliente.models import Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente
+
+
+class RegistrarPagoForm(forms.ModelForm):
+    """
+    Form explícito para "Registrar pago" / "Registrar saldo a favor".
+
+    Antes intentábamos modificar labels/help_text en `get_form()` del
+    ModelAdmin, pero por alguna interacción con material-admin esos
+    overrides no se aplicaban en el render. Definir un ModelForm con
+    los campos hardcoded es 100% confiable.
+
+    El "modo" (pago vs saldo a favor) se setea con un método
+    `set_modo()` que el admin llama desde `get_form()`. Cambia labels
+    y help_text en runtime.
+    """
+
+    class Meta:
+        model = MovimientoCuenta
+        fields = ('cuenta', 'monto', 'descripcion')
+        # Widgets explícitos con clases CSS controladas. Sin esto el
+        # form usa el widget default de material-admin que es invisible
+        # hasta clickear.
+        widgets = {
+            'monto': forms.NumberInput(attrs={
+                'class': 'registrar-pago-input',
+                'placeholder': 'Ej. 5000',
+                'step': '0.01',
+                'min': '0.01',
+                'autofocus': 'autofocus',
+            }),
+            'descripcion': forms.Textarea(attrs={
+                'class': 'registrar-pago-input',
+                'rows': 2,
+                'placeholder': 'Ej. Pago en efectivo del 22/05',
+            }),
+        }
+        labels = {
+            'cuenta': 'Cliente',
+            'monto': 'Monto pagado',
+            'descripcion': 'Nota (opcional)',
+        }
+        help_texts = {
+            'cuenta': 'Cliente al que se le acredita el pago.',
+            'monto': 'Cuánto pagó el cliente. Ingresá positivo (ej. 5000).',
+            'descripcion': 'Ej. "Pago en efectivo del 22/05" o "Transferencia BBVA". Para referencia futura.',
+        }
+
+    def set_modo_saldo(self):
+        """
+        Cuando viene `?modo=saldo` en GET, cambiamos los textos para
+        guiar al operador hacia "saldo a favor" (cliente adelantó plata
+        sin tener deuda) en lugar de "pago" (cancelar deuda).
+        """
+        self.fields['monto'].label = 'Monto adelantado'
+        self.fields['monto'].help_text = (
+            'Cuánto trae el cliente como saldo a favor. '
+            'Ej. 3000 (queda como crédito para próximas compras).'
+        )
+        self.fields['descripcion'].help_text = (
+            'Ej. "Anticipo del 22/05" o "Pago previo lista X".'
+        )
+
+    def clean_monto(self):
+        """Rechazar monto <= 0 con mensaje claro."""
+        monto = self.cleaned_data.get('monto')
+        if monto is None or monto <= 0:
+            raise ValidationError(
+                'El monto del pago tiene que ser mayor a 0.'
+            )
+        return monto
 
 
 class ClienteAdmin(admin.ModelAdmin):
@@ -378,14 +450,12 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
         return False
 
     # ---------- Add form simplificado ----------
-    # Cuando el operador clickea "Registrar pago" o "Registrar saldo a
-    # favor", le mostramos un form mínimo: cliente, monto y nota. NO le
-    # pedimos elegir tipo (lo ponemos PAGO automáticamente).
-    #
-    # `raw_id_fields` en vez de `autocomplete_fields`: con autocomplete,
-    # material-admin renderiza un widget con styling raro donde el input
-    # queda casi invisible hasta clickearlo. raw_id_fields da un input
-    # de texto plano + ícono de lupa para buscar, que se ve MUY claro.
+    # Usamos un ModelForm EXPLÍCITO (RegistrarPagoForm) en lugar del
+    # form default + get_form. El form default + modificar
+    # form.base_fields[...] en get_form() no surtía efecto en producción
+    # por alguna interacción con material-admin. Definir un ModelForm
+    # con `labels`, `help_texts` y `widgets` en su Meta es 100% confiable.
+    form = RegistrarPagoForm
     fields = ('cuenta', 'monto', 'descripcion')  # solo en add
     raw_id_fields = ('cuenta',)
 
@@ -402,51 +472,30 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
 
     def get_form(self, request, obj=None, **kwargs):
         """
-        En el add, ajustamos labels y help_text para que sea claro QUÉ
-        se está cargando. Soportamos dos "modos" via query param:
+        Soportamos dos "modos" via query param:
 
           /add/?cuenta=N             → modo PAGO (default)
           /add/?cuenta=N&modo=saldo  → modo SALDO A FAVOR
 
         En ambos casos guardamos un MovimientoCuenta de tipo PAGO con
-        monto positivo. La diferencia es solo conceptual/UX:
-          - PAGO: cliente pagó una deuda existente
-          - SALDO A FAVOR: cliente adelantó plata sin deber
+        monto positivo. La diferencia es solo conceptual/UX — el operador
+        piensa distinto y el form lo guía con palabras claras.
 
-        Hacia el modelo es lo mismo, pero el operador piensa distinto
-        y el form lo guía con palabras claras.
+        Los labels/help_texts BASE (modo pago) vienen del Meta de
+        `RegistrarPagoForm`. Cuando es modo=saldo, llamamos al método
+        `set_modo_saldo()` del form para overridear esos textos.
         """
-        form = super().get_form(request, obj, **kwargs)
-        if obj is None:  # estamos en /add/
-            modo = request.GET.get('modo', 'pago')
-            es_saldo = modo == 'saldo'
-
-            if 'monto' in form.base_fields:
-                if es_saldo:
-                    form.base_fields['monto'].label = 'Monto adelantado'
-                    form.base_fields['monto'].help_text = (
-                        'Cuánto trae el cliente como saldo a favor. '
-                        'Ej. 3000 (queda como crédito para próximas compras).'
-                    )
-                else:
-                    form.base_fields['monto'].label = 'Monto pagado'
-                    form.base_fields['monto'].help_text = (
-                        'Cuánto pagó el cliente. Ingresá positivo (ej. 5000).'
-                    )
-            if 'descripcion' in form.base_fields:
-                form.base_fields['descripcion'].label = 'Nota (opcional)'
-                if es_saldo:
-                    form.base_fields['descripcion'].help_text = (
-                        'Ej. "Anticipo del 22/05" o "Pago previo lista X".'
-                    )
-                else:
-                    form.base_fields['descripcion'].help_text = (
-                        'Ej. "Pago en efectivo del 22/05" o "Transferencia '
-                        'BBVA". Para tu referencia futura.'
-                    )
-            if 'cuenta' in form.base_fields:
-                form.base_fields['cuenta'].label = 'Cliente'
-        return form
+        FormClass = super().get_form(request, obj, **kwargs)
+        if obj is None and request.GET.get('modo') == 'saldo':
+            # Subclase on-the-fly que invoca set_modo_saldo en __init__.
+            # Más simple que pasarlo como param y mantiene el form
+            # contenido en si mismo.
+            class FormSaldoModo(FormClass):
+                def __init__(self, *args, **kw):
+                    super().__init__(*args, **kw)
+                    self.set_modo_saldo()
+            return FormSaldoModo
+        return FormClass
 
     def save_model(self, request, obj, form, change):
         """
@@ -454,31 +503,14 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
         pedimos al usuario:
           - tipo = PAGO (siempre, este admin es solo para pagos)
           - creado_por = el user actual (para auditoría)
-          - monto = forzar positivo (un pago siempre suma al saldo
-            del cliente, no resta)
 
-        Rechaza monto = 0 (no tiene sentido un movimiento de cero,
-        solo ensucia el extracto). help_text del form ya dice
-        "ingresá positivo" pero como UI nunca alcanza, validamos acá.
+        La validación de monto > 0 ya la hace `RegistrarPagoForm.clean_monto`,
+        así que acá solo confiamos en que es positivo.
         """
         from cliente.models import MovimientoCuenta
-        from decimal import Decimal
-        from django.core.exceptions import ValidationError
         if not change:
-            # Validar monto > 0 ANTES de tocar nada. Si el operador
-            # deja en blanco o pone 0, abortar con mensaje claro.
-            if obj.monto is None or obj.monto == Decimal('0'):
-                raise ValidationError(
-                    'El monto del pago debe ser mayor a 0. '
-                    'Si querés anular un pago previo, cargá un movimiento '
-                    'de ajuste desde el admin clásico.'
-                )
             obj.tipo = MovimientoCuenta.TIPO_PAGO
             obj.creado_por = request.user
-            # Forzar monto positivo: el operador podría tipear "5000"
-            # o "-5000" por error. Para un PAGO, siempre suma.
-            if obj.monto < 0:
-                obj.monto = abs(obj.monto)
         super().save_model(request, obj, form, change)
 
     def fecha_compacta(self, obj):
