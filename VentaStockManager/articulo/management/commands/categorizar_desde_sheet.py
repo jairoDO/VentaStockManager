@@ -56,7 +56,22 @@ def _clean_categoria(s: str) -> str:
 
 
 def _login_sheets():
-    """Cliente Sheets API con credenciales de service account."""
+    """
+    Cliente Sheets API con credenciales de service account.
+
+    Lee el JSON manualmente y normaliza caracteres de control antes
+    de parsearlo, porque Render guarda los Secret Files con line endings
+    CRLF (Windows) y a veces BOM, lo que rompe el parser JSON estricto
+    de Python ("Invalid control character at: line N").
+
+    Pipeline:
+      1. Leer archivo en utf-8
+      2. Quitar BOM (\\ufeff) si lo trae
+      3. Normalizar CRLF → LF
+      4. json.loads + from_service_account_info
+    """
+    import json
+    import os
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
@@ -66,9 +81,43 @@ def _login_sheets():
             'GOOGLE_CREDENTIALS_PATH no está seteado en settings. '
             'No se puede conectar al Google Sheet.'
         )
-    credentials = service_account.Credentials.from_service_account_file(
-        creds_path, scopes=SCOPES,
-    )
+    if not os.path.exists(creds_path):
+        raise CommandError(
+            f'GOOGLE_CREDENTIALS_PATH apunta a un archivo que no existe: {creds_path}. '
+            f'En Render asegurate de que el Secret File está montado en esa ruta.'
+        )
+
+    try:
+        with open(creds_path, 'r', encoding='utf-8') as f:
+            raw = f.read()
+    except Exception as e:
+        raise CommandError(f'No se pudo leer el archivo de credenciales: {e}')
+
+    # Saneamiento: BOM al principio + CRLF → LF.
+    if raw.startswith('﻿'):
+        raw = raw.lstrip('﻿')
+    raw = raw.replace('\r\n', '\n').replace('\r', '\n')
+
+    try:
+        info = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise CommandError(
+            f'El JSON de credenciales está corrupto: {e}. '
+            f'Re-subí el Secret File en Render asegurándote de que '
+            f'sea el JSON original sin modificaciones (en Render Dashboard '
+            f'→ Environment → Secret Files, click en el archivo y pega '
+            f'el JSON crudo, no lo edites en el navegador).'
+        )
+
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            info, scopes=SCOPES,
+        )
+    except Exception as e:
+        raise CommandError(
+            f'Credenciales inválidas (JSON parseable pero estructura mal): {e}'
+        )
+
     return build('sheets', 'v4', credentials=credentials)
 
 
