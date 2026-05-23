@@ -389,6 +389,17 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
     fields = ('cuenta', 'monto', 'descripcion')  # solo en add
     raw_id_fields = ('cuenta',)
 
+    class Media:
+        # CSS específico que fuerza inputs visibles en este form. Sin
+        # esto, material-admin renderiza los inputs con borde transparente
+        # y floating labels → en el form de "Registrar pago" el operador
+        # ve solo los labels ("Cuenta:", "Monto:") sin nada donde escribir.
+        # El CSS arregla bordes, padding, focus state y oculta el floating
+        # label que confunde.
+        css = {
+            'all': ('admin/cliente/movimiento_form.css',),
+        }
+
     def get_form(self, request, obj=None, **kwargs):
         """
         En el add, ajustamos labels y help_text para que sea claro QUÉ
