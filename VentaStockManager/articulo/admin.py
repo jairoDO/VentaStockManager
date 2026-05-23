@@ -12,12 +12,15 @@ from articulo.models import (
     Articulo, Categoria, ListaPrecios, ListaPreciosItem,
     ReglaCategoria, SolicitudListaCliente,
 )
+from cliente.admin_permissions import (
+    SuperuserOnlyAdminMixin, ArticulosReadOnlyForNonSuperuser,
+)
 from django_q.tasks import async_task
 from .task import actualizar_precios_articulos_desde_drive
 from .widgets import ListaPalabrasWidget
 import decimal
 
-class ArticuloAdmin(admin.ModelAdmin):
+class ArticuloAdmin(ArticulosReadOnlyForNonSuperuser, admin.ModelAdmin):
 
     # Redirigimos el changelist clásico (/admin/articulo/articulo/) a la
     # grilla custom — es la pantalla canónica para edición masiva.
@@ -388,7 +391,7 @@ class ListaPreciosItemInline(admin.TabularInline):
     ordering = ('orden', 'articulo__nombre')
 
 
-class ListaPreciosAdmin(admin.ModelAdmin):
+class ListaPreciosAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin de listas de precios. Permite crear/editar a mano una lista
     eligiendo cliente, descuento opcional y artículos uno por uno via
@@ -547,7 +550,7 @@ class ListaPreciosAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
 
-class DifusionListaPreciosEnvioAdmin(admin.ModelAdmin):
+class DifusionListaPreciosEnvioAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     """
     Vista persistente del histórico de envíos de difusión.
 
@@ -746,7 +749,7 @@ class DifusionListaPreciosEnvioAdmin(admin.ModelAdmin):
         )
 
 
-class SolicitudListaClienteAdmin(admin.ModelAdmin):
+class SolicitudListaClienteAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     """
     Bandeja de "clientes que pidieron la lista por WhatsApp pero no
     tienen una asignada". Las crea `wa_campania.auto_responder` cuando

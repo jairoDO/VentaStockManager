@@ -10,6 +10,7 @@ from django.http import HttpResponseRedirect
 from django.utils import timezone
 from venta.views import generar_pdf_pedidos
 from django.contrib import messages
+from cliente.admin_permissions import SuperuserOnlyAdminMixin
 from .forms import ArticuloVentaInlineFormSet
 from venta.forms import ArticuloVentaForm
 import logging
@@ -388,7 +389,7 @@ class PedidoAdmin(admin.ModelAdmin):
 from venta.models import AlertaStock
 
 
-class AlertaStockAdmin(admin.ModelAdmin):
+class AlertaStockAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     """
     Bandeja de entrada de alertas: cada vez que una venta se cargó
     con stock insuficiente, queda acá. La administración entra,

@@ -53,14 +53,18 @@ el link al final.
             💬 WhatsApp
         </a>
     {% endif %}
-    {% if alertas_stock_pendientes %}
+    {# Los badges de alertas/solicitudes apuntan a admins restringidos a
+       superuser. Para vendedores no tiene sentido mostrar el link (el
+       admin tiraría 403). Si necesitan ver esa info, el superuser se
+       las acerca. #}
+    {% if user.is_superuser and alertas_stock_pendientes %}
         <a href="/admin/venta/alertastock/?revisada__exact=0"
            class="badge-alertas-stock"
            title="Hay ventas que se cargaron con stock insuficiente. Click para revisarlas.">
             ⚠ {{ alertas_stock_pendientes }} alerta{{ alertas_stock_pendientes|pluralize }} de stock
         </a>
     {% endif %}
-    {% if solicitudes_lista_pendientes %}
+    {% if user.is_superuser and solicitudes_lista_pendientes %}
         <a href="/admin/articulo/solicitudlistacliente/?resuelta__exact=0"
            class="badge-solicitudes-lista"
            title="Clientes que pidieron la lista por WhatsApp pero no tienen una asignada. Click para armárselas.">

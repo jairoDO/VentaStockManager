@@ -232,15 +232,42 @@ admin_site.register(ConfiguracionGeneral, ConfiguracionGeneralAdmin)
 # (tasks fallidas) en el admin_site custom. Sin esto, las URLs
 # `/admin/django_q/...` dan 404 porque django-q se auto-registra
 # en el admin default de Django, no en nuestro MaterialAdminSite.
+#
+# Restringido a superuser via subclasses con SuperuserOnlyAdminMixin:
+# los vendedores no necesitan ver schedules ni tasks internos.
+from cliente.admin_permissions import SuperuserOnlyAdminMixin
 from django_q.models import Schedule, Success, Failure
 from django_q.admin import ScheduleAdmin, TaskAdmin, FailAdmin
-admin_site.register(Schedule, ScheduleAdmin)
-admin_site.register(Success, TaskAdmin)
-admin_site.register(Failure, FailAdmin)
+
+
+class _ScheduleAdminSuperuser(SuperuserOnlyAdminMixin, ScheduleAdmin):
+    pass
+
+
+class _TaskAdminSuperuser(SuperuserOnlyAdminMixin, TaskAdmin):
+    pass
+
+
+class _FailAdminSuperuser(SuperuserOnlyAdminMixin, FailAdmin):
+    pass
+
+
+admin_site.register(Schedule, _ScheduleAdminSuperuser)
+admin_site.register(Success, _TaskAdminSuperuser)
+admin_site.register(Failure, _FailAdminSuperuser)
 
 # django-auditlog registra LogEntry en el admin default. Como
 # nosotros usamos `admin_site` custom (MaterialAdminSite), hay
 # que re-registrarlo acá para que aparezca en /admin/.
+#
+# Restringido a superuser — los registros de cambios son sensibles
+# y los vendedores no necesitan verlos.
 from auditlog.models import LogEntry
 from auditlog.admin import LogEntryAdmin
-admin_site.register(LogEntry, LogEntryAdmin)
+
+
+class _LogEntryAdminSuperuser(SuperuserOnlyAdminMixin, LogEntryAdmin):
+    pass
+
+
+admin_site.register(LogEntry, _LogEntryAdminSuperuser)

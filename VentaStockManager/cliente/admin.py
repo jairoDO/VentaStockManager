@@ -9,6 +9,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 
 from cliente.models import Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente
+from cliente.admin_permissions import SuperuserOnlyAdminMixin
 
 
 class _RegistrarMovimientoBase(forms.ModelForm):
@@ -314,7 +315,7 @@ class MovimientoCuentaInline(admin.TabularInline):
     venta_link.short_description = 'Venta'
 
 
-class CuentaClienteAdmin(admin.ModelAdmin):
+class CuentaClienteAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin de cuentas corrientes. Lista todas las cuentas con saldo
     actual, y al entrar muestra los movimientos como lista read-only.
@@ -446,7 +447,7 @@ class _ClienteListFilter(admin.SimpleListFilter):
         return queryset
 
 
-class MovimientoCuentaAdmin(admin.ModelAdmin):
+class MovimientoCuentaAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     """
     Listado plano de movimientos — SOLO LECTURA desde el admin.
 
@@ -624,7 +625,7 @@ class MovimientoCuentaAdmin(admin.ModelAdmin):
     venta_link.admin_order_field = 'venta'
 
 
-class PrecioClienteAdmin(admin.ModelAdmin):
+class PrecioClienteAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     """
     Lista plana de precios pactados. Útil para:
       - Ver todos los acuerdos vigentes
