@@ -196,11 +196,11 @@ class MyAdminSite(MaterialAdminSite):
                             'add': False, 'change': False,
                             'delete': False, 'view': True,
                         },
-                        # Material admin lee el icono del campo `model`,
-                        # NO disponible para virtuales. Lo dejamos como
-                        # un dict con `_meta.app_label` para que el
-                        # template no rompa. Si la card sale sin icono
-                        # nice, no es bloqueante.
+                        # Material admin lee `model.icon` en index.html
+                        # (con default 'settings'). Pasamos un Material
+                        # Icon válido para que la card no salga con la
+                        # rueda dentada genérica.
+                        'icon': 'qr_code_2',
                         'view_only': True,
                     })
                     break
@@ -225,6 +225,9 @@ class MyAdminSite(MaterialAdminSite):
                             'add': True, 'change': True,
                             'delete': False, 'view': True,
                         },
+                        # Material Icon: "group" para que se vea con un
+                        # icono de gente y no la rueda dentada genérica.
+                        'icon': 'group',
                         'view_only': True,
                     })
                     break

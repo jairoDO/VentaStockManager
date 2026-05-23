@@ -52,14 +52,19 @@ def lista_usuarios(request: HttpRequest) -> HttpResponse:
         User.objects
         .filter(is_staff=True)
         .order_by('-is_superuser', 'username')  # superusers primero
-        .prefetch_related('vendedor_set')
+        # Vendedor.usuario es OneToOneField → reverse usable con select_related.
+        # El accessor en el User es `user.vendedor` (singular, no _set).
+        .select_related('vendedor')
     )
     usuarios = []
     for u in usuarios_qs:
-        # vendedor_set es el related_name implícito de Vendedor.usuario.
-        # Si no hay related, la relación es one-to-one ForeignKey pero
-        # como NO es OneToOneField, puede haber varios — tomamos el primero.
-        vendedor_asociado = u.vendedor_set.first() if hasattr(u, 'vendedor_set') else None
+        # OneToOne reverse: lanza DoesNotExist si no hay Vendedor asociado.
+        # Cubrimos ambos casos: el de superuser sin Vendedor y el muy raro
+        # de un staff que se creó por fuera de esta pantalla.
+        try:
+            vendedor_asociado = u.vendedor
+        except Vendedor.DoesNotExist:
+            vendedor_asociado = None
         usuarios.append({
             'id': u.id,
             'username': u.username,
