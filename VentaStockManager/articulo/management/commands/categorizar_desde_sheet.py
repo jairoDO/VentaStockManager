@@ -88,35 +88,58 @@ def _login_sheets():
         )
 
     try:
-        with open(creds_path, 'r', encoding='utf-8') as f:
-            raw = f.read()
+        # Leer como BYTES primero — así vemos exactamente qué hay sin que
+        # Python decodifique caracteres en silencio. Después decodificamos
+        # con errors='replace' para que cualquier byte raro se vea como
+        # un placeholder en lugar de explotar.
+        with open(creds_path, 'rb') as f:
+            raw_bytes = f.read()
     except Exception as e:
         raise CommandError(f'No se pudo leer el archivo de credenciales: {e}')
 
-    # Saneamiento: BOM al principio + CRLF → LF.
-    if raw.startswith('﻿'):
-        raw = raw.lstrip('﻿')
-    raw = raw.replace('\r\n', '\n').replace('\r', '\n')
+    # Strip de BOM UTF-8 / UTF-16 LE/BE.
+    for bom in (b'\xef\xbb\xbf', b'\xff\xfe', b'\xfe\xff'):
+        if raw_bytes.startswith(bom):
+            raw_bytes = raw_bytes[len(bom):]
+            break
 
-    # Parser tolerante: strict=False permite caracteres de control dentro
-    # de strings JSON (típicamente \t, \v u otros que aparecen cuando el
-    # archivo pasa por un editor en el browser). Esto es exactamente para
-    # lo que existe la flag — perfectamente safe para credenciales SA.
+    raw = raw_bytes.decode('utf-8', errors='replace')
+
+    # Normalizar todo line ending a \n y stripear chars zero-width Unicode
+    # comunes que el browser de Render a veces inyecta al pegar (zero-width
+    # space, zero-width joiner, etc.).
+    raw = raw.replace('\r\n', '\n').replace('\r', '\n')
+    for zw in ('​', '‌', '‍', '⁠', '﻿'):
+        raw = raw.replace(zw, '')
+
+    # Parser tolerante: strict=False permite control chars dentro de strings.
     try:
         info = json.loads(raw, strict=False)
     except json.JSONDecodeError:
         # Último recurso: strip de TODOS los control chars 0x00-0x1F
-        # excepto \t \n \r (que son whitespace JSON válido).
+        # excepto \t \n \r (whitespace JSON-válido). Después de esto,
+        # cualquier control char "loose" entre tokens también desaparece.
         import re
         cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
         try:
             info = json.loads(cleaned, strict=False)
         except json.JSONDecodeError as e:
+            # Diagnóstico extra: imprimir un dump hex de los primeros 50
+            # bytes del archivo para que veamos qué hay.
+            primeros = raw_bytes[:60]
+            hex_dump = ' '.join(f'{b:02x}' for b in primeros)
+            preview = primeros.decode('utf-8', errors='replace')
             raise CommandError(
                 f'El JSON de credenciales está corrupto incluso después '
-                f'de limpiar control chars: {e}. Re-bajá las credenciales '
-                f'de Google Cloud Console y subilas de nuevo al Secret File '
-                f'de Render SIN editarlas en el browser.'
+                f'de cleanup agresivo: {e}.\n\n'
+                f'Primeros 60 bytes del archivo (hex):\n  {hex_dump}\n\n'
+                f'Como texto (errores reemplazados):\n  {preview!r}\n\n'
+                f'Acción: re-bajá el JSON original de Google Cloud Console '
+                f'(Service Accounts → Keys → Add key → JSON) y en Render '
+                f'Dashboard → Environment → Secret Files, BORRÁ el archivo '
+                f'actual y subilo de nuevo desde el botón "Upload" (NO '
+                f'pegues el contenido en el textarea del browser, que es '
+                f'lo que rompe el formato).'
             )
 
     try:
