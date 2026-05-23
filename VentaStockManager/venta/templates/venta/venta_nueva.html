@@ -683,22 +683,26 @@
           const data = await r.json();
           this.cliente.saldo = data.saldo || '0';
           this.cliente.listas_activas = data.listas_activas || [];
-          // Auto-aplicar saldo a favor: si el cliente tiene saldo
-          // positivo, lo aplicamos por default — el operador puede
-          // destildarlo si no quiere usarlo. Antes era opt-in y se
-          // olvidaban de tildarlo, dejando el saldo "muerto".
-          if (Number(this.cliente.saldo) > 0) {
+          // Reset defensivo de ambos flags ANTES de auto-tildar el
+          // que corresponda. Caso real: el saldo del cliente cambió
+          // entre el primer fetch y este refresh (alguien le cargó
+          // un pago, etc.) — sin reset quedaba el flag del estado
+          // anterior pegado y el backend recibía datos inconsistentes.
+          this.aplicarSaldo = false;
+          this.saldoAAplicar = 0;
+          this.cobrarDeudaAnterior = false;
+          const saldoNum = Number(this.cliente.saldo) || 0;
+          if (saldoNum > 0) {
+            // Auto-aplicar saldo a favor. Default tildado para que
+            // no se olviden (era opt-in antes y el saldo quedaba muerto).
             this.aplicarSaldo = true;
             this.saldoAAplicar = Math.min(
-              Number(this.cliente.saldo),
-              this.totalFinal() || Number(this.cliente.saldo),
+              saldoNum,
+              this.totalFinal() || saldoNum,
             );
-          }
-          // Auto-tildar "cobrar deuda anterior" si el cliente DEBE.
-          // Mismo razonamiento: el operador veía la deuda y se
-          // olvidaba de tildar el checkbox, dejando la deuda viva.
-          // Default tildado; si no quiere cobrarla ahora, la destilda.
-          if (Number(this.cliente.saldo) < 0) {
+          } else if (saldoNum < 0) {
+            // Auto-tildar "cobrar deuda anterior". El operador puede
+            // destildarlo si no quiere cobrar la deuda ahora.
             this.cobrarDeudaAnterior = true;
           }
         } catch (e) {
