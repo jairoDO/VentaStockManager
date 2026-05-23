@@ -528,21 +528,33 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
       <p class="text-sm text-slate-700 mb-3">
         Vas a eliminar <strong x-text="seleccionados.size"></strong> artículo(s).
       </p>
-      <div class="bg-amber-50 border border-amber-300 rounded p-3 mb-4 text-xs text-amber-900">
-        ⚠ <strong>Cuidado:</strong> los artículos con ventas asociadas NO se pueden borrar
-        (Django los protege para preservar el historial). Si alguno falla, te avisamos
-        en el resumen y los demás se eliminan igual.
+      <div class="bg-amber-50 border border-amber-300 rounded p-3 mb-3 text-xs text-amber-900">
+        ⚠ Por default, los artículos con ventas asociadas NO se borran
+        (Django los protege para preservar el histórico). Si alguno falla,
+        te avisamos en el resumen y los demás se eliminan igual.
       </div>
+      {# Checkbox forzar — solo aparece si querés sobreescribir el PROTECT. #}
+      <label class="flex items-start gap-2 bg-red-50 border border-red-200 rounded p-3 mb-4 cursor-pointer">
+        <input type="checkbox" x-model="forzarEliminar"
+               class="mt-0.5 h-4 w-4 text-red-600 rounded border-red-300 focus:ring-red-500">
+        <span class="text-xs text-red-900">
+          <strong>Forzar eliminación</strong> (irreversible). También borra
+          el histórico asociado: líneas de ventas, alertas de stock, items de
+          listas de precios. Usar solo para limpiar duplicados o artículos
+          de prueba.
+        </span>
+      </label>
       <div class="flex justify-end gap-2">
-        <button type="button" @click="modalEliminarAbierto = false"
+        <button type="button" @click="modalEliminarAbierto = false; forzarEliminar = false"
                 :disabled="eliminando"
                 class="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50">
           Cancelar
         </button>
         <button type="button" @click="eliminarSeleccionados()"
                 :disabled="eliminando"
-                class="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50">
-          <span x-text="eliminando ? 'Eliminando...' : 'Sí, eliminar'"></span>
+                :class="forzarEliminar ? 'bg-red-700 hover:bg-red-800' : 'bg-red-600 hover:bg-red-700'"
+                class="px-6 py-2 rounded-lg text-white font-medium disabled:opacity-50">
+          <span x-text="eliminando ? 'Eliminando...' : (forzarEliminar ? 'Sí, FORZAR eliminación' : 'Sí, eliminar')"></span>
         </button>
       </div>
     </div>
@@ -623,6 +635,10 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
       // Estado del modal de eliminación + flag in-flight.
       modalEliminarAbierto: false,
       eliminando: false,
+      // Toggle "forzar": si está prendido el endpoint borra también el
+      // histórico (ArticuloVenta, AlertaStock, ListaPreciosItem) antes
+      // del delete del Articulo. Se resetea al cancelar / cerrar modal.
+      forzarEliminar: false,
       // `nuevos` es el array de filas placeholder para artículos a CREAR.
       // Vive separado de `cambios` porque el modelo es distinto:
       //   - `cambios`: dict {id_real: {campo: valor}} con updates.
@@ -820,7 +836,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
               'Content-Type': 'application/json',
               'X-CSRFToken': getCookie('csrftoken'),
             },
-            body: JSON.stringify({ ids }),
+            body: JSON.stringify({ ids, force: this.forzarEliminar }),
           });
           // Si CSRF falla u otro error de protocolo, mostramos info concreta.
           if (!r.ok) {
@@ -837,18 +853,35 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
             return;
           }
           const data = await r.json();
-          // Reporte: cuántos se borraron y cuáles fallaron.
-          const borrados = (data.borrados || []).length;
+          // Reporte: cuántos se borraron y cuáles fallaron. `borrados`
+          // ahora es lista de dicts {id, nombre, cascadas} (cascadas
+          // solo si vino force=true).
+          const borrados = data.borrados || [];
           const fallidos = data.fallidos || [];
-          let msg = `✓ ${borrados} artículo${borrados === 1 ? '' : 's'} eliminado${borrados === 1 ? '' : 's'}.`;
+          let msg = `✓ ${borrados.length} artículo${borrados.length === 1 ? '' : 's'} eliminado${borrados.length === 1 ? '' : 's'}.`;
+          if (data.forzado && borrados.length) {
+            // Resumen del histórico que se borró en cascada.
+            const totales = { lineas_venta: 0, alertas_stock: 0, lista_precios_items: 0 };
+            for (const b of borrados) {
+              for (const k of Object.keys(b.cascadas || {})) {
+                totales[k] = (totales[k] || 0) + b.cascadas[k];
+              }
+            }
+            const detalles = [];
+            if (totales.lineas_venta) detalles.push(`${totales.lineas_venta} líneas de venta`);
+            if (totales.alertas_stock) detalles.push(`${totales.alertas_stock} alertas de stock`);
+            if (totales.lista_precios_items) detalles.push(`${totales.lista_precios_items} items de listas`);
+            if (detalles.length) msg += ` (forzado: además se borraron ${detalles.join(', ')}).`;
+          }
           if (fallidos.length) {
             const nombres = fallidos.slice(0, 3).map(f => f.nombre).join(', ');
             const mas = fallidos.length > 3 ? ` (+${fallidos.length - 3} más)` : '';
-            msg += ` No se pudieron borrar ${fallidos.length}: ${nombres}${mas}. Tienen ventas asociadas — primero hay que archivar/borrar esas ventas.`;
+            msg += ` No se pudieron borrar ${fallidos.length}: ${nombres}${mas}. ${fallidos[0]?.razon || ''}`;
           }
           this.errores = [{ mensaje: msg }];
           this.modalEliminarAbierto = false;
           this.eliminando = false;
+          this.forzarEliminar = false;
           this.seleccionados = new Set();
           // Recargar el listado para que las filas borradas desaparezcan.
           await this.cargar();

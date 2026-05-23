@@ -639,7 +639,13 @@ def api_grilla_eliminar(request: HttpRequest) -> JsonResponse:
                      'Eliminá en tandas más chicas.',
         }, status=400)
 
-    borrados: list[int] = []
+    # Flag opcional: forzar eliminación borrando primero las referencias
+    # PROTECTed (ArticuloVenta, AlertaStock, ListaPreciosItem).
+    # Solo lo usa el operador cuando QUIERE eliminar un artículo que tiene
+    # histórico (típico en cleanup post-cutover con duplicados del dump).
+    force = bool(payload.get('force', False))
+
+    borrados: list[dict] = []
     fallidos: list[dict] = []
 
     # NO usamos `transaction.atomic` envolviendo todo: queremos que los
@@ -647,6 +653,14 @@ def api_grilla_eliminar(request: HttpRequest) -> JsonResponse:
     # ya es atómico per-row.
     qs = Articulo.objects.filter(id__in=ids)
     arts_by_id = {a.id: a for a in qs}
+
+    # Si force=True, importamos los modelos referenciantes para limpiar
+    # antes de cada delete. Import local para no agregar dependencia
+    # circular al cargar el módulo.
+    if force:
+        from venta.models import ArticuloVenta, AlertaStock
+        from articulo.models import ListaPreciosItem
+
     for aid in ids:
         art = arts_by_id.get(aid)
         if art is None:
@@ -656,15 +670,37 @@ def api_grilla_eliminar(request: HttpRequest) -> JsonResponse:
             })
             continue
         nombre = art.nombre  # capturamos antes del delete
+
         try:
+            cascadas = {}
+            if force:
+                # Borrar PROTECTed refs ANTES del delete del artículo.
+                # Estos counts van al reporte para que el operador sepa
+                # qué histórico se perdió.
+                n_av = ArticuloVenta.objects.filter(articulo=art).count()
+                if n_av:
+                    ArticuloVenta.objects.filter(articulo=art).delete()
+                    cascadas['lineas_venta'] = n_av
+                n_as = AlertaStock.objects.filter(articulo=art).count()
+                if n_as:
+                    AlertaStock.objects.filter(articulo=art).delete()
+                    cascadas['alertas_stock'] = n_as
+                n_lpi = ListaPreciosItem.objects.filter(articulo=art).count()
+                if n_lpi:
+                    ListaPreciosItem.objects.filter(articulo=art).delete()
+                    cascadas['lista_precios_items'] = n_lpi
             art.delete()
-            borrados.append(aid)
+            borrados.append({
+                'id': aid, 'nombre': nombre, 'cascadas': cascadas,
+            })
         except ProtectedError:
-            # FK PROTECT — el artículo tiene ArticuloVenta asociado.
-            # Django no lo deja borrar para preservar historial de ventas.
             fallidos.append({
                 'id': aid, 'nombre': nombre,
-                'razon': 'Tiene ventas asociadas (FK PROTECT).',
+                'razon': (
+                    'Tiene ventas/alertas/listas asociadas. Volvé a probar '
+                    'marcando "Forzar eliminación" para borrar también el '
+                    'histórico (irreversible).'
+                ),
             })
         except Exception as e:
             fallidos.append({
@@ -676,4 +712,5 @@ def api_grilla_eliminar(request: HttpRequest) -> JsonResponse:
         'ok': True,
         'borrados': borrados,
         'fallidos': fallidos,
+        'forzado': force,
     })
