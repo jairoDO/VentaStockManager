@@ -2,6 +2,7 @@ from django.urls import path
 from .views import mostrar_articulos, lista_precios
 from .views_grilla import (
     grilla_precios, api_grilla_listar, api_grilla_guardar, api_grilla_eliminar,
+    api_grilla_fusionar_duplicados,
 )
 from .views_reglas import api_reglas_preview, api_reglas_aplicar_ahora
 from .views_lista_precios import (
@@ -42,6 +43,9 @@ urlpatterns = [
     # @superuser_required en la view). Borra uno por uno y reporta
     # cuáles fallaron (los con ventas asociadas no se pueden borrar).
     path('articulos/api/grilla/eliminar/', api_grilla_eliminar, name='grilla_precios_api_eliminar'),
+    # Fusionar duplicados: reasigna histórico al otro articulo con mismo
+    # codigo y después borra el seleccionado. Útil para limpieza post-cutover.
+    path('articulos/api/grilla/fusionar/', api_grilla_fusionar_duplicados, name='grilla_precios_api_fusionar'),
 
     # Preview en vivo de qué artículos matchean una regla mientras el
     # operador escribe palabras clave en /admin/articulo/categoria/N/change/.

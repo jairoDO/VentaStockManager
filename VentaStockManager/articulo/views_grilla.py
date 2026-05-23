@@ -714,3 +714,138 @@ def api_grilla_eliminar(request: HttpRequest) -> JsonResponse:
         'fallidos': fallidos,
         'forzado': force,
     })
+
+
+@superuser_required
+@require_POST
+def api_grilla_fusionar_duplicados(request: HttpRequest) -> JsonResponse:
+    """
+    POST /articulos/api/grilla/fusionar/
+
+    Body JSON: {"ids": [1, 2, 3]}
+
+    Para cada artículo en `ids`:
+      1. Busca OTRO articulo con el MISMO `codigo` que NO esté en `ids`
+         (el "sobreviviente"). Si hay varios candidatos, el más viejo gana
+         (lowest id) — asume que el original es el que tiene más histórico.
+      2. Reasigna ArticuloVenta, AlertaStock, ListaPreciosItem del artículo
+         a borrar → al sobreviviente.
+      3. Borra el artículo (ya sin PROTECTed refs).
+
+    Si no hay sobreviviente (no hay duplicado, o todos los duplicados están
+    en la lista de borrar) → el artículo no se borra, se reporta como fallido.
+
+    Si el artículo no tiene `codigo` → fallido (no podemos matchear).
+
+    Response:
+      {
+        "ok": true,
+        "borrados": [{"id", "nombre", "survivor": {"id", "nombre"}, "reasignado": {...}}],
+        "fallidos": [{"id", "nombre", "razon"}]
+      }
+    """
+    try:
+        payload = json.loads(request.body or b'{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON inválido'}, status=400)
+
+    raw_ids = payload.get('ids') or []
+    ids: list[int] = []
+    for x in raw_ids:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+
+    if not ids:
+        return JsonResponse({'ok': True, 'borrados': [], 'fallidos': []})
+
+    if len(ids) > 500:
+        return JsonResponse({
+            'ok': False,
+            'error': 'Demasiados artículos en un solo request (max 500).',
+        }, status=400)
+
+    from venta.models import ArticuloVenta, AlertaStock
+    from articulo.models import ListaPreciosItem
+
+    borrados: list[dict] = []
+    fallidos: list[dict] = []
+
+    qs = Articulo.objects.filter(id__in=ids)
+    arts_by_id = {a.id: a for a in qs}
+
+    for aid in ids:
+        art = arts_by_id.get(aid)
+        if art is None:
+            fallidos.append({
+                'id': aid, 'nombre': '(no encontrado)',
+                'razon': 'No existe en la DB.',
+            })
+            continue
+
+        nombre = art.nombre
+        codigo = (art.codigo or '').strip()
+        if not codigo:
+            fallidos.append({
+                'id': aid, 'nombre': nombre,
+                'razon': 'El artículo no tiene código — no se puede buscar duplicado.',
+            })
+            continue
+
+        # Sobreviviente: otro art con mismo codigo, NO en la lista de
+        # borrados, más viejo primero.
+        survivor = (
+            Articulo.objects
+            .filter(codigo=codigo)
+            .exclude(pk=art.pk)
+            .exclude(pk__in=ids)
+            .order_by('pk')
+            .first()
+        )
+        if survivor is None:
+            fallidos.append({
+                'id': aid, 'nombre': nombre,
+                'razon': (
+                    f'No hay otro artículo con código "{codigo}" para fusionar. '
+                    f'Si querés borrarlo sin reasignar, usá "Forzar eliminación".'
+                ),
+            })
+            continue
+
+        try:
+            # Reasignar TODAS las refs PROTECTed al sobreviviente.
+            # `.update()` masivo es atómico y NO dispara signals — perfecto
+            # para esta operación de mantenimiento.
+            n_av = ArticuloVenta.objects.filter(articulo=art).update(articulo=survivor)
+            n_as = AlertaStock.objects.filter(articulo=art).update(articulo=survivor)
+            n_lpi = ListaPreciosItem.objects.filter(articulo=art).update(articulo=survivor)
+            art.delete()
+            borrados.append({
+                'id': aid, 'nombre': nombre,
+                'survivor': {'id': survivor.id, 'nombre': survivor.nombre},
+                'reasignado': {
+                    'lineas_venta': n_av,
+                    'alertas_stock': n_as,
+                    'lista_precios_items': n_lpi,
+                },
+            })
+        except ProtectedError:
+            fallidos.append({
+                'id': aid, 'nombre': nombre,
+                'razon': (
+                    'El artículo tiene refs PROTECTed que no son ArticuloVenta/'
+                    'AlertaStock/ListaPreciosItem. Reportá esto — falta cubrir un modelo.'
+                ),
+            })
+        except Exception as e:
+            fallidos.append({
+                'id': aid, 'nombre': nombre,
+                'razon': f'Error inesperado: {e}',
+            })
+
+    return JsonResponse({
+        'ok': True,
+        'borrados': borrados,
+        'fallidos': fallidos,
+    })

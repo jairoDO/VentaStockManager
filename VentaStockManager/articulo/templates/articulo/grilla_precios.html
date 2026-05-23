@@ -523,38 +523,72 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
   {# Regla del proyecto: NO usar confirm() nativo, modal Alpine. #}
   <div x-show="modalEliminarAbierto" x-cloak
        class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-    <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-5">
+    <div class="bg-white rounded-lg shadow-xl max-w-lg w-full p-5">
       <h3 class="font-bold text-lg mb-2 text-red-700">¿Eliminar artículos?</h3>
       <p class="text-sm text-slate-700 mb-3">
         Vas a eliminar <strong x-text="seleccionados.size"></strong> artículo(s).
       </p>
-      <div class="bg-amber-50 border border-amber-300 rounded p-3 mb-3 text-xs text-amber-900">
-        ⚠ Por default, los artículos con ventas asociadas NO se borran
-        (Django los protege para preservar el histórico). Si alguno falla,
-        te avisamos en el resumen y los demás se eliminan igual.
+
+      <p class="text-sm font-semibold text-slate-700 mb-2">Modo:</p>
+      <div class="space-y-2 mb-4">
+        {# Modo 1: solo eliminar (default conservador) #}
+        <label class="flex items-start gap-2 border rounded p-3 cursor-pointer hover:bg-slate-50"
+               :class="modoEliminar === 'simple' ? 'border-slate-400 bg-slate-50' : 'border-slate-200'">
+          <input type="radio" value="simple" x-model="modoEliminar"
+                 class="mt-0.5 h-4 w-4">
+          <span class="text-xs text-slate-700">
+            <strong>Eliminar</strong> — solo si no tiene histórico (ventas,
+            alertas, listas). Si tiene, falla con un mensaje y los demás
+            se borran igual.
+          </span>
+        </label>
+
+        {# Modo 2: fusionar con duplicado #}
+        <label class="flex items-start gap-2 border rounded p-3 cursor-pointer hover:bg-blue-50"
+               :class="modoEliminar === 'fusionar' ? 'border-blue-500 bg-blue-50' : 'border-slate-200'">
+          <input type="radio" value="fusionar" x-model="modoEliminar"
+                 class="mt-0.5 h-4 w-4">
+          <span class="text-xs text-slate-700">
+            <strong>Fusionar con duplicado</strong> 🔗 — busca OTRO artículo
+            con el mismo código y le transfiere todo el histórico (ventas,
+            alertas, listas) antes de borrar el seleccionado. Útil para
+            limpiar duplicados post-cutover sin perder datos.
+          </span>
+        </label>
+
+        {# Modo 3: forzar (destructivo) #}
+        <label class="flex items-start gap-2 border rounded p-3 cursor-pointer hover:bg-red-50"
+               :class="modoEliminar === 'forzar' ? 'border-red-500 bg-red-50' : 'border-slate-200'">
+          <input type="radio" value="forzar" x-model="modoEliminar"
+                 class="mt-0.5 h-4 w-4">
+          <span class="text-xs text-red-900">
+            <strong>Forzar eliminación</strong> ⚠ (irreversible) — borra
+            también el histórico asociado. Usar solo si NO hay duplicado
+            o el histórico no importa.
+          </span>
+        </label>
       </div>
-      {# Checkbox forzar — solo aparece si querés sobreescribir el PROTECT. #}
-      <label class="flex items-start gap-2 bg-red-50 border border-red-200 rounded p-3 mb-4 cursor-pointer">
-        <input type="checkbox" x-model="forzarEliminar"
-               class="mt-0.5 h-4 w-4 text-red-600 rounded border-red-300 focus:ring-red-500">
-        <span class="text-xs text-red-900">
-          <strong>Forzar eliminación</strong> (irreversible). También borra
-          el histórico asociado: líneas de ventas, alertas de stock, items de
-          listas de precios. Usar solo para limpiar duplicados o artículos
-          de prueba.
-        </span>
-      </label>
+
       <div class="flex justify-end gap-2">
-        <button type="button" @click="modalEliminarAbierto = false; forzarEliminar = false"
+        <button type="button" @click="cerrarModalEliminar()"
                 :disabled="eliminando"
                 class="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50">
           Cancelar
         </button>
         <button type="button" @click="eliminarSeleccionados()"
                 :disabled="eliminando"
-                :class="forzarEliminar ? 'bg-red-700 hover:bg-red-800' : 'bg-red-600 hover:bg-red-700'"
+                :class="{
+                  'bg-slate-700 hover:bg-slate-800': modoEliminar === 'simple',
+                  'bg-blue-600 hover:bg-blue-700': modoEliminar === 'fusionar',
+                  'bg-red-700 hover:bg-red-800': modoEliminar === 'forzar',
+                }"
                 class="px-6 py-2 rounded-lg text-white font-medium disabled:opacity-50">
-          <span x-text="eliminando ? 'Eliminando...' : (forzarEliminar ? 'Sí, FORZAR eliminación' : 'Sí, eliminar')"></span>
+          <span x-show="!eliminando">
+            <span x-show="modoEliminar === 'simple'">Sí, eliminar</span>
+            <span x-show="modoEliminar === 'fusionar'" x-cloak>Sí, fusionar y eliminar</span>
+            <span x-show="modoEliminar === 'forzar'" x-cloak>Sí, FORZAR eliminación</span>
+          </span>
+          <span x-show="eliminando" x-cloak>Procesando...</span>
         </button>
       </div>
     </div>
@@ -635,10 +669,13 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
       // Estado del modal de eliminación + flag in-flight.
       modalEliminarAbierto: false,
       eliminando: false,
-      // Toggle "forzar": si está prendido el endpoint borra también el
-      // histórico (ArticuloVenta, AlertaStock, ListaPreciosItem) antes
-      // del delete del Articulo. Se resetea al cancelar / cerrar modal.
-      forzarEliminar: false,
+      // Modo de eliminación elegido en el modal:
+      //   'simple'   → POST /eliminar/ sin force (respeta PROTECTed FKs)
+      //   'fusionar' → POST /fusionar/ — reasigna histórico al otro
+      //                articulo con mismo codigo y borra el seleccionado
+      //   'forzar'   → POST /eliminar/ con force=true (borra histórico)
+      // Default 'simple' para minimizar riesgo de borrar histórico por error.
+      modoEliminar: 'simple',
       // `nuevos` es el array de filas placeholder para artículos a CREAR.
       // Vive separado de `cambios` porque el modelo es distinto:
       //   - `cambios`: dict {id_real: {campo: valor}} con updates.
@@ -820,25 +857,36 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
       // ejemplo, los protegidos por ProtectedError porque tienen
       // ventas asociadas — Django no los deja borrar para preservar
       // el historial). El front recarga la página al terminar.
+      // Cerrar modal + reset modo (lo llamamos del botón Cancelar).
+      cerrarModalEliminar() {
+        this.modalEliminarAbierto = false;
+        this.modoEliminar = 'simple';
+      },
+
       async eliminarSeleccionados() {
         if (this.seleccionados.size === 0) return;
         this.eliminando = true;
         try {
           const ids = Array.from(this.seleccionados);
-          // CSRF: usamos getCookie('csrftoken') igual que api_grilla_guardar
-          // (que sí funciona en producción). El selector del form a veces
-          // devuelve un token distinto al de la cookie y Django lo rechaza
-          // con 403 silencioso.
-          const r = await fetch('/articulos/api/grilla/eliminar/', {
+          const modo = this.modoEliminar;
+          // Endpoint y body según modo elegido.
+          let endpoint, body;
+          if (modo === 'fusionar') {
+            endpoint = '/articulos/api/grilla/fusionar/';
+            body = { ids };
+          } else {
+            endpoint = '/articulos/api/grilla/eliminar/';
+            body = { ids, force: modo === 'forzar' };
+          }
+          const r = await fetch(endpoint, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
               'Content-Type': 'application/json',
               'X-CSRFToken': getCookie('csrftoken'),
             },
-            body: JSON.stringify({ ids, force: this.forzarEliminar }),
+            body: JSON.stringify(body),
           });
-          // Si CSRF falla u otro error de protocolo, mostramos info concreta.
           if (!r.ok) {
             let detalle = '';
             try {
@@ -847,20 +895,34 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
             } catch {
               detalle = `HTTP ${r.status}: ${r.statusText}`;
             }
-            this.errores = [{ mensaje: 'Error al eliminar: ' + detalle }];
+            this.errores = [{ mensaje: 'Error: ' + detalle }];
             this.eliminando = false;
             this.modalEliminarAbierto = false;
             return;
           }
           const data = await r.json();
-          // Reporte: cuántos se borraron y cuáles fallaron. `borrados`
-          // ahora es lista de dicts {id, nombre, cascadas} (cascadas
-          // solo si vino force=true).
           const borrados = data.borrados || [];
           const fallidos = data.fallidos || [];
+
+          // Armar mensaje según modo.
           let msg = `✓ ${borrados.length} artículo${borrados.length === 1 ? '' : 's'} eliminado${borrados.length === 1 ? '' : 's'}.`;
-          if (data.forzado && borrados.length) {
-            // Resumen del histórico que se borró en cascada.
+          if (modo === 'fusionar' && borrados.length) {
+            const totales = { lineas_venta: 0, alertas_stock: 0, lista_precios_items: 0 };
+            for (const b of borrados) {
+              for (const k of Object.keys(b.reasignado || {})) {
+                totales[k] = (totales[k] || 0) + b.reasignado[k];
+              }
+            }
+            const detalles = [];
+            if (totales.lineas_venta) detalles.push(`${totales.lineas_venta} líneas de venta`);
+            if (totales.alertas_stock) detalles.push(`${totales.alertas_stock} alertas`);
+            if (totales.lista_precios_items) detalles.push(`${totales.lista_precios_items} items de listas`);
+            // Nombre del primer sobreviviente para el flash msg.
+            const sobre = borrados[0]?.survivor?.nombre || '';
+            if (detalles.length) {
+              msg += ` Histórico reasignado al duplicado${borrados.length === 1 && sobre ? ` "${sobre}"` : ''}: ${detalles.join(', ')}.`;
+            }
+          } else if (modo === 'forzar' && borrados.length) {
             const totales = { lineas_venta: 0, alertas_stock: 0, lista_precios_items: 0 };
             for (const b of borrados) {
               for (const k of Object.keys(b.cascadas || {})) {
@@ -869,21 +931,20 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
             }
             const detalles = [];
             if (totales.lineas_venta) detalles.push(`${totales.lineas_venta} líneas de venta`);
-            if (totales.alertas_stock) detalles.push(`${totales.alertas_stock} alertas de stock`);
+            if (totales.alertas_stock) detalles.push(`${totales.alertas_stock} alertas`);
             if (totales.lista_precios_items) detalles.push(`${totales.lista_precios_items} items de listas`);
             if (detalles.length) msg += ` (forzado: además se borraron ${detalles.join(', ')}).`;
           }
           if (fallidos.length) {
             const nombres = fallidos.slice(0, 3).map(f => f.nombre).join(', ');
             const mas = fallidos.length > 3 ? ` (+${fallidos.length - 3} más)` : '';
-            msg += ` No se pudieron borrar ${fallidos.length}: ${nombres}${mas}. ${fallidos[0]?.razon || ''}`;
+            msg += ` No se pudieron procesar ${fallidos.length}: ${nombres}${mas}. ${fallidos[0]?.razon || ''}`;
           }
           this.errores = [{ mensaje: msg }];
           this.modalEliminarAbierto = false;
+          this.modoEliminar = 'simple';
           this.eliminando = false;
-          this.forzarEliminar = false;
           this.seleccionados = new Set();
-          // Recargar el listado para que las filas borradas desaparezcan.
           await this.cargar();
         } catch (e) {
           this.errores = [{ mensaje: 'Error de red: ' + e.message }];
