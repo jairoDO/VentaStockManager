@@ -40,7 +40,14 @@ el link al final.
     chequeados ahí también.
     {% endcomment %}
     {% if user.is_superuser %}
+        {% comment %}
+        target="_self" explícito: material-admin agrega target="_blank" a
+        cualquier link que no empieza con /admin/ (los considera externos).
+        Pero /wa-campania/conexion/ es nuestra pantalla — queremos que
+        se abra en la misma pestaña, sin perder contexto del operador.
+        {% endcomment %}
         <a href="/wa-campania/conexion/"
+           target="_self"
            class="badge-wa-conexion"
            title="Vincular cuenta de WhatsApp, ver estado del bot, mandar prueba.">
             💬 WhatsApp
