@@ -248,10 +248,11 @@ class MyAdminSite(MaterialAdminSite):
                             break
                     break
 
-        # Caja del día — card destacado al inicio del app `venta`. Va para
-        # TODOS los staff (vendedor también necesita ver lo que vendió).
-        # El vendedor solo ve sus ventas; el superuser ve totales + pagos.
-        if request.user.is_authenticated and request.user.is_staff:
+        # Caja del día — card destacado al inicio del app `venta`. SOLO
+        # superuser: el vendedor no necesita ver totales del negocio,
+        # cobros de cuenta corriente, etc. La pantalla en sí también
+        # bloquea acceso a no-superuser por user_passes_test.
+        if request.user.is_authenticated and request.user.is_superuser:
             for app in app_list:
                 if app.get('app_label') == 'venta':
                     app['models'].insert(0, {
@@ -263,7 +264,10 @@ class MyAdminSite(MaterialAdminSite):
                             'add': False, 'change': False,
                             'delete': False, 'view': True,
                         },
-                        'icon': 'point_of_sale',
+                        # `monetization_on` ya está confirmado funcional en
+                        # VentaAdmin.icon_name. `point_of_sale` no estaba en
+                        # la versión de Material Icons que sirve material-admin.
+                        'icon': 'monetization_on',
                         'view_only': True,
                     })
                     break

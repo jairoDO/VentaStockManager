@@ -24,20 +24,28 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth.decorators import user_passes_test
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
-from django.utils import timezone
 
 from venta.models import Venta
 from cliente.models import MovimientoCuenta
 
 
-@staff_member_required
+def _solo_superuser(u) -> bool:
+    """Solo el admin (superuser) ve la caja del día — el vendedor no."""
+    return bool(u.is_authenticated and u.is_superuser)
+
+
+@user_passes_test(_solo_superuser, login_url='/admin/login/')
 def caja_del_dia(request: HttpRequest) -> HttpResponse:
     # Parseo de fecha: ?fecha=YYYY-MM-DD. Default a hoy.
+    # Usamos `date.today()` (no `timezone.localdate()`) porque el proyecto
+    # tiene USE_TZ=False — los datetimes son naive y `localdate()` revienta
+    # con "cannot be applied to a naive datetime". `date.today()` toma el
+    # date del servidor sin tocar timezone, que es lo que queremos acá.
     fecha_str = request.GET.get('fecha', '').strip()
-    hoy = timezone.localdate()
+    hoy = date.today()
     if fecha_str:
         try:
             fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
@@ -46,16 +54,9 @@ def caja_del_dia(request: HttpRequest) -> HttpResponse:
     else:
         fecha = hoy
 
-    es_superuser = request.user.is_superuser
-
-    # Si es vendedor no-superuser, restringimos a SUS ventas.
-    # Buscamos su Vendedor por la relación inversa del OneToOne.
-    vendedor_filter = None
-    if not es_superuser:
-        try:
-            vendedor_filter = request.user.vendedor
-        except Exception:
-            vendedor_filter = None  # Sin Vendedor asociado → panel vacío.
+    # Acceso restringido a superuser por decorator. Mantenemos el flag
+    # `es_superuser` para mínima refactor — siempre será True por el gate.
+    es_superuser = True
 
     # ---- Ventas del día ----
     ventas_qs = (
@@ -65,11 +66,6 @@ def caja_del_dia(request: HttpRequest) -> HttpResponse:
         .prefetch_related('ventas__articulo')  # `ventas` es el reverse de ArticuloVenta.venta
         .order_by('id')
     )
-    if not es_superuser:
-        if vendedor_filter:
-            ventas_qs = ventas_qs.filter(vendedor=vendedor_filter)
-        else:
-            ventas_qs = ventas_qs.none()
 
     ventas_data: list[dict] = []
     total_vendido = Decimal('0')
@@ -105,31 +101,30 @@ def caja_del_dia(request: HttpRequest) -> HttpResponse:
             total_a_cuenta += tot
 
     # ---- Pagos recibidos del día (MovimientoCuenta tipo='pago') ----
-    # NO filtramos por vendedor — los pagos no tienen vendedor asociado.
-    # Vendedor ve solo si es superuser (sino no aplica).
     pagos_data: list[dict] = []
     total_pagos = Decimal('0')
-    if es_superuser:
-        pagos_qs = (
-            MovimientoCuenta.objects
-            .filter(created_at__date=fecha, tipo=MovimientoCuenta.TIPO_PAGO)
-            .select_related('cuenta__cliente', 'creado_por')
-            .order_by('created_at')
-        )
-        for p in pagos_qs:
-            try:
-                m = Decimal(str(p.monto or 0))
-            except Exception:
-                m = Decimal('0')
-            pagos_data.append({
-                'id': p.id,
-                'cliente': str(p.cuenta.cliente) if (p.cuenta and p.cuenta.cliente) else '—',
-                'monto': m,
-                'nota': p.nota if hasattr(p, 'nota') else '',
-                'hora': timezone.localtime(p.created_at).strftime('%H:%M'),
-                'creado_por': str(p.creado_por) if p.creado_por else '',
-            })
-            total_pagos += m
+    pagos_qs = (
+        MovimientoCuenta.objects
+        .filter(created_at__date=fecha, tipo=MovimientoCuenta.TIPO_PAGO)
+        .select_related('cuenta__cliente', 'creado_por')
+        .order_by('created_at')
+    )
+    for p in pagos_qs:
+        try:
+            m = Decimal(str(p.monto or 0))
+        except Exception:
+            m = Decimal('0')
+        # `created_at` puede ser naive (USE_TZ=False) o aware. Para el
+        # display formateamos directo — no necesitamos convertir TZ.
+        pagos_data.append({
+            'id': p.id,
+            'cliente': str(p.cuenta.cliente) if (p.cuenta and p.cuenta.cliente) else '—',
+            'monto': m,
+            'nota': p.nota if hasattr(p, 'nota') else '',
+            'hora': p.created_at.strftime('%H:%M') if p.created_at else '',
+            'creado_por': str(p.creado_por) if p.creado_por else '',
+        })
+        total_pagos += m
 
     efectivo_esperado = total_pagado_al_momento + total_pagos
 
