@@ -248,6 +248,26 @@ class MyAdminSite(MaterialAdminSite):
                             break
                     break
 
+        # Caja del día — card destacado al inicio del app `venta`. Va para
+        # TODOS los staff (vendedor también necesita ver lo que vendió).
+        # El vendedor solo ve sus ventas; el superuser ve totales + pagos.
+        if request.user.is_authenticated and request.user.is_staff:
+            for app in app_list:
+                if app.get('app_label') == 'venta':
+                    app['models'].insert(0, {
+                        'name': 'Caja del día',
+                        'object_name': 'CajaDelDia',
+                        'admin_url': '/caja/',
+                        'add_url': None,
+                        'perms': {
+                            'add': False, 'change': False,
+                            'delete': False, 'view': True,
+                        },
+                        'icon': 'point_of_sale',
+                        'view_only': True,
+                    })
+                    break
+
         return app_list
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User

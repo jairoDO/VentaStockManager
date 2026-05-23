@@ -23,6 +23,10 @@ from venta.views_nueva import (
     api_venta_guardar,
 )
 
+# "Caja del día" — resumen de ventas y cobranza para reconciliar la
+# caja al final del día. Server-rendered, simple, con selector de fecha.
+from venta.views_caja import caja_del_dia
+
 urlpatterns = [
     # Pantalla nueva de venta (Alpine + Tailwind). Estas rutas tienen
     # que ir ANTES que las legacy de comprobante para evitar que el
@@ -62,6 +66,8 @@ urlpatterns = [
     path('cliente/<int:pk>/edit/', ClienteUpdateView.as_view(), name='cliente_edit'),
     path('venta/pedido/generar-pdfs/', generar_pdf_pedidos, name='generar_pdf_pedidos'),
     path('admin/venta/', redirect_to_ventas, name='redirect_to_ventas'),
+    # Caja del día — pantalla read-only para reconciliar caja.
+    path('caja/', caja_del_dia, name='caja_del_dia'),
 ]
 # url(r'^/(?P<venta_id>\d+)/detalle/$', views.venta_detalle, name='category-detail'),
 
