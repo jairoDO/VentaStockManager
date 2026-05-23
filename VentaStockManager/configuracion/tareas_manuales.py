@@ -72,6 +72,21 @@ CATALOGO_TAREAS: list[Tarea] = [
         'icono': '🏷️',
     },
     {
+        'id': 'categorizar_desde_sheet',
+        'titulo': 'Categorizar artículos según estructura del Sheet',
+        'descripcion': (
+            'Lee el Google Sheet compartido y usa su estructura visual '
+            '(filas en negrita = headers de categoría) para asignar '
+            'categoría a los artículos en la DB. Matchea por código '
+            '(columna B del Sheet). Idempotente: no pisa categorías '
+            'ya asignadas (solo completa los NULL). Más confiable que '
+            '"Aplicar reglas" porque usa la estructura REAL del operador '
+            'en lugar de palabras clave inferidas.'
+        ),
+        'func_path': 'articulo.management.commands.categorizar_desde_sheet.categorizar_desde_sheet_scheduled',
+        'icono': '📋',
+    },
+    {
         'id': 'recordatorios_saldo',
         'titulo': 'Recordatorios de saldo deudor',
         'descripcion': (
