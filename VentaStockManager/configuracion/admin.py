@@ -139,7 +139,7 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
         """Link directo al panel de tareas manuales."""
         from django.utils.html import format_html
         return format_html(
-            '<a href="/configuracion/panel-tareas/" target="_blank" '
+            '<a href="/configuracion/panel-tareas/" '
             'style="display: inline-block; padding: 6px 14px; '
             'background: #2196f3; color: white; border-radius: 4px; '
             'text-decoration: none; font-weight: 500;">'
@@ -218,13 +218,17 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
 
     def link_panel_whatsapp(self, obj):
         """
-        Link al panel de conexión WhatsApp. Va en `target="_blank"`
-        para que el operador pueda dejarlo abierto en una pestaña
-        mientras escanea el QR desde el celular.
+        Link al panel de conexión WhatsApp.
+
+        Antes tenía `target="_blank"` para que el operador pudiera
+        dejarlo abierto en una pestaña mientras escaneaba el QR. Pero
+        feedback de prod: confunde abrir todo en pestañas nuevas.
+        Ahora abre en la misma — si el operador quiere otra pestaña,
+        usa Cmd+Click explícitamente.
         """
         from django.utils.html import format_html
         return format_html(
-            '<a href="/wa-campania/conexion/" target="_blank" '
+            '<a href="/wa-campania/conexion/" '
             'style="display: inline-block; padding: 6px 14px; '
             'background: #16a34a; color: white; border-radius: 4px; '
             'text-decoration: none; font-weight: 500;">'

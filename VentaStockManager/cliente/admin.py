@@ -129,7 +129,7 @@ class ClienteAdmin(admin.ModelAdmin):
         # La URL real es /clientes/<id>/extracto/ (con `s`) porque
         # cliente.urls cuelga de `clientes/` en el root URLconf.
         return format_html(
-            '<a href="/clientes/{}/extracto/" target="_blank" '
+            '<a href="/clientes/{}/extracto/" '
             'class="button" style="padding: 2px 8px; background: #2196f3; '
             'color: white; border-radius: 3px; text-decoration: none;">'
             '📊 Extracto</a>',

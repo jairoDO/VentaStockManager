@@ -623,7 +623,7 @@ class DifusionListaPreciosEnvioAdmin(admin.ModelAdmin):
 
     def lista_link(self, obj):
         return format_html(
-            '<a href="/articulos/lista-precios/?lista_id={}" target="_blank">{}</a>',
+            '<a href="/articulos/lista-precios/?lista_id={}">{}</a>',
             obj.lista_id, obj.lista.nombre,
         )
     lista_link.short_description = 'Lista'
@@ -631,7 +631,7 @@ class DifusionListaPreciosEnvioAdmin(admin.ModelAdmin):
 
     def cliente_link(self, obj):
         return format_html(
-            '<a href="/admin/cliente/cliente/{}/change/" target="_blank">{}</a>'
+            '<a href="/admin/cliente/cliente/{}/change/">{}</a>'
             '<div style="font-size:11px;color:#64748b;font-family:monospace;">{}</div>',
             obj.cliente_id, obj.cliente.nombre_completo(), obj.telefono_usado,
         )
@@ -823,7 +823,7 @@ class SolicitudListaClienteAdmin(admin.ModelAdmin):
         # editor todavía no soporta ese param, el operador igual llega
         # a la pantalla y manualmente elige el cliente del autocomplete.
         return format_html(
-            '<a href="/articulos/lista-precios/?cliente_id={}" target="_blank" '
+            '<a href="/articulos/lista-precios/?cliente_id={}" '
             'style="background:#2563eb;color:white;padding:4px 10px;'
             'border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;">'
             '➜ Armar lista</a>',
