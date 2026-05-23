@@ -230,6 +230,7 @@
               <td class="py-2 pr-3 text-right">
                 <input type="number" min="0" step="0.01"
                        x-model="item.precio"
+                       @input="onPrecioCambia(idx)"
                        :class="item.tiene_precio_pactado ? 'border-amber-400' : 'border-slate-300'"
                        class="w-28 border rounded px-2 py-1 text-right">
                 {% comment %}
@@ -799,6 +800,9 @@
         item.precio_lista = a.precio_lista || '';
         item.lista_nombre = a.lista_nombre || '';
         item.lista_aplicada = false;
+        // Reset de la flag de precio custom — al elegir un articulo
+        // nuevo, el precio default es el sugerido, no un custom previo.
+        item.precio_modificado_manualmente = false;
         item.precio_default_sin_acuerdo = a.precio_default_sin_acuerdo;
         item.dropdownAbierto = false;
         item.results = [];
@@ -816,12 +820,15 @@
         // sugerencia activa a la vez (sino el operador no sabe cuál
         // es el "estado" del input).
         item.lista_aplicada = false;
+        // El precio ahora es el pactado oficial, no un custom.
+        item.precio_modificado_manualmente = false;
       },
       quitarPactado(idx) {
         // Vuelve al precio normal según la cantidad actual. Útil si
         // Osvaldo clickeó por error o quiere recalcular.
         const item = this.items[idx];
         item.pactado_aplicado = false;
+        item.precio_modificado_manualmente = false;
         // Reusamos la lógica de onCantidadCambia para que respete el
         // umbral mayorista.
         this._recalcularPrecioNormal(idx);
@@ -837,10 +844,13 @@
         // Mutuamente excluyente con pactado_aplicado para que el
         // operador no se confunda viendo dos "✓ aplicado" a la vez.
         item.pactado_aplicado = false;
+        // Precio aplicado por el sistema (no custom del operador).
+        item.precio_modificado_manualmente = false;
       },
       quitarPrecioLista(idx) {
         const item = this.items[idx];
         item.lista_aplicada = false;
+        item.precio_modificado_manualmente = false;
         this._recalcularPrecioNormal(idx);
       },
       _recalcularPrecioNormal(idx) {
@@ -857,16 +867,36 @@
       },
       onCantidadCambia(idx) {
         // Si la cantidad cruza el umbral, autoajustamos el precio al
-        // mayorista (o al minorista si volvió abajo del umbral). El
-        // operador puede pisarlo a mano después: lo respetamos hasta
-        // que vuelva a cambiar la cantidad.
+        // mayorista (o al minorista si volvió abajo del umbral).
         //
-        // EXCEPCIONES: si el operador aplicó pactado O lista, NO
-        // pisamos — el acuerdo/lista prevalece sobre la regla minor/may
-        // hasta que el operador decida volver al normal.
+        // EXCEPCIONES — NO pisamos el precio si:
+        //   - pactado_aplicado: el operador hizo click en el badge
+        //     "⭐ Pactado". Su acuerdo individual prevalece.
+        //   - lista_aplicada: idem con "📋 Lista".
+        //   - precio_modificado_manualmente: el operador escribió un
+        //     precio custom en el input. Lo respetamos hasta que
+        //     vuelva a tipear (= cambia su intención).
+        //
+        // Antes faltaba el flag de modificado_manualmente — al cambiar
+        // la cantidad después de un precio custom, se pisaba el cambio.
         const item = this.items[idx];
-        if (item.pactado_aplicado || item.lista_aplicada) return;
+        if (item.pactado_aplicado || item.lista_aplicada || item.precio_modificado_manualmente) return;
         this._recalcularPrecioNormal(idx);
+      },
+
+      onPrecioCambia(idx) {
+        // El operador tipeó un precio custom. Marcamos la línea para
+        // que onCantidadCambia NO lo pise. La flag se limpia cuando:
+        //   - se elige otro artículo (seleccionarArticulo lo resetea),
+        //   - se aplica pactado/lista (esos limpian su propia flag),
+        //   - se borra la línea.
+        const item = this.items[idx];
+        item.precio_modificado_manualmente = true;
+        // Si el operador estaba con pactado/lista aplicado y modificó
+        // a mano, desactivamos esos flags también — su intención es
+        // un precio custom, no el sugerido.
+        item.pactado_aplicado = false;
+        item.lista_aplicada = false;
       },
 
       // ---------------- Líneas ----------------
@@ -887,6 +917,7 @@
           lista_nombre: '',
           lista_aplicada: false,
           precio_default_sin_acuerdo: '0',
+          precio_modificado_manualmente: false,  // ← flag para no pisar precio custom
           query: '',
           results: [],
           dropdownAbierto: false,
