@@ -233,6 +233,21 @@
                        :class="item.tiene_precio_pactado ? 'border-amber-400' : 'border-slate-300'"
                        class="w-28 border rounded px-2 py-1 text-right">
                 {% comment %}
+                  Badge informativo "↓ N% desc" / "↑ N% aum" — muestra
+                  cuánto se desvió el precio del input respecto del precio
+                  base del artículo (precio_minorista). Solo aparece si
+                  hay desvío >0.5% para evitar ruido por redondeos.
+                  Calculado en vivo con Alpine via getter `ajusteLineaPct()`.
+                {% endcomment %}
+                <div x-show="Math.abs(ajusteLineaPct(item)) > 0.5" x-cloak
+                     class="text-[10px] mt-1 leading-tight font-medium"
+                     :class="ajusteLineaPct(item) < 0 ? 'text-emerald-700' : 'text-red-700'">
+                  <span x-text="ajusteLineaPct(item) < 0 ? '↓' : '↑'"></span>
+                  <span x-text="Math.abs(ajusteLineaPct(item)).toFixed(1) + '%'"></span>
+                  <span x-text="ajusteLineaPct(item) < 0 ? 'descuento' : 'aumento'"></span>
+                  <span class="text-slate-400">vs $<span x-text="item._precio_minorista || ''"></span></span>
+                </div>
+                {% comment %}
                   Display de pactado INVERTIDO (pedido del usuario 2026-05):
                   antes: precio pactado se cargaba en el input y el precio "lista" iba debajo.
                   ahora: precio NORMAL va al input y el pactado va debajo como
@@ -896,6 +911,22 @@
         const precio = Number(item.precio) || 0;
         const desc = Number(item.descuento_porcentaje) || 0;
         return cant * precio * (1 - desc / 100);
+      },
+      ajusteLineaPct(item) {
+        // Calcula el % de desvío entre el precio actual del input y el
+        // precio "normal" del artículo (precio_minorista). Si el operador
+        // bajó el precio → negativo (descuento). Si lo subió → positivo
+        // (aumento). 0 si igual o si no hay precio base de referencia.
+        //
+        // No usa precio_mayorista para no confundirse cuando el artículo
+        // cruza el umbral por cantidad — el badge compara siempre contra
+        // el minorista, que es el precio "estándar" para un cliente sin
+        // acuerdos. Si querés ver el desvío vs el mayorista, simplemente
+        // pasás del umbral y onCantidadCambia ya carga ese precio → 0%.
+        const precioActual = Number(item.precio) || 0;
+        const precioBase = Number(item._precio_minorista) || 0;
+        if (!precioBase || !precioActual) return 0;
+        return ((precioActual / precioBase) - 1) * 100;
       },
       subtotalItems() {
         return this.items.reduce((acc, it) => acc + this.subtotalLinea(it), 0);
