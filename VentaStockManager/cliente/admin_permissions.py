@@ -60,6 +60,42 @@ class SuperuserOnlyAdminMixin:
         return bool(request.user.is_authenticated and request.user.is_superuser)
 
 
+class StaffFullAccessAdminMixin:
+    """
+    Mixin para admins que el VENDEDOR usa con permisos completos
+    (ver/crear/editar). Aplica a: Venta, Pedido, Cliente, Categoria —
+    el core del flujo diario del operador.
+
+    Sin este mixin, Django requiere `Permission` objects explícitos
+    asignados al user (django.contrib.auth.Permission), pero el
+    proyecto no usa ese sistema: todos los admins se gobiernan por
+    flags booleanos (is_staff / is_superuser). Sin permisos
+    asignados, un vendedor simplemente NO ve el módulo.
+
+    Este mixin desactiva el check de Permission objects para staff.
+    Más liberal que el default de Django pero consistente con el
+    modelo de roles del resto del proyecto.
+
+    Delete sigue restringido a superuser: borrar ventas/pedidos
+    rompe historial — el vendedor debería archivarlas en su lugar.
+    """
+
+    def has_module_permission(self, request) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_staff)
+
+    def has_view_permission(self, request, obj=None) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_staff)
+
+    def has_add_permission(self, request) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_staff)
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_staff)
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_superuser)
+
+
 class ArticulosReadOnlyForNonSuperuser:
     """
     Mixin específico para ArticuloAdmin: el vendedor PUEDE consultar

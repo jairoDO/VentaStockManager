@@ -9,7 +9,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 
 from cliente.models import Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente
-from cliente.admin_permissions import SuperuserOnlyAdminMixin
+from cliente.admin_permissions import SuperuserOnlyAdminMixin, StaffFullAccessAdminMixin
 
 
 class _RegistrarMovimientoBase(forms.ModelForm):
@@ -113,7 +113,7 @@ class RegistrarDeudaForm(_RegistrarMovimientoBase):
         }
 
 
-class ClienteAdmin(admin.ModelAdmin):
+class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     icon_name = "account_circle"
     model = Cliente
     search_fields = ['nombre']

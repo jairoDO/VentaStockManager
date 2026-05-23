@@ -36,6 +36,7 @@ from typing import Any
 
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth.decorators import user_passes_test
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Q
@@ -69,12 +70,23 @@ CAMPOS_EDITABLES = (
 )
 
 
+# La grilla edita masivamente precios y crea artículos — operaciones
+# de administración pura. El vendedor NO debería entrar (su rol es
+# carga de ventas; los precios los maneja el dueño/admin). Si tu rol
+# evoluciona, cambia este predicado.
+def _solo_superuser(u) -> bool:
+    return bool(u.is_authenticated and u.is_superuser)
+
+
+superuser_required = user_passes_test(_solo_superuser, login_url='/admin/login/')
+
+
 def _page_size() -> int:
     """Cuántos items devolvemos por página. Settable vía settings."""
     return int(getattr(settings, 'GRILLA_PRECIOS_PAGE_SIZE', 50))
 
 
-@staff_member_required
+@superuser_required
 def grilla_precios(request: HttpRequest) -> HttpResponse:
     """
     Render del template. Solo pasamos el listado de categorías y
@@ -133,7 +145,7 @@ def _parse_filtros(request: HttpRequest) -> dict[str, Any]:
     }
 
 
-@staff_member_required
+@superuser_required
 @require_GET
 def api_grilla_listar(request: HttpRequest) -> JsonResponse:
     """
@@ -412,7 +424,7 @@ def _validar_y_normalizar_nuevo(nuevo: dict[str, Any]) -> tuple[dict[str, Any] |
     return normalizado, []
 
 
-@staff_member_required
+@superuser_required
 @require_POST
 def api_grilla_guardar(request: HttpRequest) -> JsonResponse:
     """

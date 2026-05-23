@@ -14,6 +14,7 @@ from articulo.models import (
 )
 from cliente.admin_permissions import (
     SuperuserOnlyAdminMixin, ArticulosReadOnlyForNonSuperuser,
+    StaffFullAccessAdminMixin,
 )
 from django_q.tasks import async_task
 from .task import actualizar_precios_articulos_desde_drive
@@ -300,7 +301,7 @@ class ReglaCategoriaInline(admin.TabularInline):
     }
 
 
-class CategoriaAdmin(admin.ModelAdmin):
+class CategoriaAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     icon_name = 'category'
     list_display = ('nombre_con_color', 'descripcion_corta', 'cantidad_articulos', 'cantidad_reglas')
     search_fields = ('nombre', 'descripcion')

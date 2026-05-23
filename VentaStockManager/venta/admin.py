@@ -10,7 +10,7 @@ from django.http import HttpResponseRedirect
 from django.utils import timezone
 from venta.views import generar_pdf_pedidos
 from django.contrib import messages
-from cliente.admin_permissions import SuperuserOnlyAdminMixin
+from cliente.admin_permissions import SuperuserOnlyAdminMixin, StaffFullAccessAdminMixin
 from .forms import ArticuloVentaInlineFormSet
 from venta.forms import ArticuloVentaForm
 import logging
@@ -123,7 +123,7 @@ class ArchivadaListFilter(admin.SimpleListFilter):
             }
 
 
-class VentaAdmin(admin.ModelAdmin):
+class VentaAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     form = VentaForm
     ordering = ('-fecha_compra',)
     list_display = ['fecha_compra', 'fecha_entrega', 'cliente', 'vendedor', 'total_venta_por_articulo']
@@ -268,7 +268,7 @@ class VentaAdmin(admin.ModelAdmin):
 
 # admin_site.site.register(Venta, VentaAdmin)
 
-class PedidoAdmin(admin.ModelAdmin):
+class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     readonly_fields = ('venta','mostrar_articulos')
     ordering = ('-venta__fecha_compra',)

@@ -79,6 +79,7 @@ def lista_usuarios(request: HttpRequest) -> HttpResponse:
                 f'{vendedor_asociado.nombre} {vendedor_asociado.apellido}'
                 if vendedor_asociado else ''
             ),
+            'telefono': vendedor_asociado.telefono if vendedor_asociado else '',
             'es_yo_mismo': u.id == request.user.id,
         })
 
@@ -111,6 +112,10 @@ def crear_usuario(request: HttpRequest) -> HttpResponse:
     nombre = (request.POST.get('nombre') or '').strip()
     apellido = (request.POST.get('apellido') or '').strip()
     email = (request.POST.get('email') or '').strip()
+    # Teléfono: lo guardamos en Vendedor.telefono. Sirve para futuras
+    # integraciones con el bot de WhatsApp (avisos al vendedor sobre
+    # pedidos asignados, recordatorios, etc.) y como contacto del operador.
+    telefono = (request.POST.get('telefono') or '').strip()
     tipo = (request.POST.get('tipo') or 'vendedor').lower()
 
     if tipo not in ('vendedor', 'superuser'):
@@ -151,6 +156,7 @@ def crear_usuario(request: HttpRequest) -> HttpResponse:
             Vendedor.objects.create(
                 nombre=nombre,
                 apellido=apellido or 'Vendedor',
+                telefono=telefono or None,
                 usuario=user,
             )
 
