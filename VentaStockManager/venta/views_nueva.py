@@ -464,6 +464,12 @@ def api_venta_guardar(request):
         field='saldo_a_aplicar',
         errores=errores,
     )
+    # Si el cliente tiene deuda anterior y el operador tildó "cobrar
+    # también la deuda anterior", el exceso del monto_pagado sobre el
+    # total_venta se registra como TIPO_PAGO (cancela deuda anterior) en
+    # lugar de TIPO_EXCEDENTE (saldo a favor del cliente). Semánticamente
+    # más correcto y mejor para el reporte de cuenta corriente.
+    cobrar_deuda_anterior = bool(payload.get('cobrar_deuda_anterior'))
     monto_pagado = _decimal_or_400(
         payload.get('monto_pagado'),
         field='monto_pagado',
@@ -780,18 +786,61 @@ def api_venta_guardar(request):
                         creado_por=request.user if request.user.is_authenticated else None,
                     )
                 elif diferencia > 0:
-                    # Pagó de más: el excedente queda a favor.
-                    MovimientoCuenta.objects.create(
-                        cuenta=cuenta,
-                        tipo=MovimientoCuenta.TIPO_EXCEDENTE,
-                        monto=diferencia,
-                        venta=venta,
-                        descripcion=(
-                            f'Venta #{venta.id}: total {total_venta}, '
-                            f'pagó {monto_pagado}'
-                        ),
-                        creado_por=request.user if request.user.is_authenticated else None,
+                    # Pagó de más. Hay dos sub-casos:
+                    #   a) El operador tildó "cobrar deuda anterior" Y el
+                    #      cliente tenía deuda: el exceso se registra como
+                    #      TIPO_PAGO (cancela la deuda vieja). Si el exceso
+                    #      cubre la deuda exactamente, no queda saldo a
+                    #      favor; si es mayor, lo que sobre va como
+                    #      EXCEDENTE adicional.
+                    #   b) Resto de casos (cliente sin deuda, o sin tildar
+                    #      el flag): el excedente entero va como
+                    #      TIPO_EXCEDENTE (saldo a favor del cliente).
+                    deuda_anterior_abs = (
+                        abs(saldo_actual) if saldo_actual < 0 else Decimal('0')
                     )
+                    if cobrar_deuda_anterior and deuda_anterior_abs > 0:
+                        pago_a_deuda = min(diferencia, deuda_anterior_abs)
+                        MovimientoCuenta.objects.create(
+                            cuenta=cuenta,
+                            tipo=MovimientoCuenta.TIPO_PAGO,
+                            monto=pago_a_deuda,
+                            venta=venta,
+                            descripcion=(
+                                f'Venta #{venta.id}: pago de deuda anterior '
+                                f'(cliente debía {deuda_anterior_abs}, '
+                                f'pagó {monto_pagado}, total venta {total_venta})'
+                            ),
+                            creado_por=request.user if request.user.is_authenticated else None,
+                        )
+                        # Si pagó MÁS que la deuda + venta, el sobrante
+                        # restante va como saldo a favor (excedente).
+                        sobrante = diferencia - pago_a_deuda
+                        if sobrante > 0:
+                            MovimientoCuenta.objects.create(
+                                cuenta=cuenta,
+                                tipo=MovimientoCuenta.TIPO_EXCEDENTE,
+                                monto=sobrante,
+                                venta=venta,
+                                descripcion=(
+                                    f'Venta #{venta.id}: sobrante después de '
+                                    f'cancelar deuda anterior'
+                                ),
+                                creado_por=request.user if request.user.is_authenticated else None,
+                            )
+                    else:
+                        # Sin deuda anterior o sin flag: todo es saldo a favor.
+                        MovimientoCuenta.objects.create(
+                            cuenta=cuenta,
+                            tipo=MovimientoCuenta.TIPO_EXCEDENTE,
+                            monto=diferencia,
+                            venta=venta,
+                            descripcion=(
+                                f'Venta #{venta.id}: total {total_venta}, '
+                                f'pagó {monto_pagado}'
+                            ),
+                            creado_por=request.user if request.user.is_authenticated else None,
+                        )
                 # Si diferencia == 0: venta pagada exacta, no hay
                 # movimiento extra.
 

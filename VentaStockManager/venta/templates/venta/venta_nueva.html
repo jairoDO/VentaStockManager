@@ -387,12 +387,12 @@
       </div>
     </div>
 
-    {# Cuando el cliente DEBE (saldo negativo), banner llamativo y #}
-    {# botón rápido para sumar la venta nueva a la deuda existente. #}
+    {# Cuando el cliente DEBE (saldo negativo), banner llamativo con #}
+    {# opción de cobrar también la deuda anterior. #}
     <div x-show="cliente.id && Number(cliente.saldo) < 0"
          x-cloak
          class="mb-4 p-4 bg-red-50 border-2 border-red-300 rounded">
-      <div class="flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
         <div class="text-sm text-red-900">
           <div class="font-semibold text-base mb-1">
             ⚠ Este cliente ya debe
@@ -411,6 +411,19 @@
           Dejar todo a cuenta
         </button>
       </div>
+      {% comment %}
+        Checkbox para sumar la deuda anterior al total a cobrar. Default
+        desactivado: el operador opt-in si quiere cobrar todo de una.
+      {% endcomment %}
+      <label class="flex items-start gap-2 cursor-pointer pt-3 border-t border-red-200">
+        <input type="checkbox" x-model="cobrarDeudaAnterior" class="mt-0.5 rounded">
+        <span class="text-sm text-red-900">
+          <strong>Cobrar también la deuda anterior</strong>
+          (<span class="font-mono" x-text="formatARS(Math.abs(Number(cliente.saldo)))"></span>).
+          El total a cobrar pasaría a ser
+          <span class="font-mono font-semibold" x-text="formatARS(totalFinal() + Math.abs(Number(cliente.saldo)))"></span>.
+        </span>
+      </label>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
@@ -528,6 +541,11 @@
       // operador lo pise a mano.
       aplicarSaldo: false,
       saldoAAplicar: 0,
+      // Si el cliente tiene saldo negativo (debe), opt-in para
+      // sumar la deuda anterior al total a cobrar. Al confirmar la
+      // venta, ese monto extra se registra como TIPO_PAGO contra la
+      // deuda anterior (no como excedente).
+      cobrarDeudaAnterior: false,
       montoPagado: 0,
 
       init() {
@@ -637,6 +655,7 @@
         // cliente, no queremos arrastrar el saldo aplicado del previo.
         this.aplicarSaldo = false;
         this.saldoAAplicar = 0;
+        this.cobrarDeudaAnterior = false;
         // Refrescamos saldo + listas_activas en un solo fetch al
         // endpoint /saldo/. Más simple que dos requests.
         this.refrescarSaldoCliente();
@@ -990,8 +1009,28 @@
         const pedido = Number(this.saldoAAplicar) || 0;
         return Math.max(0, Math.min(pedido, saldo, this.totalFinal()));
       },
+      deudaAnteriorACobrar() {
+        // Si el cliente debe Y el operador tildó "cobrar deuda anterior",
+        // devuelve el monto positivo de la deuda. Sino 0.
+        // Conscientemente NO permitimos aplicarSaldo Y cobrarDeudaAnterior
+        // a la vez — son mutuamente excluyentes (no podés tener saldo a
+        // favor Y deuda al mismo tiempo, el saldo es uno solo).
+        if (!this.cobrarDeudaAnterior) return 0;
+        const saldo = Number(this.cliente.saldo) || 0;
+        return saldo < 0 ? Math.abs(saldo) : 0;
+      },
       totalACobrar() {
-        return Math.max(0, this.totalFinal() - this.saldoAplicado());
+        // Total a cobrar al cliente HOY:
+        //   = total venta
+        //   - saldo a favor aplicado (si lo hay)
+        //   + deuda anterior (si el operador quiere cobrarla también)
+        // Cuidado con la idempotencia: cada componente se calcula
+        // independiente (no hay efectos secundarios). Llamar totalACobrar()
+        // N veces seguidas da el mismo resultado.
+        return Math.max(
+          0,
+          this.totalFinal() - this.saldoAplicado() + this.deudaAnteriorACobrar(),
+        );
       },
       quedaEnCuenta() {
         // Positivo: pagó de más, queda saldo a favor del cliente.
@@ -1039,6 +1078,10 @@
             // ya cargados.
             aplicar_saldo: this.aplicarSaldo,
             saldo_a_aplicar: String(this.saldoAplicado()),
+            // Flag para que el backend sepa que el exceso del monto_pagado
+            // sobre el total_venta se registre como PAGO (cancela deuda
+            // anterior) en lugar de EXCEDENTE (saldo a favor del cliente).
+            cobrar_deuda_anterior: this.cobrarDeudaAnterior,
             monto_pagado: String(this.montoPagado || 0),
             items,
           };
