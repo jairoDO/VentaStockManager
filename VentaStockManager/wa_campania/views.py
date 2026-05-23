@@ -27,6 +27,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.decorators import user_passes_test
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from . import wa_client
@@ -104,6 +105,7 @@ def api_conexion_restart(request: HttpRequest) -> JsonResponse:
     return JsonResponse(resultado)
 
 
+@csrf_exempt
 @require_POST
 def api_incoming_message(request: HttpRequest) -> JsonResponse:
     """
@@ -111,6 +113,15 @@ def api_incoming_message(request: HttpRequest) -> JsonResponse:
 
     Endpoint que llama el wa-bot por cada mensaje entrante. Decide si
     auto-responder algo o ignorar.
+
+    `@csrf_exempt` porque el bot NO es un browser — no tiene cookies
+    de sesión ni puede leer el csrftoken cookie de Django. La seguridad
+    de este endpoint la da el header X-Bot-Token (validado abajo),
+    NO el sistema de CSRF que está diseñado para forms web.
+
+    Sin esto, Django rechazaba todos los POSTs con 403 (Forbidden) ANTES
+    de llegar al view → el auto-responder nunca se ejecutaba, "lista"
+    nunca generaba SolicitudListaCliente.
 
     Body:
       {
