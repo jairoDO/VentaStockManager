@@ -429,7 +429,16 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
               vuelve a fondo blanco.
             {% endcomment %}
             <td class="px-2 py-1.5 hidden sm:table-cell">
-              <select x-model="item.categoria_id"
+              {% comment %}
+                x-model.number coerciona el value del select a Number al
+                escribir, y al leer compara como Number contra el value
+                renderizado por :value="c.id". Sin esto, Alpine compara
+                String("8") !== Number(8) y el select default-ea a la
+                opción vacía aunque item.categoria_id sí esté seteado
+                (bug visible al cargar desde dump donde categoria_id viene
+                como int del backend).
+              {% endcomment %}
+              <select x-model.number="item.categoria_id"
                       @change="marcarCambio(item.id, 'categoria_id', item.categoria_id || null)"
                       :class="esCeldaModificada(item.id, 'categoria_id') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
                       :style="item.categoria_id && !esCeldaModificada(item.id, 'categoria_id')
@@ -448,7 +457,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
               hay cambio pendiente. Se oculta en mobile + tablet chica.
             {% endcomment %}
             <td class="px-2 py-1.5 hidden md:table-cell">
-              <select x-model="item.proveedor_id"
+              <select x-model.number="item.proveedor_id"
                       @change="marcarCambio(item.id, 'proveedor_id', item.proveedor_id || null)"
                       :class="esCeldaModificada(item.id, 'proveedor_id') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
                       class="w-full border rounded px-1.5 py-1 text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
