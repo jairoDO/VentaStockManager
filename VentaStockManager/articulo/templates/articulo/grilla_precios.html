@@ -430,14 +430,16 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
             {% endcomment %}
             <td class="px-2 py-1.5 hidden sm:table-cell">
               {% comment %}
-                Alpine x-model con <select> + <template x-for> tiene un
-                race condition: el select se inicializa antes que las
-                options del x-for estén en el DOM, y aunque tenga
-                .number modifier no matchea. Workaround: trabajamos
-                categoria_id como STRING en el front (cargar() lo
-                normaliza) y convertimos a int al guardar. Los HTML
-                attrs :value son strings por naturaleza, así que el
-                match string-vs-string es directo.
+                Options renderizadas SERVER-SIDE con Django (en lugar de
+                <template x-for>). Razón: Alpine x-model con select + x-for
+                tiene race condition — al evaluar x-model="item.categoria_id"
+                las options del x-for todavía no están en el DOM, así que
+                select.value = "2" cae a "" silenciosamente. Cuando las
+                options aparecen después, Alpine ya no re-aplica.
+                Con options server-side, están desde el primer render → cero race.
+                Trade-off: si se agrega una categoría sin recargar la página,
+                no aparece en el dropdown del item (sí aparece en el del
+                filtro superior, que usa x-for). Aceptable.
               {% endcomment %}
               <select x-model="item.categoria_id"
                       @change="marcarCambio(item.id, 'categoria_id', item.categoria_id ? Number(item.categoria_id) : null)"
@@ -447,9 +449,9 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                               : ''"
                       class="w-full border rounded px-1.5 py-1 text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
                 <option value="">— Sin categoría —</option>
-                <template x-for="c in opcionesCategorias" :key="c.id">
-                  <option :value="c.id" x-text="c.nombre"></option>
-                </template>
+                {% for c in categorias %}
+                  <option value="{{ c.id }}">{{ c.nombre }}</option>
+                {% endfor %}
               </select>
             </td>
             {% comment %}
@@ -463,9 +465,10 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                       :class="esCeldaModificada(item.id, 'proveedor_id') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
                       class="w-full border rounded px-1.5 py-1 text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
                 <option value="">— Sin proveedor —</option>
-                <template x-for="p in opcionesProveedores" :key="p.id">
-                  <option :value="p.id" x-text="p.nombre"></option>
-                </template>
+                {% comment %}Options server-side, mismo motivo que categoría arriba.{% endcomment %}
+                {% for p in proveedores %}
+                  <option value="{{ p.id }}">{{ p.nombre }}</option>
+                {% endfor %}
               </select>
             </td>
             <td class="px-2 py-1.5 text-right hidden sm:table-cell">
