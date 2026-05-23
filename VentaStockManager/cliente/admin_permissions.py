@@ -96,6 +96,38 @@ class StaffFullAccessAdminMixin:
         return bool(request.user.is_authenticated and request.user.is_superuser)
 
 
+class StaffReadOnlyAdminMixin:
+    """
+    Versión genérica de ArticulosReadOnlyForNonSuperuser para cualquier
+    modelo donde el vendedor puede ver pero no modificar.
+
+    Uso típico: catálogo de metadatos del admin (Rubros, Categorías,
+    ListaPrecios, etc.). El vendedor necesita consultarlos para entender
+    qué hay disponible al cargar una venta, pero NO debería poder
+    cambiar la estructura del negocio (renombrar un rubro, borrar una
+    categoría con histórico, etc.).
+
+    Permisos:
+      - view/module: staff (cualquier user con acceso al admin)
+      - add/change/delete: solo superuser
+    """
+
+    def has_module_permission(self, request) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_staff)
+
+    def has_view_permission(self, request, obj=None) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_staff)
+
+    def has_add_permission(self, request) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_superuser)
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_superuser)
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return bool(request.user.is_authenticated and request.user.is_superuser)
+
+
 class ArticulosReadOnlyForNonSuperuser:
     """
     Mixin específico para ArticuloAdmin: el vendedor PUEDE consultar

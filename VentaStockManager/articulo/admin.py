@@ -14,7 +14,7 @@ from articulo.models import (
 )
 from cliente.admin_permissions import (
     SuperuserOnlyAdminMixin, ArticulosReadOnlyForNonSuperuser,
-    StaffFullAccessAdminMixin,
+    StaffFullAccessAdminMixin, StaffReadOnlyAdminMixin,
 )
 from django_q.tasks import async_task
 from .task import actualizar_precios_articulos_desde_drive
@@ -25,12 +25,16 @@ class ArticuloAdmin(ArticulosReadOnlyForNonSuperuser, admin.ModelAdmin):
 
     # Redirigimos el changelist clásico (/admin/articulo/articulo/) a la
     # grilla custom — es la pantalla canónica para edición masiva.
-    # Mantenemos un escape ?clasico=1 para cuando el operador necesita
-    # las acciones bulk de Django admin (mover categoría, asignar proveedor,
-    # eliminar). La grilla muestra un botón visible "Admin clásico"
-    # que linkea con ese query param para que sea descubrible.
+    # Mantenemos un escape ?clasico=1 para entrar a la vista clásica.
+    #
+    # IMPORTANTE: la redirección SOLO aplica para superuser. Vendedores
+    # no tienen permiso de entrar a la grilla (es solo edit masivo de
+    # precios), así que para ellos el changelist clásico es la única
+    # forma de VER el listado de artículos. Si los redirigíamos a la
+    # grilla, el @superuser_required de la grilla los rebotaba al login
+    # y se generaba un loop confuso ("vuelve al mismo lugar").
     def changelist_view(self, request, extra_context=None):
-        if request.GET.get('clasico') != '1':
+        if request.GET.get('clasico') != '1' and request.user.is_superuser:
             return HttpResponseRedirect(reverse('grilla_precios'))
         return super().changelist_view(request, extra_context=extra_context)
 
@@ -318,7 +322,7 @@ class CategoriaInlineEnRubro(admin.TabularInline):
     show_change_link = True
 
 
-class RubroAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
+class RubroAdmin(StaffReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin del Rubro (Golosinas, Bebidas, Almacén, …). Lo edita el
     superuser/admin al setear la estructura inicial; el vendedor lo
@@ -358,7 +362,7 @@ class RubroAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     cantidad_categorias.admin_order_field = '_n_categorias'
 
 
-class CategoriaAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
+class CategoriaAdmin(StaffReadOnlyAdminMixin, admin.ModelAdmin):
     icon_name = 'category'
     list_display = ('nombre_con_color', 'rubro', 'descripcion_corta', 'cantidad_articulos', 'cantidad_reglas')
     list_filter = ('rubro',)

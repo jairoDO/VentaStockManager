@@ -232,13 +232,13 @@ class MyAdminSite(MaterialAdminSite):
                     })
                     break
 
-            # Rubros: redirigimos la card del admin clásico a la pantalla
-            # Alpine custom en /rubros/. El modelo sigue registrado en el
-            # admin (Django necesita esto para que ciertos hooks como el
-            # autocomplete y los related_links funcionen), pero el operador
-            # NUNCA debería ver el form clásico — la pantalla Alpine es
-            # mucho más eficiente para el setup (asignar categorías de
-            # un saque con checkboxes).
+            # Rubros (solo superuser): redirigimos la card del admin clásico
+            # a la pantalla Alpine custom /rubros/. El modelo sigue registrado
+            # en el admin para autocomplete y related_links.
+            #
+            # Para vendedores NO se override la URL — la pantalla Alpine
+            # rebota a no-superuser. El vendedor entra al admin clásico
+            # de Rubro que está en modo read-only (ver StaffReadOnlyAdminMixin).
             for app in app_list:
                 if app.get('app_label') == 'articulo':
                     for m in app['models']:

@@ -98,16 +98,26 @@ def _login_sheets():
         raw = raw.lstrip('﻿')
     raw = raw.replace('\r\n', '\n').replace('\r', '\n')
 
+    # Parser tolerante: strict=False permite caracteres de control dentro
+    # de strings JSON (típicamente \t, \v u otros que aparecen cuando el
+    # archivo pasa por un editor en el browser). Esto es exactamente para
+    # lo que existe la flag — perfectamente safe para credenciales SA.
     try:
-        info = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise CommandError(
-            f'El JSON de credenciales está corrupto: {e}. '
-            f'Re-subí el Secret File en Render asegurándote de que '
-            f'sea el JSON original sin modificaciones (en Render Dashboard '
-            f'→ Environment → Secret Files, click en el archivo y pega '
-            f'el JSON crudo, no lo edites en el navegador).'
-        )
+        info = json.loads(raw, strict=False)
+    except json.JSONDecodeError:
+        # Último recurso: strip de TODOS los control chars 0x00-0x1F
+        # excepto \t \n \r (que son whitespace JSON válido).
+        import re
+        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
+        try:
+            info = json.loads(cleaned, strict=False)
+        except json.JSONDecodeError as e:
+            raise CommandError(
+                f'El JSON de credenciales está corrupto incluso después '
+                f'de limpiar control chars: {e}. Re-bajá las credenciales '
+                f'de Google Cloud Console y subilas de nuevo al Secret File '
+                f'de Render SIN editarlas en el browser.'
+            )
 
     try:
         credentials = service_account.Credentials.from_service_account_info(
