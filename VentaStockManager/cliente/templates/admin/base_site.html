@@ -53,10 +53,12 @@ el link al final.
             💬 WhatsApp
         </a>
     {% endif %}
-    {# Los badges de alertas/solicitudes apuntan a admins restringidos a
-       superuser. Para vendedores no tiene sentido mostrar el link (el
-       admin tiraría 403). Si necesitan ver esa info, el superuser se
-       las acerca. #}
+    {% comment %}
+      Los badges de alertas/solicitudes apuntan a admins restringidos a
+      superuser. Para vendedores no tiene sentido mostrar el link (el
+      admin tiraría 403). Si necesitan ver esa info, el superuser se
+      las acerca.
+    {% endcomment %}
     {% if user.is_superuser and alertas_stock_pendientes %}
         <a href="/admin/venta/alertastock/?revisada__exact=0"
            class="badge-alertas-stock"

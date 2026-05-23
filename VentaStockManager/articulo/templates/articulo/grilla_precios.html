@@ -286,9 +286,11 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                      class="mt-1 w-24 border border-blue-300 rounded px-1.5 py-1 text-xs font-mono">
             </td>
             <td class="px-2 py-1.5">
-              {# En mobile, ya que escondimos la columna "Código", mostramos
-                 el badge NUEVO acá arriba del nombre para que el operador
-                 sepa que es nuevo. En desktop el badge va en su columna. #}
+              {% comment %}
+                En mobile, ya que escondimos la columna "Código", mostramos
+                el badge NUEVO acá arriba del nombre para que el operador
+                sepa que es nuevo. En desktop el badge va en su columna.
+              {% endcomment %}
               <span class="sm:hidden inline-block px-2 py-0.5 rounded bg-blue-600 text-white text-[10px] font-semibold mb-1">NUEVO</span>
               <input type="text"
                      x-model="nuevo.nombre"
@@ -299,9 +301,11 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                      x-model="nuevo.marca"
                      placeholder="Marca"
                      class="mt-1 w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
-              {# En mobile, ofrecer código aquí también — más chico — porque
-                 la columna Código está escondida. Si querés ignorar el código,
-                 lo dejás vacío y el sistema genera uno automáticamente. #}
+              {% comment %}
+                En mobile, ofrecer código aquí también — más chico — porque
+                la columna Código está escondida. Si querés ignorar el código,
+                lo dejás vacío y el sistema genera uno automáticamente.
+              {% endcomment %}
               <input type="text"
                      x-model="nuevo.codigo"
                      placeholder="Código (opcional)"
@@ -373,8 +377,10 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
               <div x-text="item.nombre" class="font-medium"></div>
               <div class="text-xs text-slate-500" x-show="item.marca && item.marca !== 'Generico'"
                    x-text="item.marca"></div>
-              {# En mobile mostramos código + categoría chiquitos debajo del
-                 nombre para que el operador igual los vea sin scroll horizontal. #}
+              {% comment %}
+                En mobile mostramos código + categoría chiquitos debajo del
+                nombre para que el operador igual los vea sin scroll horizontal.
+              {% endcomment %}
               <div class="sm:hidden text-[10px] text-slate-400 font-mono mt-0.5"
                    x-text="'Cód: ' + (item.codigo || '—')"></div>
             </td>
