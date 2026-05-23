@@ -588,9 +588,31 @@ async function handleIncomingMessage(msg) {
   const text = extractText(msg);
   if (!text || !text.trim()) return;
 
-  // Sacar el número del JID. Formato: '5491155551234@s.whatsapp.net'
-  // o '5491155551234:NN@s.whatsapp.net' (con sufijo de device id).
-  const fromDigits = remoteJid.split('@')[0].split(':')[0];
+  // Sacar el NÚMERO REAL del cliente. Acá había un bug grueso:
+  //
+  // WhatsApp puede mandar mensajes con `remoteJid` en formato `@lid`
+  // (Linked Identity, ej. "130459681976522@lid") en vez del PN real
+  // (ej. "5493512894229@s.whatsapp.net"). Esto pasa cuando el chat
+  // está mapeado a una linked identity (común en cuentas business o
+  // multi-device). El número del LID NO es el número telefónico — es
+  // un ID interno de WhatsApp que NO existe en nuestra DB de clientes.
+  //
+  // Resultado del bug: el bot loggeaba "cliente_desconocido" para
+  // mensajes reales de clientes que SÍ están cargados, porque
+  // buscaba por "130459681976522" en lugar de "5493512894229".
+  //
+  // Fix: si el JID es @lid, preferir senderPn (1:1) o participantPn
+  // (grupos, aunque acá ya están filtrados) que contiene el PN real.
+  // Fallback al remoteJid solo si no hay PN (chats viejos sin LID).
+  let realJid = remoteJid;
+  if (remoteJid.endsWith('@lid')) {
+    realJid = msg.key.senderPn || msg.key.participantPn || remoteJid;
+    if (realJid === remoteJid) {
+      console.log(`[wa-bot] LID sin PN resoluble: ${remoteJid} — ignorando.`);
+      return;
+    }
+  }
+  const fromDigits = realJid.split('@')[0].split(':')[0];
 
   // Llamar a Django para que decida qué hacer.
   let resultado;
