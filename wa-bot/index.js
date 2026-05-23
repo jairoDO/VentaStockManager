@@ -127,15 +127,20 @@ function toJID(phone) {
   let digits = phone.replace(/\D/g, '');
   if (!digits) return null;
 
-  // Auto-prefijo AR. Todos los clientes son argentinos: si vemos un
-  // número corto sin código país, lo completamos. Reglas iguales al
-  // normalizador Python en `cliente/phone_utils.py` (mantener en sync).
+  // Auto-prefijo AR — pero SOLO si el número parece argentino "corto".
+  // Si el número ya tiene 11+ dígitos y NO empieza con 54, asumimos que
+  // es internacional (ej. +61 Australia, +1 USA, +44 UK) y NO le tocamos
+  // el prefijo. Antes anteponíamos '54' a TODO 11+ sin 54 → rompía
+  // mensajes a clientes/contactos no-AR (ej. 61451347124 → 5461451347124).
+  //
+  // Reglas iguales al normalizador Python en cliente/phone_utils.py
+  // (mantener en sync).
   if (digits.startsWith('0')) digits = digits.replace(/^0+/, '');  // 0 prefijo nacional AR
   if (digits.length === 10 && !digits.startsWith('54')) {
-    digits = '549' + digits;  // móvil AR sin internacional
-  } else if (digits.length >= 11 && !digits.startsWith('54')) {
-    digits = '54' + digits;   // con código de área pero sin país
+    digits = '549' + digits;  // móvil AR sin internacional → completar
   }
+  // 11+ dígitos sin 54: dejamos como está (asumimos internacional).
+  // 11+ dígitos con 54: ya está formateado correctamente.
 
   return `${digits}@s.whatsapp.net`;
 }

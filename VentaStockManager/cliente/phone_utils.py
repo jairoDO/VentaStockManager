@@ -35,12 +35,19 @@ def normalizar_telefono_ar(telefono_raw: str) -> str:
       - Empieza con '0' (prefijo nacional AR) → lo sacamos.
       - Empieza con '15' sin área (≤10 dígitos) → '' (ambiguo).
       - 10 dígitos sin código → móvil AR sin internacional, prepend '549'.
-      - 11+ dígitos sin 54 → prepend '54' y mejor esfuerzo.
+      - 11+ dígitos SIN 54 → devolver TAL CUAL (asumir internacional).
 
     Esta heurística la diseñamos para el dump legacy de Golosinas Insa
     (formato libre, escrito a mano por años). NO es un parser robusto
     de E.164 — si en algún momento se interna en otros países, mejor
     usar python-phonenumbers (pesa más, dependencia extra).
+
+    Histórico: antes anteponíamos '54' a cualquier número de 11+ dígitos
+    sin código país AR. Eso ROMPÍA números internacionales (ej.
+    `61451347124` → `5461451347124` → no existe en WA). Ahora si tiene
+    11+ dígitos lo asumimos internacional. Si un usuario AR carga
+    "9351345 2496" (11 digitos sin 54), va a fallar — el operador
+    tiene que cargar 549... completo o solo los 10 dígitos del móvil.
     """
     if not telefono_raw:
         return ''
@@ -67,7 +74,9 @@ def normalizar_telefono_ar(telefono_raw: str) -> str:
     # 10 dígitos → móvil AR sin internacional. Anteponemos 549.
     if len(digitos) == 10:
         return '549' + digitos
-    # 11+ dígitos sin 54 → anteponemos 54 (mejor esfuerzo).
+    # 11+ dígitos sin 54 → asumimos número internacional ya formateado,
+    # devolvemos TAL CUAL. Antes hacíamos prepend de '54' acá, lo que
+    # convertía 61451347124 (Australia) en 5461451347124 (no existe).
     if len(digitos) >= 11:
-        return '54' + digitos
+        return digitos
     return ''
