@@ -230,20 +230,33 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
   <div class="bg-white shadow rounded-lg overflow-x-auto">
     <table class="w-full text-sm">
       <thead class="bg-slate-100 text-left text-xs uppercase text-slate-600 border-b">
+        {% comment %}
+          Mobile-first: en pantallas chicas (< sm = 640px) escondemos las
+          columnas menos críticas para que el NOMBRE tenga el máximo
+          espacio. El operador en celular usa principalmente nombre +
+          precios. Código/categoría/proveedor/umbral son metadata que
+          puede consultar desde el detalle si necesita.
+
+          Visible siempre (mobile + desktop):
+            ☐ checkbox · Nombre · Min · May (precios = lo importante)
+
+          Solo desktop (hidden sm:table-cell):
+            Código · Categoría · Proveedor · Stock · Umbral
+        {% endcomment %}
         <tr>
           <th class="px-2 py-2 w-8">
             <input type="checkbox"
                    :checked="seleccionadosTodosEnPagina()"
                    @change="toggleSeleccionarTodosEnPagina($event.target.checked)">
           </th>
-          <th class="px-2 py-2">Código</th>
+          <th class="px-2 py-2 hidden sm:table-cell">Código</th>
           <th class="px-2 py-2">Nombre</th>
-          <th class="px-2 py-2">Categoría</th>
-          <th class="px-2 py-2">Proveedor</th>
-          <th class="px-2 py-2 text-right">Stock</th>
+          <th class="px-2 py-2 hidden sm:table-cell">Categoría</th>
+          <th class="px-2 py-2 hidden md:table-cell">Proveedor</th>
+          <th class="px-2 py-2 text-right hidden sm:table-cell">Stock</th>
           <th class="px-2 py-2 text-right">Min</th>
           <th class="px-2 py-2 text-right">May</th>
-          <th class="px-2 py-2 text-right">Umbral</th>
+          <th class="px-2 py-2 text-right hidden md:table-cell">Umbral</th>
         </tr>
       </thead>
       <tbody>
@@ -265,7 +278,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                       title="Cancelar (no se guarda)"
                       class="text-red-600 hover:text-red-800 text-lg leading-none">×</button>
             </td>
-            <td class="px-2 py-1.5">
+            <td class="px-2 py-1.5 hidden sm:table-cell">
               <span class="inline-block px-2 py-0.5 rounded bg-blue-600 text-white text-xs font-semibold">NUEVO</span>
               <input type="text"
                      x-model="nuevo.codigo"
@@ -273,6 +286,10 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                      class="mt-1 w-24 border border-blue-300 rounded px-1.5 py-1 text-xs font-mono">
             </td>
             <td class="px-2 py-1.5">
+              {# En mobile, ya que escondimos la columna "Código", mostramos
+                 el badge NUEVO acá arriba del nombre para que el operador
+                 sepa que es nuevo. En desktop el badge va en su columna. #}
+              <span class="sm:hidden inline-block px-2 py-0.5 rounded bg-blue-600 text-white text-[10px] font-semibold mb-1">NUEVO</span>
               <input type="text"
                      x-model="nuevo.nombre"
                      placeholder="Nombre del artículo *"
@@ -282,8 +299,15 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                      x-model="nuevo.marca"
                      placeholder="Marca"
                      class="mt-1 w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
+              {# En mobile, ofrecer código aquí también — más chico — porque
+                 la columna Código está escondida. Si querés ignorar el código,
+                 lo dejás vacío y el sistema genera uno automáticamente. #}
+              <input type="text"
+                     x-model="nuevo.codigo"
+                     placeholder="Código (opcional)"
+                     class="sm:hidden mt-1 w-full border border-blue-300 rounded px-1.5 py-1 text-xs font-mono">
             </td>
-            <td class="px-2 py-1.5">
+            <td class="px-2 py-1.5 hidden sm:table-cell">
               <select x-model="nuevo.categoria_id"
                       class="w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
                 <option value="">— Sin categoría —</option>
@@ -292,7 +316,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                 </template>
               </select>
             </td>
-            <td class="px-2 py-1.5">
+            <td class="px-2 py-1.5 hidden md:table-cell">
               <select x-model="nuevo.proveedor_id"
                       class="w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
                 <option value="">— Sin proveedor —</option>
@@ -306,7 +330,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                      x-model="nuevo.vencimiento"
                      class="mt-1 w-full border border-blue-300 rounded px-1.5 py-1 text-xs">
             </td>
-            <td class="px-2 py-1.5 text-right">
+            <td class="px-2 py-1.5 text-right hidden sm:table-cell">
               <input type="number" min="0" step="1"
                      x-model="nuevo.stock"
                      class="w-20 border border-blue-300 rounded px-1.5 py-1 text-right">
@@ -314,14 +338,14 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
             <td class="px-2 py-1.5 text-right">
               <input type="number" min="0" step="0.01"
                      x-model="nuevo.precio_minorista"
-                     class="w-24 border border-blue-300 rounded px-1.5 py-1 text-right">
+                     class="w-20 sm:w-24 border border-blue-300 rounded px-1.5 py-1 text-right">
             </td>
             <td class="px-2 py-1.5 text-right">
               <input type="number" min="0" step="0.01"
                      x-model="nuevo.precio_mayorista"
-                     class="w-24 border border-blue-300 rounded px-1.5 py-1 text-right">
+                     class="w-20 sm:w-24 border border-blue-300 rounded px-1.5 py-1 text-right">
             </td>
-            <td class="px-2 py-1.5 text-right">
+            <td class="px-2 py-1.5 text-right hidden md:table-cell">
               <input type="number" min="0" step="1"
                      x-model="nuevo.cantidad_por_mayor"
                      class="w-20 border border-blue-300 rounded px-1.5 py-1 text-right">
@@ -337,17 +361,22 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                      :checked="seleccionados.has(item.id)"
                      @change="toggleSeleccion(item.id, $event.target.checked)">
             </td>
-            <td class="px-2 py-1.5 font-mono text-xs">
+            <td class="px-2 py-1.5 font-mono text-xs hidden sm:table-cell">
               {% comment %}
                 `codigo_interno` se oculta deliberadamente — el usuario no lo usa.
                 Mostramos solo el `codigo` real del artículo.
+                En mobile esta columna entera se oculta (espacio para el nombre).
               {% endcomment %}
               <div x-text="item.codigo"></div>
             </td>
             <td class="px-2 py-1.5">
-              <div x-text="item.nombre"></div>
+              <div x-text="item.nombre" class="font-medium"></div>
               <div class="text-xs text-slate-500" x-show="item.marca && item.marca !== 'Generico'"
                    x-text="item.marca"></div>
+              {# En mobile mostramos código + categoría chiquitos debajo del
+                 nombre para que el operador igual los vea sin scroll horizontal. #}
+              <div class="sm:hidden text-[10px] text-slate-400 font-mono mt-0.5"
+                   x-text="'Cód: ' + (item.codigo || '—')"></div>
             </td>
             {% comment %}
               Categoría editable inline. Mostramos un <select> compacto.
@@ -361,7 +390,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
               señal visual del badge original. Si está en "sin categoría"
               vuelve a fondo blanco.
             {% endcomment %}
-            <td class="px-2 py-1.5">
+            <td class="px-2 py-1.5 hidden sm:table-cell">
               <select x-model="item.categoria_id"
                       @change="marcarCambio(item.id, 'categoria_id', item.categoria_id || null)"
                       :class="esCeldaModificada(item.id, 'categoria_id') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
@@ -378,9 +407,9 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
             {% comment %}
               Proveedor también editable inline. Mismo patrón que
               categoría — un select compacto con borde ámbar cuando
-              hay cambio pendiente.
+              hay cambio pendiente. Se oculta en mobile + tablet chica.
             {% endcomment %}
-            <td class="px-2 py-1.5">
+            <td class="px-2 py-1.5 hidden md:table-cell">
               <select x-model="item.proveedor_id"
                       @change="marcarCambio(item.id, 'proveedor_id', item.proveedor_id || null)"
                       :class="esCeldaModificada(item.id, 'proveedor_id') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
@@ -391,7 +420,7 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                 </template>
               </select>
             </td>
-            <td class="px-2 py-1.5 text-right">
+            <td class="px-2 py-1.5 text-right hidden sm:table-cell">
               <input type="number" min="0" step="1"
                      x-model="item.stock"
                      @input="marcarCambio(item.id, 'stock', item.stock)"
@@ -403,16 +432,16 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
                      x-model="item.precio_minorista"
                      @input="marcarCambio(item.id, 'precio_minorista', item.precio_minorista)"
                      :class="esCeldaModificada(item.id, 'precio_minorista') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
-                     class="w-24 border rounded px-1.5 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
+                     class="w-20 sm:w-24 border rounded px-1.5 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
             </td>
             <td class="px-2 py-1.5 text-right">
               <input type="number" min="0" step="0.01"
                      x-model="item.precio_mayorista"
                      @input="marcarCambio(item.id, 'precio_mayorista', item.precio_mayorista)"
                      :class="esCeldaModificada(item.id, 'precio_mayorista') ? 'border-amber-400 bg-amber-50' : 'border-slate-200'"
-                     class="w-24 border rounded px-1.5 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
+                     class="w-20 sm:w-24 border rounded px-1.5 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:border-blue-400">
             </td>
-            <td class="px-2 py-1.5 text-right">
+            <td class="px-2 py-1.5 text-right hidden md:table-cell">
               <input type="number" min="0" step="1"
                      x-model="item.cantidad_por_mayor"
                      @input="marcarCambio(item.id, 'cantidad_por_mayor', item.cantidad_por_mayor)"
