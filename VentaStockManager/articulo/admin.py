@@ -70,6 +70,20 @@ class ArticuloAdmin(ArticulosReadOnlyForNonSuperuser, admin.ModelAdmin):
         'asignar_proveedor_action',
     ]
 
+    def get_actions(self, request):
+        """
+        Las bulk actions (aumentar 10%, mover categoría, asignar
+        proveedor, etc.) modifican datos. El vendedor ve el listado
+        de artículos en modo READ-ONLY (via ArticulosReadOnlyForNonSuperuser),
+        pero Django igual le muestra el dropdown de acciones porque
+        puede ver el changelist. Acá lo cortamos: si NO es superuser,
+        devolvemos un dict vacío → el dropdown de acciones no aparece.
+        """
+        actions = super().get_actions(request)
+        if not request.user.is_superuser:
+            return {}
+        return actions
+
     @admin.action(description='Asignar proveedor a los seleccionados…')
     def asignar_proveedor_action(self, request, queryset):
         """
