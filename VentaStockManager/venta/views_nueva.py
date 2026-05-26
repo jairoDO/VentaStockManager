@@ -185,9 +185,14 @@ def api_articulos_buscar(request):
     """
     Búsqueda de artículos por nombre/código/marca para el autocomplete.
 
-    Filtramos `stock > 0` porque la nueva pantalla es para cargar
-    ventas reales y no queremos permitir vender lo que no hay. Si en
-    el futuro queremos backorder, este filtro se relaja acá.
+    Antes filtrábamos `stock > 0` para evitar "vender lo que no hay",
+    pero eso ocultaba artículos nuevos (que arrancan con stock=0 al
+    crearse desde la grilla) y la mayoría del dump (que se cargó con
+    stock=0). El sistema de AlertaStock ya cubre el caso: si una venta
+    descuenta stock y queda en negativo, se registra una alerta para
+    que el admin reponga. Entonces es mejor MOSTRAR todos los artículos
+    en la búsqueda y dejar que el operador decida — el front pone un
+    badge "sin stock" para que sea visible.
 
     Param opcional `cliente_id`: si viene, para cada artículo
     consultamos si hay un PrecioCliente y, en caso afirmativo, el
@@ -213,14 +218,15 @@ def api_articulos_buscar(request):
 
     qs = (
         Articulo.objects
-        .filter(stock__gt=0)
         .filter(
             Q(nombre__icontains=q)
             | Q(codigo__icontains=q)
             | Q(codigo_interno__icontains=q)
             | Q(marca__icontains=q)
         )
-        .order_by('codigo')[:20]
+        # Orden: primero los que SÍ tienen stock (stock > 0), después
+        # los que no. Dentro de cada grupo, por código.
+        .order_by('-stock', 'codigo')[:20]
     )
     articulos = list(qs)
 
