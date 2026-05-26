@@ -191,6 +191,17 @@
                           con un click en la línea correspondiente.
                         {% endcomment %}
                         <div class="flex gap-1 flex-wrap">
+                          {% comment %}
+                            Badge stock=0: el articulo se puede vender igual
+                            (AlertaStock registra el faltante automaticamente)
+                            pero le avisamos al operador que confirme con
+                            depositoo antes de prometer al cliente.
+                          {% endcomment %}
+                          <span x-show="Number(a.stock) <= 0" x-cloak
+                                class="text-xs px-2 py-0.5 bg-orange-200 text-orange-900 rounded font-semibold"
+                                title="No hay stock cargado. Confirmá con depósito antes de venderlo.">
+                            ⚠ preguntar stock
+                          </span>
                           <span x-show="a.tiene_precio_pactado" x-cloak
                                 class="text-xs px-2 py-0.5 bg-amber-200 text-amber-900 rounded font-semibold">
                             ⭐ pactado $<span x-text="a.precio_pactado"></span>
@@ -219,6 +230,16 @@
                 <div x-show="item.articulo_id" x-cloak class="text-xs text-slate-600 mt-1">
                   <span x-text="item.articulo_label"></span>
                   <span class="text-slate-400">· stock <span x-text="item.stock_disponible"></span></span>
+                  {% comment %}
+                    Reforzar el aviso de stock=0 también en la línea ya
+                    cargada — el operador puede haber elegido el articulo
+                    rápido sin ver el badge del dropdown.
+                  {% endcomment %}
+                  <span x-show="Number(item.stock_disponible) <= 0" x-cloak
+                        class="ml-1 inline-block px-1.5 py-0 bg-orange-200 text-orange-900 rounded text-[10px] font-semibold align-middle"
+                        title="No hay stock cargado. Confirmá con depósito antes de prometer al cliente.">
+                    ⚠ preguntar stock
+                  </span>
                 </div>
               </td>
               <td class="py-2 pr-3 text-right">
