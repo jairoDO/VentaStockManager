@@ -182,7 +182,7 @@
                             :class="a.tiene_precio_pactado ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-blue-50'"
                             class="w-full text-left px-3 py-2 border-b border-slate-100 last:border-0">
                       <div class="font-medium flex justify-between items-center">
-                        <span x-text="a.marca + ' — ' + a.nombre"></span>
+                        <span x-text="articuloLabel(a)"></span>
                         {% comment %}
                           Badges en el dropdown: SOLO informativos (avisan que
                           hay acuerdo y/o que el artículo está en la lista del
@@ -759,6 +759,19 @@
         item.results = data.results || [];
         item.dropdownAbierto = true;
       },
+
+      // Devuelve el label a mostrar de un artículo en el buscador y en
+      // la línea de venta. Si la marca está vacía o es "Generico"
+      // (default cuando el operador no carga marca), mostramos solo
+      // el nombre. Sino, "marca — nombre". Evita los molestos
+      // " — Pan dulce" que aparecían antes con artículos sin marca real.
+      articuloLabel(a) {
+        if (!a) return '';
+        const marca = (a.marca || '').trim();
+        if (!marca || marca.toLowerCase() === 'generico') return a.nombre;
+        return `${marca} — ${a.nombre}`;
+      },
+
       seleccionarArticulo(idx, a) {
         // Detección de duplicados: si el artículo elegido ya está cargado
         // en OTRA fila de la venta, preguntamos si sumar cantidad ahí en
@@ -783,7 +796,7 @@
           this.abrirModal({
             tipo: 'confirm',
             titulo: 'Artículo duplicado',
-            mensaje: `"${a.marca} — ${a.nombre}" ya está cargado en la fila ${otraFilaIdx + 1} `
+            mensaje: `"${this.articuloLabel(a)}" ya está cargado en la fila ${otraFilaIdx + 1} `
                    + `con cantidad ${cantActualSnapshot}. `
                    + `¿Sumar ${cantNuevaSnapshot}? (Quedaría ≈ ${totalSnapshot}, `
                    + `o el valor que tenga la fila al confirmar si la modificaste.)`,
@@ -817,7 +830,7 @@
 
         const item = this.items[idx];
         item.articulo_id = a.id;
-        item.articulo_label = `${a.marca} — ${a.nombre}`;
+        item.articulo_label = this.articuloLabel(a);
         item.query = item.articulo_label;
         // precio_sugerido ahora SIEMPRE es el normal (sin pactado) — el
         // backend cambió en 2026-05. El pactado se aplica con click.

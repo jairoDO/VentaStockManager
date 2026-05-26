@@ -949,10 +949,17 @@ def venta_editar(request, id):
         else:
             from venta.utils import parse_precio
             precio_str = str(parse_precio(av.precio))
+        # Si la marca es vacía o "Generico" (default), no la mostramos
+        # en el label — quedaba feo el ' — Pan dulce' con guión vacío.
+        marca = (av.articulo.marca or '').strip()
+        if marca and marca.lower() != 'generico':
+            label = f'{marca} — {av.articulo.nombre}'
+        else:
+            label = av.articulo.nombre
         items.append({
             'id': av.id,
             'articulo_id': av.articulo_id,
-            'articulo_label': f'{av.articulo.codigo_interno or ""} {av.articulo.marca or ""} {av.articulo.nombre}',
+            'articulo_label': label,
             'cantidad': av.cantidad,
             'precio': precio_str,
             'descuento_porcentaje': str(getattr(av, 'descuento_porcentaje', 0) or 0),
