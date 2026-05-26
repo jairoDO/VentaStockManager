@@ -195,10 +195,33 @@ async function startSock() {
     // Browser fingerprint para que WhatsApp nos identifique
     // razonablemente. El array es [name, browser, version].
     browser: ['VentaStockManager', 'Chrome', '120.0.0'],
-    // Sync de mensajes históricos al conectar. Nosotros solo enviamos
-    // (no leemos historia), así que apagamos para arrancar más rápido
-    // y consumir menos memoria.
+    // ── Optimizaciones de bandwidth ─────────────────────────────────
+    // Nuestro caso de uso es: enviar mensajes (listas de precios,
+    // recordatorios, respuestas automáticas a "lista"/"saldo"). NO
+    // leemos historial, NO procesamos media. Las flags de abajo
+    // recortan ~80% del consumo de Baileys, que era el principal
+    // chupador de banda en Render (5GB/semana al primer plan Hobby).
+    //
+    // syncFullHistory: false — no descargar histórico completo al
+    //   loguearse. Aun así Baileys baja un "delta" pequeño por
+    //   default. Lo recortamos abajo.
     syncFullHistory: false,
+    // shouldSyncHistoryMessage: rechazar TODOS los notify de
+    //   historial. Cuando Baileys recibe un push de "mensaje pasado"
+    //   (typicamente al re-conectar), lo descarta sin descargar
+    //   media adjunta. Para auto-respuesta solo necesitamos NUEVOS.
+    shouldSyncHistoryMessage: () => false,
+    // markOnlineOnConnect: false — no mandar "online" al servidor.
+    //   Reduce el handshake inicial + no notifica a contactos que
+    //   el bot está activo. (Side effect deseado: los clientes no
+    //   ven el check azul/online del número del bot.)
+    markOnlineOnConnect: false,
+    // getMessage: cuando WhatsApp pide retry de un mensaje viejo
+    //   (típicamente cuando el otro lado no recibió un decrypt),
+    //   normalmente Baileys lo busca en su store. Como no guardamos
+    //   store, devolvemos undefined → Baileys deja de intentar
+    //   reenviar mensajes históricos.
+    getMessage: async () => undefined,
   });
 
   // Persistir credenciales cuando cambien (después de cada handshake).
