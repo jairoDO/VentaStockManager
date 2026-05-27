@@ -660,7 +660,37 @@ class Articulo(models.Model):
                 # ninguno que apuntar a un Articulo recién borrado).
                 pass
 
+        # ¿Cambió el stock en este save? Lo evaluamos para auto-resolver
+        # alertas de reposición DESPUÉS del super().save() (cuando el
+        # stock nuevo ya está persistido).
+        stock_tocado = (update_fields is None or 'stock' in update_fields)
+
         super().save(*args, **kwargs)
+
+        # ---- Auto-resolver alertas de stock cuando se repone ----
+        # Si el stock quedó por ARRIBA del umbral (stock_minimo), las
+        # AlertaStock pendientes (sin revisar) de este artículo ya no
+        # aplican — el operador repuso. Las marcamos como revisadas
+        # automáticamente para que el badge "⚠ N alertas" baje solo.
+        #
+        # Umbral: si stock_minimo > 0, usamos ese; sino, basta con que
+        # haya stock (> 0). Solo corremos si el stock se tocó en este
+        # save (evita queries innecesarias en saves de precio/nombre).
+        if self.pk and stock_tocado:
+            umbral = self.stock_minimo or 0
+            stock_ok = (self.stock or 0) > umbral if umbral > 0 else (self.stock or 0) > 0
+            if stock_ok:
+                from venta.models import AlertaStock
+                n = (
+                    AlertaStock.objects
+                    .filter(articulo_id=self.pk, revisada=False)
+                    .update(revisada=True, revisada_at=timezone.now())
+                )
+                if n:
+                    print(
+                        f'[ARTICULO {self.pk}] stock repuesto a {self.stock} '
+                        f'(umbral {umbral}) → {n} alerta(s) auto-resuelta(s).'
+                    )
 
         if precio_cambio:
             # Borrar los PrecioCliente del artículo en una sola query.
