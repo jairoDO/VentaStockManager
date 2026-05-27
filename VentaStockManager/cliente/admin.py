@@ -6,9 +6,13 @@ from django.core.exceptions import ValidationError
 from django.db.models import Sum, Subquery, OuterRef, Value, Count
 from django.db.models.functions import Coalesce
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.html import format_html
 
-from cliente.models import Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente
+from cliente.models import (
+    Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente,
+    AlertaClienteInactivo,
+)
 from cliente.admin_permissions import SuperuserOnlyAdminMixin, StaffFullAccessAdminMixin
 
 
@@ -668,3 +672,93 @@ class PrecioClienteAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
         if not change and obj.creado_por is None:
             obj.creado_por = request.user
         super().save_model(request, obj, form, change)
+
+
+# ---------------------------------------------------------------------------
+# Alertas de clientes inactivos (solo superuser)
+# ---------------------------------------------------------------------------
+class AlertaClienteInactivoAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
+    """
+    Bandeja de "clientes que dejaron de comprar". Las genera la task
+    diaria `cliente.tasks_inactividad`. El operador entra acá para ver
+    quién se está "yendo" y recontactarlo. Se autoresuelven cuando el
+    cliente vuelve a comprar (ver Venta.save), pero también se pueden
+    marcar revisadas a mano desde acá.
+    """
+    icon_name = 'person_off'
+    list_display = (
+        'created_at',
+        'cliente_link',
+        'ultima_compra',
+        'dias_inactivo',
+        'revisada_badge',
+    )
+    # Por default solo las pendientes (sin revisar) son las que importan.
+    list_filter = ('revisada', 'created_at')
+    search_fields = ('cliente__nombre', 'cliente__apellido', 'cliente__telefono')
+    readonly_fields = (
+        'cliente', 'ultima_compra', 'dias_inactivo',
+        'created_at', 'revisada_at', 'revisada_por',
+    )
+    fields = (
+        'cliente',
+        ('ultima_compra', 'dias_inactivo'),
+        'created_at',
+        'revisada',
+        ('revisada_at', 'revisada_por'),
+    )
+    actions = ['accion_marcar_revisadas', 'accion_marcar_no_revisadas']
+    date_hierarchy = 'created_at'
+    list_select_related = ('cliente',)
+    ordering = ('-created_at',)
+
+    def cliente_link(self, obj):
+        return format_html(
+            '<a href="/clientes/{}/extracto/" target="_blank">{}</a>',
+            obj.cliente_id, obj.cliente.nombre_completo(),
+        )
+    cliente_link.short_description = 'Cliente'
+    cliente_link.admin_order_field = 'cliente__nombre'
+
+    def revisada_badge(self, obj):
+        if obj.revisada:
+            return format_html(
+                '<span style="color: #2e7d32; font-weight: bold;">✓ revisada</span>'
+            )
+        return format_html(
+            '<span style="color: #c62828; font-weight: bold;">⚠ pendiente</span>'
+        )
+    revisada_badge.short_description = 'Estado'
+    revisada_badge.admin_order_field = 'revisada'
+
+    def save_model(self, request, obj, form, change):
+        # Firmar quién marcó/desmarcó `revisada`.
+        if change:
+            try:
+                anterior = AlertaClienteInactivo.objects.get(pk=obj.pk)
+            except AlertaClienteInactivo.DoesNotExist:
+                anterior = None
+            if anterior and anterior.revisada != obj.revisada:
+                if obj.revisada:
+                    obj.revisada_at = timezone.now()
+                    obj.revisada_por = request.user
+                else:
+                    obj.revisada_at = None
+                    obj.revisada_por = None
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description='Marcar seleccionadas como revisadas')
+    def accion_marcar_revisadas(self, request, queryset):
+        n = queryset.filter(revisada=False).update(
+            revisada=True,
+            revisada_at=timezone.now(),
+            revisada_por=request.user,
+        )
+        self.message_user(request, f'{n} alertas marcadas como revisadas.', level=messages.SUCCESS)
+
+    @admin.action(description='Marcar seleccionadas como NO revisadas (reabrir)')
+    def accion_marcar_no_revisadas(self, request, queryset):
+        n = queryset.filter(revisada=True).update(
+            revisada=False, revisada_at=None, revisada_por=None,
+        )
+        self.message_user(request, f'{n} alertas reabiertas.', level=messages.WARNING)

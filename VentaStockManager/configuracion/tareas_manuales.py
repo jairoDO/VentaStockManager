@@ -102,6 +102,21 @@ CATALOGO_TAREAS: list[Tarea] = [
         'icono': '💸',
     },
     {
+        'id': 'clientes_inactivos',
+        'titulo': 'Detectar clientes inactivos',
+        'descripcion': (
+            'Busca clientes que SOLÍAN comprar pero dejaron de hacerlo por '
+            'más días que el umbral configurado en '
+            '/admin/configuracion/configuraciongeneral/ (default 30) y crea '
+            'una alerta INTERNA por cada uno (no manda WhatsApp). Idempotente: '
+            'no duplica alertas si ya hay una pendiente para el cliente. Las '
+            'alertas se autoresuelven cuando el cliente vuelve a comprar. Si '
+            'el master switch está apagado, devuelve NO-OP.'
+        ),
+        'func_path': 'cliente.tasks_inactividad.clientes_inactivos_scheduled',
+        'icono': '😴',
+    },
+    {
         'id': 'backfill_whatsapp_number',
         'titulo': 'Completar WhatsApp desde teléfono',
         'descripcion': (

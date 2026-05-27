@@ -178,6 +178,38 @@ class ConfiguracionGeneral(models.Model):
     )
 
     # ------------------------------------------------------------------
+    # Alerta interna de clientes inactivos
+    # ------------------------------------------------------------------
+    # Schedule django-q2 que corre una vez por día y detecta clientes que
+    # SOLÍAN comprar pero dejaron de hacerlo por más de N días. Genera una
+    # alerta INTERNA en el admin (no manda WhatsApp). Se autoresuelve
+    # cuando el cliente vuelve a comprar. Pensado para que Osvaldo detecte
+    # clientes que se están "yendo" y los pueda recontactar a mano.
+    alerta_inactividad_habilitada = models.BooleanField(
+        default=True,
+        help_text=(
+            'Si está prendido, una vez por día se generan alertas internas '
+            'para clientes que dejaron de comprar por más días que el umbral '
+            'de abajo. Solo aplica a clientes que ya compraron alguna vez. '
+            'No manda WhatsApp — es una alerta visible en el admin.'
+        ),
+    )
+    alerta_inactividad_dias = models.PositiveIntegerField(
+        default=30,
+        help_text=(
+            'Días sin comprar a partir de los cuales un cliente que solía '
+            'comprar se considera "inactivo" y se genera una alerta interna. '
+            'Default 30.'
+        ),
+    )
+    alerta_inactividad_ultima_corrida_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text='Cuándo corrió por última vez la detección de inactivos (read-only).',
+    )
+
+    # ------------------------------------------------------------------
     # Auto-responder de mensajes entrantes al bot
     # ------------------------------------------------------------------
     # Si está prendido, el bot responde solo cuando un cliente le

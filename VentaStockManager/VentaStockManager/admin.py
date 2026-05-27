@@ -38,11 +38,17 @@ MaterialModelAdminMixin.media = _patched_material_media
 
 from venta.admin import VentaAdmin, PedidoAdmin, AlertaStockAdmin
 from articulo.admin import ArticuloAdmin
-from cliente.admin import ClienteAdmin, CuentaClienteAdmin, MovimientoCuentaAdmin, PrecioClienteAdmin
+from cliente.admin import (
+    ClienteAdmin, CuentaClienteAdmin, MovimientoCuentaAdmin, PrecioClienteAdmin,
+    AlertaClienteInactivoAdmin,
+)
 from compra.admin import ProvedorAdmin, CompraAdmin
 from venta.models import Venta, Pedido, AlertaStock
 from articulo.models import Articulo
-from cliente.models import Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente
+from cliente.models import (
+    Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente,
+    AlertaClienteInactivo,
+)
 from compra.models import Proveedor, Compra
 from django.apps import apps
 from django.contrib.auth.admin import UserAdmin
@@ -83,6 +89,17 @@ class MyAdminSite(MaterialAdminSite):
                 )
             except Exception:
                 ctx['solicitudes_lista_pendientes'] = 0
+            # Clientes inactivos pendientes — solo superuser (es info
+            # sensible del negocio). Índice sobre `revisada` mantiene
+            # la query liviana.
+            if request.user.is_superuser:
+                try:
+                    from cliente.models import AlertaClienteInactivo
+                    ctx['clientes_inactivos_pendientes'] = (
+                        AlertaClienteInactivo.objects.filter(revisada=False).count()
+                    )
+                except Exception:
+                    ctx['clientes_inactivos_pendientes'] = 0
         return ctx
 
     def get_app_list(self, request, app_label=None):
@@ -151,6 +168,7 @@ class MyAdminSite(MaterialAdminSite):
             'cliente': {
                 'cliente': 1, 'cuentacliente': 2,
                 'movimientocuenta': 3, 'preciocliente': 4,
+                'alertaclienteinactivo': 5,
             },
             'articulo': {
                 'articulo': 1, 'rubro': 2, 'categoria': 3, 'reglacategoria': 4,
@@ -341,6 +359,10 @@ admin_site.register(MovimientoCuenta, MovimientoCuentaAdmin)
 # el operador edita el precio de un artículo en una venta. También
 # se pueden cargar a mano desde acá.
 admin_site.register(PrecioCliente, PrecioClienteAdmin)
+# Alertas de clientes inactivos: bandeja de "clientes que dejaron de
+# comprar". Las genera la task diaria cliente.tasks_inactividad. Solo
+# superuser (la mixin filtra). Se autoresuelven cuando el cliente compra.
+admin_site.register(AlertaClienteInactivo, AlertaClienteInactivoAdmin)
 
 # Campañas de WhatsApp. SOLO superusers pueden ver/usar (la mixin
 # de los admins se ocupa de filtrar, pero registramos siempre para

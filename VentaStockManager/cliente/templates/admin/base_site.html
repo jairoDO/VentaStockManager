@@ -73,5 +73,12 @@ el link al final.
             📋 {{ solicitudes_lista_pendientes }} pedido{{ solicitudes_lista_pendientes|pluralize }} de lista
         </a>
     {% endif %}
+    {% if user.is_superuser and clientes_inactivos_pendientes %}
+        <a href="/admin/cliente/alertaclienteinactivo/?revisada__exact=0"
+           class="badge-solicitudes-lista"
+           title="Clientes que dejaron de comprar hace tiempo. Click para verlos y recontactarlos.">
+            😴 {{ clientes_inactivos_pendientes }} cliente{{ clientes_inactivos_pendientes|pluralize }} inactivo{{ clientes_inactivos_pendientes|pluralize }}
+        </a>
+    {% endif %}
     {{ block.super }}
 {% endblock %}

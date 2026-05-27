@@ -57,6 +57,28 @@ class Venta(models.Model):
         super().save(*args, **kwargs)
         if es_nuevo:
             Pedido.objects.get_or_create(venta=self, defaults={'id': self.id})
+            # Auto-resolución de alertas de inactividad: si este cliente
+            # tenía una alerta pendiente por "dejó de comprar", el hecho
+            # de registrar una venta nueva la cierra automáticamente.
+            self._resolver_alertas_inactividad()
+
+    def _resolver_alertas_inactividad(self) -> None:
+        """
+        Marca como revisadas todas las alertas de inactividad pendientes
+        del cliente. Se llama al crear una venta nueva: si el cliente
+        "volvió", la alerta ya no tiene sentido. Best-effort: cualquier
+        error no debe tumbar la carga de la venta.
+        """
+        try:
+            from cliente.models import AlertaClienteInactivo
+            from django.utils import timezone
+
+            AlertaClienteInactivo.objects.filter(
+                cliente_id=self.cliente_id,
+                revisada=False,
+            ).update(revisada=True, revisada_at=timezone.now())
+        except Exception:  # noqa: BLE001 — nunca romper el save de la venta
+            pass
     
     @property
     def precio_total(self):

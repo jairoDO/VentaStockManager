@@ -49,6 +49,8 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
         'link_panel_whatsapp',
         'recordatorios_saldo_ultima_corrida_at',
         'recordatorios_saldo_preview',
+        'alerta_inactividad_ultima_corrida_at',
+        'alerta_inactividad_preview',
         'auditlog_ultima_purga_at',
         'auditlog_ultima_purga_borrados',
     )
@@ -130,6 +132,26 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
                 '<b>Preview</b>: muestra cuántos clientes serían contactados '
                 '<i>ahora mismo</i> con la config actual. Es el chequeo más '
                 'rápido para validar antes de prender el master switch.'
+            ),
+        }),
+        ('Alerta de clientes inactivos', {
+            'fields': (
+                'alerta_inactividad_habilitada',
+                'alerta_inactividad_preview',
+                'alerta_inactividad_dias',
+                'alerta_inactividad_ultima_corrida_at',
+            ),
+            'description': (
+                'Alerta <b>interna</b> (no manda WhatsApp) que avisa cuando '
+                'un cliente que <b>solía comprar</b> dejó de hacerlo por más '
+                'días que el umbral. La detección corre <b>una vez por día</b>. '
+                'Las alertas aparecen en el admin (Cliente → Alertas de '
+                'clientes inactivos) y en el badge del header.<br><br>'
+                'Se <b>autoresuelven</b> cuando el cliente vuelve a comprar. '
+                'Solo aplica a clientes con al menos una venta registrada — '
+                'los que nunca compraron no generan alerta.<br><br>'
+                '<b>Preview</b>: cuántos clientes están inactivos <i>ahora</i> '
+                'con el umbral guardado.'
             ),
         }),
         ('Purga de auditoría', {
@@ -238,6 +260,69 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
             total, format_html(sample_html), format_html(mas_html),
         )
     recordatorios_saldo_preview.short_description = '👁 Preview de candidatos'
+
+    def alerta_inactividad_preview(self, obj):
+        """
+        Cuántos clientes están inactivos AHORA con el umbral guardado.
+        Read-only, calculado al abrir el form. Usa la misma lógica de
+        elegibilidad que la task (clientes que compraron antes + última
+        compra anterior al umbral), pero NO chequea anti-spam (eso solo
+        importa al crear alertas, no para el conteo informativo).
+        """
+        from datetime import timedelta
+        from django.db.models import Max
+        from django.utils import timezone
+        from django.utils.html import format_html
+        from cliente.models import Cliente
+
+        dias = int(obj.alerta_inactividad_dias or 30)
+        hoy = timezone.now().date()
+        desde = hoy - timedelta(days=dias)
+
+        qs = (
+            Cliente.objects
+            .annotate(ultima_compra=Max('ventas__fecha_compra'))
+            .filter(ultima_compra__isnull=False)
+            .filter(ultima_compra__lt=desde)
+        )
+        candidatos = list(qs[:6])
+        total = qs.count()
+
+        if total == 0:
+            return format_html(
+                '<div style="padding: 12px; background: #f1f5f9; border-radius: 6px;">'
+                '<div style="font-size: 24px; font-weight: 700; color: #475569;">0</div>'
+                '<div style="color: #64748b; font-size: 13px;">clientes inactivos con el umbral actual ({} días).</div>'
+                '</div>',
+                dias,
+            )
+
+        sample_html = ''.join(
+            f'<li style="margin-bottom: 2px;">'
+            f'{c.nombre_completo()} '
+            f'<span style="color: #94a3b8; font-size: 11px;">'
+            f'(última compra {c.ultima_compra or "—"})'
+            f'</span>'
+            f'</li>'
+            for c in candidatos[:5]
+        )
+        mas_html = ''
+        if total > 5:
+            mas_html = f'<li style="color: #64748b;"><i>… y {total - 5} más</i></li>'
+
+        return format_html(
+            '<div style="padding: 12px; background: #fff7ed; border: 1px solid #fed7aa; '
+            'border-radius: 6px;">'
+            '<div style="font-size: 24px; font-weight: 700; color: #c2410c;">{}</div>'
+            '<div style="color: #9a3412; font-size: 13px;">clientes inactivos hace más de {} días.</div>'
+            '<details style="margin-top: 8px;">'
+            '<summary style="cursor: pointer; color: #c2410c;">Ver muestra</summary>'
+            '<ul style="margin: 6px 0 0 0; padding-left: 20px; font-size: 12px;">{}{}</ul>'
+            '</details>'
+            '</div>',
+            total, dias, format_html(sample_html), format_html(mas_html),
+        )
+    alerta_inactividad_preview.short_description = '👁 Preview de inactivos'
 
     def link_panel_whatsapp(self, obj):
         """

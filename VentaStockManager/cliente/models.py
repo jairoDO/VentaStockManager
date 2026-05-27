@@ -410,6 +410,66 @@ class PrecioCliente(models.Model):
         return f'{self.cliente.nombre_completo()} → {self.articulo.nombre}: ${self.precio_unitario}'
 
 
+class AlertaClienteInactivo(models.Model):
+    """
+    Alerta interna que avisa cuando un cliente que SOLÍA comprar dejó
+    de hacerlo por más tiempo del configurado (por defecto 30 días).
+
+    La genera una tarea diaria (django-q2) que mira la última compra de
+    cada cliente. Solo se generan alertas para clientes que tienen al
+    menos una venta registrada (los que "compraron antes"): un cliente
+    que nunca compró no está "inactivo", simplemente no es cliente
+    todavía.
+
+    Se resuelve automáticamente cuando el cliente vuelve a comprar: al
+    guardar una venta se marcan como revisadas todas las alertas
+    pendientes de ese cliente. También se puede resolver a mano desde
+    el admin.
+
+    Anti-spam: solo hay una alerta pendiente (revisada=False) por
+    cliente a la vez. La tarea diaria no crea una nueva si ya existe
+    una sin revisar para ese cliente.
+    """
+
+    cliente = models.ForeignKey(
+        Cliente,
+        related_name='alertas_inactividad',
+        on_delete=models.CASCADE,
+    )
+    # Snapshot de la fecha de la última compra al momento de generar la
+    # alerta. Puede ser null si por algún motivo la venta se borró, pero
+    # normalmente siempre tiene valor (solo alertamos clientes con compras).
+    ultima_compra = models.DateField(null=True, blank=True)
+    # Días transcurridos desde la última compra al momento de generar la
+    # alerta. Útil para mostrar "hace 45 días" sin recalcular.
+    dias_inactivo = models.PositiveIntegerField(default=0)
+    revisada = models.BooleanField(default=False)
+    revisada_at = models.DateTimeField(null=True, blank=True)
+    revisada_por = models.ForeignKey(
+        'auth.User',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'alerta de cliente inactivo'
+        verbose_name_plural = 'alertas de clientes inactivos'
+        ordering = ['-created_at']
+        indexes = [
+            # Consulta más común: alertas pendientes (para el badge y el
+            # anti-spam de la tarea diaria).
+            models.Index(fields=['cliente', 'revisada']),
+            models.Index(fields=['revisada']),
+        ]
+
+    def __str__(self):
+        estado = 'revisada' if self.revisada else 'pendiente'
+        return f'{self.cliente.nombre_completo()} inactivo {self.dias_inactivo}d ({estado})'
+
+
 #Permission.objects.create(
 #   codename='puede_acceder_lista_articulos',  
 #   name='Puede acceder a la lista de artículos'   
