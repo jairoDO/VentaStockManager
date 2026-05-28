@@ -61,6 +61,21 @@ class Venta(models.Model):
             # tenía una alerta pendiente por "dejó de comprar", el hecho
             # de registrar una venta nueva la cierra automáticamente.
             self._resolver_alertas_inactividad()
+        else:
+            # Edit de una venta existente. Garantizamos que SIEMPRE tenga
+            # su Pedido asociado: las ventas legacy importadas del dump de
+            # PythonAnywhere pueden no tenerlo, y antes editarlas no lo
+            # creaba (el get_or_create de arriba solo corría en el alta).
+            # Sin Pedido, la venta no aparece en la bandeja de Pedidos ni
+            # se le puede generar el PDF/comanda.
+            #
+            # Importante: NO usamos `defaults={'id': self.id}` acá. Forzar
+            # ese id en datos legacy puede colisionar con un Pedido que ya
+            # exista con ese id (las secuencias de venta y pedido pueden
+            # haber divergido en el dump). Dejamos que Postgres asigne el
+            # id — nada en el código exige que pedido.id == venta.id.
+            if not Pedido.objects.filter(venta=self).exists():
+                Pedido.objects.create(venta=self)
 
     def _resolver_alertas_inactividad(self) -> None:
         """
