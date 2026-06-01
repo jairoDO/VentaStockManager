@@ -283,7 +283,11 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'venta__vendedor__usuario__username',
     )
     icon_name = "library_books"
-    actions = ['generar_pdfs', 'generar_pdfs_y_registrar_pago']
+    actions = [
+        'generar_pdfs',
+        'generar_pdfs_y_cobrar',
+        'generar_pdfs_y_registrar_pago',
+    ]
 
     # Define constants
     ARTICULO_LABEL = 'Artículo'
@@ -337,7 +341,96 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     generar_pdfs.short_description = "Generar PDFs para pedidos seleccionados"
 
-    @admin.action(description='💰 Generar PDFs y registrar pago')
+    @admin.action(description='⚡ Generar PDFs Y marcar como pagado (cobro automático)')
+    def generar_pdfs_y_cobrar(self, request, queryset):
+        """
+        Modo RÁPIDO (sin preguntar). Por cada pedido seleccionado que NO
+        esté pagado, crea automáticamente un MovimientoCuenta(PAGO) por
+        lo que falta cobrar de esa venta y marca el pedido como pagado.
+        Después dispara los PDFs.
+
+        Útil cuando todos los pedidos seleccionados ya fueron cobrados
+        en mano (no hay decisiones a tomar por cliente). Si necesitás
+        decidir cuánto cobrar de cada uno, usá la acción del form ↓.
+        """
+        from decimal import Decimal
+        from django.db.models import Sum
+        from django.db import transaction
+        from cliente.models import CuentaCliente, MovimientoCuenta
+        from venta.utils import total_venta as calcular_total_venta
+
+        pedido_ids = list(queryset.values_list('id', flat=True))
+        if not pedido_ids:
+            self.message_user(
+                request, 'No seleccionaste ningún pedido.', level=messages.WARNING,
+            )
+            return None
+
+        cobrados = 0
+        ya_pagados = 0
+        sin_venta = 0
+        sin_deuda = 0
+        total_cobrado = Decimal('0')
+
+        qs = queryset.select_related('venta__cliente')
+        for pedido in qs:
+            if pedido.pagado:
+                ya_pagados += 1
+                continue
+            venta = pedido.venta
+            if not venta:
+                sin_venta += 1
+                continue
+            with transaction.atomic():
+                total_a_cobrar = Decimal(calcular_total_venta(venta) or 0)
+                pagos = MovimientoCuenta.objects.filter(
+                    venta=venta,
+                    tipo__in=[
+                        MovimientoCuenta.TIPO_PAGO,
+                        MovimientoCuenta.TIPO_APLICACION_SALDO,
+                    ],
+                ).aggregate(s=Sum('monto'))
+                cubierto = abs(Decimal(pagos['s'] or 0))
+                outstanding = total_a_cobrar - cubierto
+
+                if outstanding > 0 and venta.cliente:
+                    cuenta, _ = CuentaCliente.objects.get_or_create(cliente=venta.cliente)
+                    MovimientoCuenta.objects.create(
+                        cuenta=cuenta,
+                        tipo=MovimientoCuenta.TIPO_PAGO,
+                        monto=outstanding,
+                        venta=venta,
+                        descripcion=(
+                            f'Cobro al generar comanda (acción rápida) — venta #{venta.id}'
+                        ),
+                        creado_por=request.user if request.user.is_authenticated else None,
+                    )
+                    total_cobrado += outstanding
+                    cobrados += 1
+                else:
+                    sin_deuda += 1
+
+                pedido.pagado = True
+                pedido.save(update_fields=['pagado'])
+
+        partes = []
+        if cobrados:
+            partes.append(f'{cobrados} cobrados (${total_cobrado:,.2f} en total)')
+        if sin_deuda:
+            partes.append(f'{sin_deuda} marcados pagados sin movimiento (ya cubiertos)')
+        if ya_pagados:
+            partes.append(f'{ya_pagados} ya estaban pagados')
+        if sin_venta:
+            partes.append(f'{sin_venta} sin venta asociada (saltados)')
+        resumen = ' · '.join(partes) if partes else 'Sin cambios.'
+        self.message_user(request, f'✓ {resumen}', level=messages.SUCCESS)
+
+        ids_csv = ','.join(map(str, pedido_ids))
+        return HttpResponseRedirect(
+            reverse('generar_pdf_pedidos') + f'?pedidos_ids={ids_csv}',
+        )
+
+    @admin.action(description='💰 Generar PDFs y registrar pago (preguntar cuánto)')
     def generar_pdfs_y_registrar_pago(self, request, queryset):
         """
         Redirige a la pantalla intermedia `cobrar_y_generar_pdf` con los
