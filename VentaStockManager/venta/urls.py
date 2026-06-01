@@ -27,6 +27,10 @@ from venta.views_nueva import (
 # caja al final del día. Server-rendered, simple, con selector de fecha.
 from venta.views_caja import caja_del_dia
 
+# Pantalla intermedia "Generar PDFs y registrar pago" (disparada desde
+# la acción del PedidoAdmin).
+from venta.views_cobrar import cobrar_y_generar_pdf
+
 urlpatterns = [
     # Pantalla nueva de venta (Alpine + Tailwind). Estas rutas tienen
     # que ir ANTES que las legacy de comprobante para evitar que el
@@ -68,6 +72,10 @@ urlpatterns = [
     path('admin/venta/', redirect_to_ventas, name='redirect_to_ventas'),
     # Caja del día — pantalla read-only para reconciliar caja.
     path('caja/', caja_del_dia, name='caja_del_dia'),
+    # Pantalla intermedia "Generar PDFs y registrar pago" — disparada
+    # desde la acción del PedidoAdmin con ?pedidos_ids=1,2,3.
+    path('venta/pedido/cobrar-y-generar-pdf/', cobrar_y_generar_pdf,
+         name='cobrar_y_generar_pdf'),
 ]
 # url(r'^/(?P<venta_id>\d+)/detalle/$', views.venta_detalle, name='category-detail'),
 

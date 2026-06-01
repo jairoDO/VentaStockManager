@@ -283,7 +283,7 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'venta__vendedor__usuario__username',
     )
     icon_name = "library_books"
-    actions = ['generar_pdfs', 'generar_pdfs_y_cobrar']
+    actions = ['generar_pdfs', 'generar_pdfs_y_registrar_pago']
 
     # Define constants
     ARTICULO_LABEL = 'Artículo'
@@ -337,105 +337,30 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     generar_pdfs.short_description = "Generar PDFs para pedidos seleccionados"
 
-    @admin.action(description='💰 Generar PDFs Y marcar como pagado (cobrar)')
-    def generar_pdfs_y_cobrar(self, request, queryset):
+    @admin.action(description='💰 Generar PDFs y registrar pago')
+    def generar_pdfs_y_registrar_pago(self, request, queryset):
         """
-        Atajo para la administradora que cobra varios pedidos juntos:
-        por cada pedido seleccionado que NO esté ya pagado, crea un
-        MovimientoCuenta de tipo PAGO en la cuenta del cliente por lo
-        que falta cobrar de esa venta, marca el Pedido como pagado y
-        deja la deuda asociada a esa venta en 0. Después genera los
-        PDFs (igual que la acción común).
+        Redirige a la pantalla intermedia `cobrar_y_generar_pdf` con los
+        ids seleccionados. Ahí el operador completa, por pedido, cuánto
+        quiere dejar el saldo de cada cliente, y al confirmar el sistema:
 
-        Cómo se calcula "lo que falta":
-            outstanding = total_venta − (pagos previos asociados a la venta)
-        Si la venta ya tiene un saldo aplicado / pago parcial, solo
-        cobramos la diferencia. Si outstanding <= 0 (ya estaba cubierto),
-        solo marcamos `pedido.pagado=True` sin crear movimiento.
+          1) Crea un MovimientoCuenta(AJUSTE) por fila con delta != 0.
+          2) Marca los pedidos como pagados.
+          3) Dispara la generación de PDFs.
 
-        Auditoría: la descripción del movimiento queda como
-            "Cobro al generar comanda (acción del admin) — venta #N"
-        para que se diferencie de pagos cargados desde la pantalla normal.
+        La lógica de aplicación vive en `venta.views_cobrar` para
+        mantener este admin limpio.
         """
-        from decimal import Decimal
-        from django.db.models import Sum
-        from django.db import transaction
-        from cliente.models import CuentaCliente, MovimientoCuenta
-        from venta.utils import total_venta as calcular_total_venta
-
         pedido_ids = list(queryset.values_list('id', flat=True))
         if not pedido_ids:
-            self.message_user(request, 'No seleccionaste ningún pedido.', level=messages.WARNING)
+            self.message_user(
+                request, 'No seleccionaste ningún pedido.', level=messages.WARNING,
+            )
             return None
-
-        cobrados = 0
-        ya_pagados = 0
-        sin_venta = 0
-        sin_deuda = 0
-        total_cobrado = Decimal('0')
-
-        # Iterar con un select_related para no hacer N+1 sobre venta/cliente.
-        qs = queryset.select_related('venta__cliente')
-        for pedido in qs:
-            if pedido.pagado:
-                ya_pagados += 1
-                continue
-            venta = pedido.venta
-            if not venta:
-                sin_venta += 1
-                continue
-            with transaction.atomic():
-                total_a_cobrar = Decimal(calcular_total_venta(venta) or 0)
-                # Pagos / saldo aplicados previamente a esta venta.
-                # Suma con signo: PAGO suma positivo, APLICACION_SALDO suma
-                # negativo. abs() porque queremos saber cuánto "cubrió" la
-                # venta en términos absolutos.
-                pagos = MovimientoCuenta.objects.filter(
-                    venta=venta,
-                    tipo__in=[
-                        MovimientoCuenta.TIPO_PAGO,
-                        MovimientoCuenta.TIPO_APLICACION_SALDO,
-                    ],
-                ).aggregate(s=Sum('monto'))
-                cubierto = abs(Decimal(pagos['s'] or 0))
-                outstanding = total_a_cobrar - cubierto
-
-                if outstanding > 0 and venta.cliente:
-                    cuenta, _ = CuentaCliente.objects.get_or_create(cliente=venta.cliente)
-                    MovimientoCuenta.objects.create(
-                        cuenta=cuenta,
-                        tipo=MovimientoCuenta.TIPO_PAGO,
-                        monto=outstanding,
-                        venta=venta,
-                        descripcion=(
-                            f'Cobro al generar comanda (acción del admin) — venta #{venta.id}'
-                        ),
-                        creado_por=request.user if request.user.is_authenticated else None,
-                    )
-                    total_cobrado += outstanding
-                    cobrados += 1
-                else:
-                    sin_deuda += 1
-
-                pedido.pagado = True
-                pedido.save(update_fields=['pagado'])
-
-        # Mensaje resumen al operador.
-        partes = []
-        if cobrados:
-            partes.append(f'{cobrados} cobrados (${total_cobrado:,.2f} en total)')
-        if sin_deuda:
-            partes.append(f'{sin_deuda} marcados pagados sin movimiento (ya estaban cubiertos)')
-        if ya_pagados:
-            partes.append(f'{ya_pagados} ya estaban pagados')
-        if sin_venta:
-            partes.append(f'{sin_venta} sin venta asociada (saltados)')
-        resumen = ' · '.join(partes) if partes else 'Sin cambios.'
-        self.message_user(request, f'✓ {resumen}', level=messages.SUCCESS)
-
-        # Redirige al PDF como la acción "Generar PDFs" original.
         ids_csv = ','.join(map(str, pedido_ids))
-        return HttpResponseRedirect(reverse('generar_pdf_pedidos') + f'?pedidos_ids={ids_csv}')
+        return HttpResponseRedirect(
+            reverse('cobrar_y_generar_pdf') + f'?pedidos_ids={ids_csv}',
+        )
 
     def get_urls(self):
         urls = super().get_urls()

@@ -1,0 +1,174 @@
+{% comment %}
+Pantalla intermedia "Generar PDFs y registrar pago".
+
+Disparada desde la acción del PedidoAdmin. Muestra una fila por pedido
+con saldo actual del cliente + input "Dejar saldo en". El operador
+ingresa los valores objetivo y al confirmar:
+
+  1. Crea un MovimientoCuenta(AJUSTE) por cada fila con delta != 0.
+  2. Marca todos los pedidos como pagados.
+  3. Redirige al generador de PDFs.
+
+Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Generar PDFs y registrar pago — {{ total_filas }} pedido{{ total_filas|pluralize }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>[x-cloak] { display: none !important; }</style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+<div class="max-w-6xl mx-auto p-6">
+
+  {# ---- Header ---- #}
+  <div class="mb-6">
+    <a href="/admin/venta/pedido/"
+       class="text-sm text-blue-600 hover:underline">
+      ← Volver al listado de pedidos
+    </a>
+    <h1 class="text-2xl font-bold mt-2">💰 Generar PDFs y registrar pago</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Indicá <b>en cuánto querés dejar el saldo</b> de cada cliente. El sistema
+      calcula el delta y crea el ajuste correspondiente. Después marca los
+      pedidos como pagados y genera los PDFs.
+    </p>
+  </div>
+
+  {# ---- Mensajes ---- #}
+  {% if messages %}
+    <div class="mb-4">
+      {% for message in messages %}
+        <div class="p-3 rounded-lg mb-2 text-sm
+          {% if message.tags == 'error' %}bg-red-50 border border-red-200 text-red-800
+          {% elif message.tags == 'warning' %}bg-amber-50 border border-amber-200 text-amber-800
+          {% elif message.tags == 'success' %}bg-emerald-50 border border-emerald-200 text-emerald-800
+          {% else %}bg-blue-50 border border-blue-200 text-blue-800{% endif %}">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {# ---- Tip rápido ---- #}
+  <div class="mb-4 p-3 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-800 text-sm">
+    💡 <b>Cómo funciona:</b> el valor que pongas en "Dejar saldo en" es el saldo
+    <b>final</b> que va a tener el cliente. <b>0</b> = lo dejás saldado.
+    <b>Negativo</b> (ej. -1500) = sigue debiendo $1.500. <b>Positivo</b> = queda a favor.
+    Dejá vacío si solo querés marcar el pedido como pagado sin tocar la cuenta.
+  </div>
+
+  <form method="post" action="">
+    {% csrf_token %}
+    <input type="hidden" name="pedidos_ids" value="{{ pedidos_ids_csv }}">
+
+    <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+      <table class="w-full">
+        <thead class="bg-slate-100 text-xs uppercase tracking-wider text-slate-600">
+          <tr>
+            <th class="text-left px-4 py-3">Pedido</th>
+            <th class="text-left px-4 py-3">Cliente</th>
+            <th class="text-right px-4 py-3">Total venta</th>
+            <th class="text-right px-4 py-3">Saldo actual</th>
+            <th class="text-left px-4 py-3 w-40">Dejar saldo en</th>
+            <th class="text-left px-4 py-3">Nota (opcional)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for fila in filas %}
+          <tr x-data="{
+                dejar: '{{ fila.dejar_en_default|escapejs }}',
+                saldoActual: {{ fila.saldo_actual }},
+                get dejarNum() {
+                  if (this.dejar === '' || this.dejar === null) return null;
+                  const n = parseFloat((this.dejar + '').replace(',', '.'));
+                  return isNaN(n) ? null : n;
+                },
+                get delta() {
+                  if (this.dejarNum === null) return null;
+                  return this.dejarNum - this.saldoActual;
+                }
+              }"
+              class="border-t border-slate-100 hover:bg-slate-50">
+            <td class="px-4 py-3 align-top">
+              <div class="font-medium">#{{ fila.pedido.id }}</div>
+              <div class="text-xs text-slate-500">
+                Venta #{{ fila.venta.id }}{% if fila.fecha_compra %} · {{ fila.fecha_compra|date:'d/m/y' }}{% endif %}
+              </div>
+            </td>
+            <td class="px-4 py-3 align-top">
+              <div class="font-medium">{{ fila.cliente.nombre_completo }}</div>
+              {% if fila.cliente.direccion %}
+                <div class="text-xs text-slate-500">{{ fila.cliente.direccion }}</div>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-right align-top font-medium">
+              ${{ fila.total_venta }}
+            </td>
+            <td class="px-4 py-3 text-right align-top font-medium">
+              {% if fila.saldo_actual_display > 0 %}
+                <span class="text-emerald-700">+${{ fila.saldo_actual }}</span>
+              {% elif fila.saldo_actual_display < 0 %}
+                <span class="text-red-700">${{ fila.saldo_actual }}</span>
+              {% else %}
+                <span class="text-slate-500">$0,00</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 align-top">
+              <div class="relative">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                <input type="number" step="0.01"
+                       name="dejar_en_{{ fila.pedido.id }}"
+                       x-model="dejar"
+                       placeholder="0 para saldar"
+                       class="w-full pl-7 pr-2 py-2 border-2 border-slate-300 rounded-lg
+                              focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200
+                              focus:outline-none text-sm">
+              </div>
+              <div x-show="delta !== null && delta !== 0" x-cloak
+                   class="mt-1 text-xs"
+                   :class="delta > 0 ? 'text-emerald-700' : 'text-red-700'">
+                <span x-text="(delta > 0 ? 'Ajuste +$' : 'Ajuste -$') + Math.abs(delta).toFixed(2)"></span>
+              </div>
+              <div x-show="delta === 0" x-cloak class="mt-1 text-xs text-slate-500">
+                Sin cambio en el saldo.
+              </div>
+            </td>
+            <td class="px-4 py-3 align-top">
+              <input type="text"
+                     name="nota_{{ fila.pedido.id }}"
+                     placeholder="Ej. Pago en efectivo"
+                     class="w-full px-3 py-2 border-2 border-slate-300 rounded-lg
+                            focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200
+                            focus:outline-none text-sm">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# ---- Botones ---- #}
+    <div class="mt-6 flex items-center gap-3">
+      <a href="/admin/venta/pedido/"
+         class="px-4 py-3 rounded-lg text-slate-600 hover:bg-slate-100 font-medium">
+        Cancelar
+      </a>
+      <div class="ml-auto text-sm text-slate-500">
+        {{ total_filas }} pedido{{ total_filas|pluralize }} a procesar.
+      </div>
+      <button type="submit"
+              class="px-6 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm">
+        Aplicar y generar PDFs
+      </button>
+    </div>
+  </form>
+
+</div>
+
+</body>
+</html>
