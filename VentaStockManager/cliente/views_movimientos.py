@@ -57,11 +57,17 @@ def registrar_movimiento(request: HttpRequest, cliente_id: int) -> HttpResponse:
     cuenta, _ = CuentaCliente.objects.get_or_create(cliente=cliente)
 
     modo = (request.GET.get('modo') or request.POST.get('modo') or 'pago').lower()
-    if modo not in ('pago', 'deuda'):
+    if modo not in ('pago', 'deuda', 'dejar_en'):
         modo = 'pago'
 
     # Configuración visual del form según el modo. Toda en un dict para
     # que el template lea de un solo lugar (vs branching dentro del HTML).
+    #
+    # `dejar_en` es el modo "no quiero pensar en sumas/restas": el operador
+    # tipea el saldo OBJETIVO al que quiere dejar al cliente (ej. 0 para
+    # saldar, o un monto específico), y el sistema calcula el delta y
+    # crea un AJUSTE con el signo correcto. Útil para la administradora
+    # que cobra varios pedidos al mismo tiempo sin querer hacer cuentas.
     config = {
         'pago': {
             'titulo': '💰 Registrar pago',
@@ -87,6 +93,18 @@ def registrar_movimiento(request: HttpRequest, cliente_id: int) -> HttpResponse:
             'color_boton': 'red',
             'texto_boton': 'Guardar deuda',
         },
+        'dejar_en': {
+            'titulo': '🎯 Dejar saldo en…',
+            'subtitulo': 'Indicá el saldo final al que querés dejar al cliente. El sistema calcula y registra el ajuste.',
+            'label_monto': 'Dejar saldo en',
+            'help_monto': 'Saldo final del cliente después del ajuste. Negativo (ej. -1500) = el cliente debe; positivo (ej. 1500) = a favor; 0 = saldado.',
+            'placeholder_monto': '0 para saldar',
+            'label_nota': 'Nota (opcional)',
+            'help_nota': 'Ej. "Cobró todo lo pendiente en mano" o "Cierre de cuenta".',
+            'placeholder_nota': 'Ej. Cobrado en efectivo',
+            'color_boton': 'indigo',
+            'texto_boton': 'Aplicar ajuste',
+        },
     }[modo]
 
     # ---- POST: guardar y redirigir ----
@@ -95,31 +113,51 @@ def registrar_movimiento(request: HttpRequest, cliente_id: int) -> HttpResponse:
         descripcion = (request.POST.get('descripcion') or '').strip()
         venta_id_raw = (request.POST.get('venta_id') or '').strip()
 
-        # Validar monto > 0.
+        # Parseo del monto. En modo `dejar_en` puede ser 0 o negativo
+        # (saldo objetivo "debe X" = -X). Los otros modos exigen > 0.
         try:
             monto = Decimal(monto_raw)
         except (InvalidOperation, ValueError):
             messages.error(request, 'Monto inválido. Ingresá un número (ej. 5000).')
             return _render_form(request, cliente, cuenta, modo, config,
                                 monto_raw, descripcion, venta_id_raw)
-        if monto <= 0:
+        if modo != 'dejar_en' and monto <= 0:
             messages.error(request, 'El monto tiene que ser mayor a 0.')
             return _render_form(request, cliente, cuenta, modo, config,
                                 monto_raw, descripcion, venta_id_raw)
 
-        # Aplicar signo según modo + setear tipo correcto.
-        if modo == 'deuda':
+        # Determinar monto firmado + tipo + descripción según modo.
+        venta = None
+        if modo == 'dejar_en':
+            # `monto` es el SALDO OBJETIVO. Delta = objetivo − saldo_actual.
+            saldo_actual = cuenta.saldo
+            delta = monto - saldo_actual
+            if delta == 0:
+                messages.warning(
+                    request,
+                    f'El cliente ya tiene saldo ${saldo_actual:,.2f}. No hay ajuste para hacer.',
+                )
+                return _render_form(request, cliente, cuenta, modo, config,
+                                    monto_raw, descripcion, venta_id_raw)
+            monto_signed = delta
+            tipo = MovimientoCuenta.TIPO_AJUSTE
+            # Descripcion auto-armada con traza completa, + nota libre del operador.
+            traza = (
+                f'Ajuste a saldo objetivo ${monto:,.2f} '
+                f'(saldo previo ${saldo_actual:,.2f}, delta {"+" if delta > 0 else ""}{delta:,.2f})'
+            )
+            descripcion = f'{traza}. {descripcion}'.strip().rstrip('.')
+        elif modo == 'deuda':
             monto_signed = -monto
             tipo = MovimientoCuenta.TIPO_AJUSTE
-        else:
+        else:  # 'pago'
             monto_signed = monto
             tipo = MovimientoCuenta.TIPO_PAGO
 
-        # Resolver venta opcional. El FK MovimientoCuenta.venta es null=True
-        # — si el operador no asoció a ninguna venta, lo guardamos como
-        # movimiento genérico (afecta el saldo pero no marca venta pagada).
-        venta = None
-        if venta_id_raw:
+        # Resolver venta opcional (solo aplica a modo 'pago'). Para
+        # `deuda` y `dejar_en` no asociamos a venta — son ajustes globales
+        # de saldo, no de una venta puntual.
+        if modo == 'pago' and venta_id_raw:
             try:
                 venta = Venta.objects.filter(
                     pk=int(venta_id_raw), cliente=cliente,
@@ -142,13 +180,21 @@ def registrar_movimiento(request: HttpRequest, cliente_id: int) -> HttpResponse:
             if venta and modo == 'pago':
                 _marcar_pagado_si_cubre(venta)
 
-        accion = 'pago' if modo == 'pago' else 'deuda'
-        msg = (
-            f'✓ {accion.capitalize()} de ${abs(monto_signed):,.2f} registrado '
-            f'para {cliente.nombre_completo()}.'
-        )
-        if venta:
-            msg += f' Asociado a la venta #{venta.id}.'
+        # Mensaje de éxito específico al modo.
+        if modo == 'dejar_en':
+            msg = (
+                f'✓ Saldo de {cliente.nombre_completo()} ajustado a '
+                f'${monto:,.2f} (delta {"+" if monto_signed > 0 else ""}'
+                f'{monto_signed:,.2f}).'
+            )
+        else:
+            accion = 'pago' if modo == 'pago' else 'deuda'
+            msg = (
+                f'✓ {accion.capitalize()} de ${abs(monto_signed):,.2f} registrado '
+                f'para {cliente.nombre_completo()}.'
+            )
+            if venta:
+                msg += f' Asociado a la venta #{venta.id}.'
         messages.success(request, msg)
 
         # Volver a la pantalla de cuenta del cliente.
@@ -244,6 +290,10 @@ def _render_form(request, cliente, cuenta, modo, config,
     else:
         venta_id_sugerida = ''
 
+    # Para Alpine x-data necesitamos un literal JS válido — Decimal con
+    # USE_L10N puede renderizarse con coma y romper el parser. Lo serializamos
+    # explícitamente con punto siempre, vía Python str(Decimal).
+    saldo_js = f'{cuenta.saldo:.2f}'  # Decimal soporta f-string, siempre con '.'
     return render(request, 'cliente/registrar_movimiento.html', {
         'cliente': cliente,
         'cuenta': cuenta,
@@ -252,6 +302,7 @@ def _render_form(request, cliente, cuenta, modo, config,
         'monto_inicial': monto_inicial,
         'descripcion_inicial': descripcion_inicial,
         'saldo_actual': cuenta.saldo,
+        'saldo_actual_js': saldo_js,
         'ventas_impagas': ventas_impagas,
         'venta_id_sugerida': venta_id_sugerida,
     })

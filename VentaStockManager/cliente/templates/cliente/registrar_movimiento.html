@@ -23,11 +23,24 @@ para guardar; Alpine solo para la validación en cliente.
 
 <div class="max-w-2xl mx-auto p-6"
      x-data="{
+       modo: '{{ modo|escapejs }}',
        monto: '{{ monto_inicial|escapejs }}',
        descripcion: '{{ descripcion_inicial|escapejs }}',
+       saldoActual: {{ saldo_actual_js|default:'0' }},
+       get montoNum() {
+         return parseFloat((this.monto || '').replace(',', '.'));
+       },
        get montoValido() {
-         const n = parseFloat((this.monto || '').replace(',', '.'));
-         return !isNaN(n) && n > 0;
+         // En modo 'dejar_en' aceptamos 0 y negativos (es saldo objetivo).
+         // En 'pago' y 'deuda' exigimos > 0.
+         if (isNaN(this.montoNum)) return false;
+         if (this.modo === 'dejar_en') return this.montoNum !== this.saldoActual;
+         return this.montoNum > 0;
+       },
+       get deltaDejarEn() {
+         // Solo aplica a modo 'dejar_en'. Delta = objetivo − saldo_actual.
+         if (this.modo !== 'dejar_en' || isNaN(this.montoNum)) return 0;
+         return this.montoNum - this.saldoActual;
        }
      }">
 
@@ -83,17 +96,22 @@ para guardar; Alpine solo para la validación en cliente.
     </div>
   {% endif %}
 
-  {# ---- Selector de modo (pago/deuda) en la misma pantalla ---- #}
-  <div class="mb-6 grid grid-cols-2 gap-2">
+  {# ---- Selector de modo (pago/deuda/dejar_en) en la misma pantalla ---- #}
+  <div class="mb-6 grid grid-cols-3 gap-2">
     <a href="?modo=pago"
-       class="text-center py-3 rounded-lg font-semibold border-2 transition
+       class="text-center py-3 px-2 rounded-lg font-semibold border-2 transition text-sm
               {% if modo == 'pago' %}bg-emerald-600 text-white border-emerald-700{% else %}bg-white text-slate-700 border-slate-200 hover:border-emerald-300{% endif %}">
-      💰 Registrar pago
+      💰 Pago
     </a>
     <a href="?modo=deuda"
-       class="text-center py-3 rounded-lg font-semibold border-2 transition
+       class="text-center py-3 px-2 rounded-lg font-semibold border-2 transition text-sm
               {% if modo == 'deuda' %}bg-red-600 text-white border-red-700{% else %}bg-white text-slate-700 border-slate-200 hover:border-red-300{% endif %}">
-      🧾 Registrar deuda
+      🧾 Deuda
+    </a>
+    <a href="?modo=dejar_en"
+       class="text-center py-3 px-2 rounded-lg font-semibold border-2 transition text-sm
+              {% if modo == 'dejar_en' %}bg-indigo-600 text-white border-indigo-700{% else %}bg-white text-slate-700 border-slate-200 hover:border-indigo-300{% endif %}">
+      🎯 Dejar en…
     </a>
   </div>
 
@@ -135,7 +153,8 @@ para guardar; Alpine solo para la validación en cliente.
         <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">$</span>
         <input type="number" name="monto" id="id_monto"
                x-model="monto"
-               step="0.01" min="0.01"
+               step="0.01"
+               {% if modo != 'dejar_en' %}min="0.01"{% endif %}
                placeholder="{{ cfg.placeholder_monto }}"
                autofocus required
                class="w-full pl-9 pr-4 py-3 border-2 border-slate-300 rounded-lg
@@ -177,13 +196,21 @@ para guardar; Alpine solo para la validación en cliente.
   {# Hint visual del impacto en el saldo #}
   <div x-show="montoValido" x-cloak
        class="mt-4 p-3 rounded-lg text-sm
-              {% if modo == 'pago' %}bg-emerald-50 border border-emerald-200 text-emerald-800{% else %}bg-red-50 border border-red-200 text-red-800{% endif %}">
+              {% if modo == 'pago' %}bg-emerald-50 border border-emerald-200 text-emerald-800
+              {% elif modo == 'deuda' %}bg-red-50 border border-red-200 text-red-800
+              {% else %}bg-indigo-50 border border-indigo-200 text-indigo-800{% endif %}">
     {% if modo == 'pago' %}
-      💡 Esto SUMA <span x-text="'$' + parseFloat(monto.replace(',', '.')).toFixed(2)"></span>
+      💡 Esto SUMA <span x-text="'$' + montoNum.toFixed(2)"></span>
       al saldo del cliente (paga deuda o queda a favor).
-    {% else %}
-      💡 Esto RESTA <span x-text="'$' + parseFloat(monto.replace(',', '.')).toFixed(2)"></span>
+    {% elif modo == 'deuda' %}
+      💡 Esto RESTA <span x-text="'$' + montoNum.toFixed(2)"></span>
       del saldo del cliente (le carga deuda).
+    {% else %}
+      💡 Va a quedar el saldo en
+      <span class="font-bold" x-text="'$' + montoNum.toFixed(2)"></span>.
+      Se registra un AJUSTE de
+      <span class="font-bold" x-text="(deltaDejarEn > 0 ? '+$' : '-$') + Math.abs(deltaDejarEn).toFixed(2)"></span>
+      (delta entre el saldo actual y el objetivo).
     {% endif %}
   </div>
 </div>
