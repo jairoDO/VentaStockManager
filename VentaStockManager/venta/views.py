@@ -481,24 +481,19 @@ def generar_pdf_pedidos(request, pedido_ids=None):
     for index, pedido_id in enumerate(pedido_ids):
         pedido = Pedido.objects.get(id=pedido_id)
         cantidad_articulos.append(pedido.venta.ventas.count())
-        # Vendedor puede estar vacío en ventas viejas migradas; defensivo.
-        # Además, muchos vendedores tienen `nombre=''` y `apellido='Sin
-        # apellido'` (default), con lo cual fullname() queda feo. Si el
-        # nombre real no está cargado, caemos al username de la cuenta.
+        # Vendedor: usamos `str(vendedor)` = username, igual que el
+        # listado del PedidoAdmin. Antes el PDF prefería
+        # `nombre + apellido` cuando estaban cargados, lo cual
+        # generaba inconsistencia: el listado mostraba "LUCAS2" y
+        # el PDF "Nahuel Baes" (campos `nombre`/`apellido` que en
+        # muchos Vendedor quedaron con data legacy desincronizada
+        # del username real). Unificamos en el username — es la
+        # fuente de verdad consistente entre admin y PDF. Si en el
+        # futuro se quieren nombres reales, primero hay que limpiar
+        # los `nombre`/`apellido` de Vendedor y cambiar acá y en
+        # `Vendedor.__str__` en un solo paso.
         vendedor = pedido.venta.vendedor
-        if vendedor:
-            nombre_real = (vendedor.nombre or '').strip()
-            apellido_real = (vendedor.apellido or '').strip()
-            if nombre_real and apellido_real and apellido_real.lower() != 'sin apellido':
-                nombre_vendedor = f'{nombre_real} {apellido_real}'
-            elif nombre_real:
-                nombre_vendedor = nombre_real
-            elif vendedor.usuario:
-                nombre_vendedor = vendedor.usuario.username
-            else:
-                nombre_vendedor = '-'
-        else:
-            nombre_vendedor = '-'
+        nombre_vendedor = str(vendedor) if vendedor else '-'
 
         data_cliente = [
             ['Compra:', pedido.venta.fecha_compra],
