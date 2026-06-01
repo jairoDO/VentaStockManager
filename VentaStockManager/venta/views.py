@@ -481,19 +481,13 @@ def generar_pdf_pedidos(request, pedido_ids=None):
     for index, pedido_id in enumerate(pedido_ids):
         pedido = Pedido.objects.get(id=pedido_id)
         cantidad_articulos.append(pedido.venta.ventas.count())
-        # Vendedor: usamos `str(vendedor)` = username, igual que el
-        # listado del PedidoAdmin. Antes el PDF prefería
-        # `nombre + apellido` cuando estaban cargados, lo cual
-        # generaba inconsistencia: el listado mostraba "LUCAS2" y
-        # el PDF "Nahuel Baes" (campos `nombre`/`apellido` que en
-        # muchos Vendedor quedaron con data legacy desincronizada
-        # del username real). Unificamos en el username — es la
-        # fuente de verdad consistente entre admin y PDF. Si en el
-        # futuro se quieren nombres reales, primero hay que limpiar
-        # los `nombre`/`apellido` de Vendedor y cambiar acá y en
-        # `Vendedor.__str__` en un solo paso.
+        # Vendedor: usamos `display_name()` para mostrar
+        # "username (nombre apellido)". Igual lógica que el listado
+        # del PedidoAdmin (consistencia garantizada). El username es
+        # la fuente de verdad para el operador; el nombre real entre
+        # paréntesis es para que el cliente identifique a la persona.
         vendedor = pedido.venta.vendedor
-        nombre_vendedor = str(vendedor) if vendedor else '-'
+        nombre_vendedor = vendedor.display_name() if vendedor else '-'
 
         data_cliente = [
             ['Compra:', pedido.venta.fecha_compra],

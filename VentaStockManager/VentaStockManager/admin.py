@@ -377,6 +377,14 @@ from configuracion.models import ConfiguracionGeneral
 from configuracion.admin import ConfiguracionGeneralAdmin
 admin_site.register(ConfiguracionGeneral, ConfiguracionGeneralAdmin)
 
+# Vendedor: estaba registrado solo en el admin.site default, así no
+# aparecía en /admin/ (el operador no podía ver/editar nombre+apellido
+# que ahora salen entre paréntesis en el PDF del pedido). Lo exponemos
+# en el admin custom.
+from vendedor.models import Vendedor
+from vendedor.admin import VendedorAdmin
+admin_site.register(Vendedor, VendedorAdmin)
+
 # django-q2: registra Schedule (cron), Success (tasks OK) y Failure
 # (tasks fallidas) en el admin_site custom. Sin esto, las URLs
 # `/admin/django_q/...` dan 404 porque django-q se auto-registra

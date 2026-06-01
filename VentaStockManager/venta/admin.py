@@ -316,7 +316,11 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     venta_cliente.short_description = 'Cliente'
 
     def venta_vendedor(self, obj):
-        return obj.venta.vendedor
+        # Usa Vendedor.display_name() para mostrar
+        # "username (nombre apellido)". Misma lógica que el PDF de
+        # pedido para evitar inconsistencias entre listado y comanda.
+        v = obj.venta.vendedor
+        return v.display_name() if v else '-'
     venta_vendedor.short_description = 'Vendedor'
     
     def descargar_pdf(self, obj):

@@ -50,6 +50,38 @@ class Vendedor(models.Model):
 
     def __str__(self):
         return self.usuario.username
+
+    def display_name(self):
+        """
+        Nombre "completo" del vendedor para UI customer-facing (PDF de
+        pedido + listado del admin).
+
+        Formato: `username (nombre apellido)` si nombre/apellido están
+        cargados con data útil. Solo `username` si no.
+
+        Pensado para que el operador vea el username (lo que tipea para
+        loguear, fuente de verdad) y al mismo tiempo el cliente vea el
+        nombre real entre paréntesis.
+
+        Skips:
+          - `apellido='Sin apellido'` (default legacy del modelo).
+          - Si nombre+apellido normalizados == username, no duplicamos.
+        """
+        try:
+            username = self.usuario.username if self.usuario else ''
+        except Exception:  # noqa: BLE001
+            username = ''
+        nombre = (self.nombre or '').strip()
+        apellido = (self.apellido or '').strip()
+        if apellido.lower() == 'sin apellido':
+            apellido = ''
+        full = ' '.join(p for p in [nombre, apellido] if p)
+        if full and full.lower() != username.lower():
+            if username:
+                return f'{username} ({full})'
+            return full
+        return username or '-'
+
     class Meta:
         verbose_name = "Vendedor"
         verbose_name_plural = "Vendedores"# Create your models here.
