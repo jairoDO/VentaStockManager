@@ -41,24 +41,31 @@ class FacturaConfiguration(models.Model):
     margin_left = models.FloatField(default=0.5, help_text="Margen izquierdo en cm")
     margin_right = models.FloatField(default=0.5, help_text="Margen derecho en cm")
     
-    # Fonts
+    # Fonts.
+    # OJO: el `default` tiene que ser el VALUE de la choice
+    # ('Helvetica-Bold' con guión), NO el label ('Helvetica Bold'
+    # con espacio). reportlab.pdfmetrics busca el font por value;
+    # con el label tira KeyError 'Helvetica Bold' al generar el PDF.
+    # Antes los defaults eran labels y rompían cuando no había una
+    # `FacturaConfiguration` cargada en DB (fallback a in-memory
+    # con defaults).
     header_font = models.CharField(
-        max_length=50, 
-        choices=FONT_CHOICES, 
-        default='Helvetica Bold',
+        max_length=50,
+        choices=FONT_CHOICES,
+        default='Helvetica-Bold',
         help_text="Fuente para encabezados"
     )
     content_font = models.CharField(
-        max_length=50, 
-        choices=FONT_CHOICES, 
-        default='Helvetica Bold',
+        max_length=50,
+        choices=FONT_CHOICES,
+        default='Helvetica-Bold',
         help_text="Fuente para contenido"
     )
-    
+
     total_font = models.CharField(
-        max_length=50, 
-        choices=FONT_CHOICES, 
-        default='Helvetica Bold',
+        max_length=50,
+        choices=FONT_CHOICES,
+        default='Helvetica-Bold',
         help_text="Fuente para contenido"
     )
     # custom_font = models.FileField(
