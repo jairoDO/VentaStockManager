@@ -272,8 +272,15 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     readonly_fields = ('venta','mostrar_articulos')
     ordering = ('-venta__fecha_compra',)
-    list_display = ['id', 'venta_fecha_compra', 'venta_fecha_entrega', 'venta_cliente', 'venta_vendedor', 'total_venta_por_articulo', 'cantidad_articulos_vendidos', 'descargar_pdf']
-    list_filter = ['estado', 'venta__fecha_compra', 'venta__fecha_entrega']
+    list_display = [
+        'id', 'venta_fecha_compra', 'venta_fecha_entrega', 'venta_cliente',
+        'venta_vendedor', 'total_venta_por_articulo',
+        'cantidad_articulos_vendidos',
+        'pagado_badge', 'cobrado_display',
+        'descargar_pdf',
+    ]
+    # `pagado` permite filtrar "lo del día que ya cobré" vs pendientes.
+    list_filter = ['pagado', 'estado', 'venta__fecha_compra', 'venta__fecha_entrega']
     # Buscador pedido por nombre de cliente y por vendedor
     # (nombre/apellido del vendedor o su usuario de login).
     search_fields = (
@@ -285,8 +292,8 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     icon_name = "library_books"
     actions = [
         'generar_pdfs',
-        'generar_pdfs_y_cobrar',
-        'generar_pdfs_y_registrar_pago',
+        'marcar_como_saldada',
+        'registrar_pago',
     ]
 
     # Define constants
@@ -295,6 +302,65 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     def cantidad_articulos_vendidos(self, obj):
         return sum(articulo_venta.cantidad for articulo_venta in obj.venta.ventas.all())
     cantidad_articulos_vendidos.short_description = '# Artículos'
+
+    def pagado_badge(self, obj):
+        """Icono ✓/✗ para `pedido.pagado` — más legible que True/False en la lista."""
+        if obj.pagado:
+            return format_html(
+                '<span style="color:#047857; font-weight:600;">✓ Pagado</span>'
+            )
+        return format_html(
+            '<span style="color:#94a3b8;">✗ Pendiente</span>'
+        )
+    pagado_badge.short_description = '¿Pagado?'
+    pagado_badge.admin_order_field = 'pagado'
+
+    def cobrado_display(self, obj):
+        """
+        Monto efectivamente cobrado por la acción "Registrar pago" /
+        "Marcar como saldada" (clientes con cuenta). NULL = todavía no
+        se registró (caso típico de pedido pendiente o cobrado por
+        otra vía sin registrar el monto).
+        """
+        if obj.monto_pagado is None:
+            return format_html('<span style="color:#94a3b8;">—</span>')
+        return format_html(
+            '<span style="color:#047857; font-weight:600;">${}</span>',
+            f'{obj.monto_pagado:,.2f}',
+        )
+    cobrado_display.short_description = 'Cobrado'
+    cobrado_display.admin_order_field = 'monto_pagado'
+
+    def changelist_view(self, request, extra_context=None):
+        """
+        Inyecta en el contexto del changelist:
+          - `total_cobrado_lista`: suma de `monto_pagado` de los pedidos
+            visibles con el filtro actual. Útil para reconciliar caja:
+            filtrá "pagado=Sí + fecha_compra=hoy" → ves cuánto debería
+            estar en efectivo.
+          - `total_pendiente_lista`: cuántos quedan por cobrar.
+        """
+        from decimal import Decimal
+        from django.db.models import Sum, Count, Q
+        response = super().changelist_view(request, extra_context=extra_context)
+        try:
+            qs = response.context_data['cl'].queryset
+        except (AttributeError, KeyError):
+            return response  # caso raro: changelist sin context (e.g. error temprano)
+
+        agg = qs.aggregate(
+            cobrado=Sum('monto_pagado'),
+            pendientes=Count('id', filter=Q(pagado=False)),
+            saldados=Count('id', filter=Q(pagado=True)),
+        )
+        cobrado = agg['cobrado'] or Decimal('0')
+        response.context_data['resumen_cobranza'] = {
+            'cobrado': cobrado,
+            'cobrado_str': f'{cobrado:,.2f}',
+            'pendientes': agg['pendientes'] or 0,
+            'saldados': agg['saldados'] or 0,
+        }
+        return response
 
 
     def total_venta_por_articulo(self, obj):
@@ -341,108 +407,98 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     generar_pdfs.short_description = "Generar PDFs para pedidos seleccionados"
 
-    @admin.action(description='⚡ Generar PDFs Y marcar como pagado (cobro automático)')
-    def generar_pdfs_y_cobrar(self, request, queryset):
+    @admin.action(description='✓ Marcar como saldada (venta al contado)')
+    def marcar_como_saldada(self, request, queryset):
         """
-        Modo RÁPIDO (sin preguntar). Por cada pedido seleccionado que NO
-        esté pagado, crea automáticamente un MovimientoCuenta(PAGO) por
-        lo que falta cobrar de esa venta y marca el pedido como pagado.
-        Después dispara los PDFs.
+        Marca los pedidos seleccionados como pagados. Comportamiento
+        según si el cliente usa cuenta corriente o no:
 
-        Útil cuando todos los pedidos seleccionados ya fueron cobrados
-        en mano (no hay decisiones a tomar por cliente). Si necesitás
-        decidir cuánto cobrar de cada uno, usá la acción del form ↓.
+          - Cliente CON `CuentaCliente`: registra el pago por el TOTAL
+            de la venta (crea PAGO + VENTA_A_CUENTA si falta) — así el
+            saldo del cliente refleja correctamente que esa venta se
+            cobró. Caso típico: cliente al que a veces le fiamos y
+            necesitamos llevar la cuenta.
+          - Cliente SIN cuenta corriente: solo `pagado=True`, no toca
+            cuenta. Caso típico: venta al contado de cliente walk-in
+            que no maneja cuenta — no le inventamos una.
+
+        Filosofía: respetamos el estado del cliente. La cuenta
+        corriente se crea explícitamente cuando hace falta (deuda
+        registrada, pago parcial, etc), NO desde acción rápida.
+
+        Idempotente: pedidos con `monto_pagado != null` o `pagado=True`
+        se skipean.
         """
         from decimal import Decimal
-        from django.db.models import Sum
-        from django.db import transaction
-        from cliente.models import CuentaCliente, MovimientoCuenta
+        from cliente.models import CuentaCliente
         from venta.utils import total_venta as calcular_total_venta
 
-        pedido_ids = list(queryset.values_list('id', flat=True))
-        if not pedido_ids:
-            self.message_user(
-                request, 'No seleccionaste ningún pedido.', level=messages.WARNING,
-            )
-            return None
-
-        cobrados = 0
-        ya_pagados = 0
-        sin_venta = 0
-        sin_deuda = 0
+        saldados_con_cuenta = 0
+        saldados_al_contado = 0
+        ya_estaban = 0
         total_cobrado = Decimal('0')
+        errores = 0
 
-        qs = queryset.select_related('venta__cliente')
-        for pedido in qs:
-            if pedido.pagado:
-                ya_pagados += 1
+        for pedido in queryset.select_related('venta__cliente'):
+            if pedido.monto_pagado is not None:
+                ya_estaban += 1
                 continue
             venta = pedido.venta
-            if not venta:
-                sin_venta += 1
+            cliente = venta.cliente if venta else None
+            if not cliente:
+                errores += 1
                 continue
-            with transaction.atomic():
-                total_a_cobrar = Decimal(calcular_total_venta(venta) or 0)
-                pagos = MovimientoCuenta.objects.filter(
-                    venta=venta,
-                    tipo__in=[
-                        MovimientoCuenta.TIPO_PAGO,
-                        MovimientoCuenta.TIPO_APLICACION_SALDO,
-                    ],
-                ).aggregate(s=Sum('monto'))
-                cubierto = abs(Decimal(pagos['s'] or 0))
-                outstanding = total_a_cobrar - cubierto
 
-                if outstanding > 0 and venta.cliente:
-                    cuenta, _ = CuentaCliente.objects.get_or_create(cliente=venta.cliente)
-                    MovimientoCuenta.objects.create(
-                        cuenta=cuenta,
-                        tipo=MovimientoCuenta.TIPO_PAGO,
-                        monto=outstanding,
-                        venta=venta,
-                        descripcion=(
-                            f'Cobro al generar comanda (acción rápida) — venta #{venta.id}'
-                        ),
-                        creado_por=request.user if request.user.is_authenticated else None,
-                    )
-                    total_cobrado += outstanding
-                    cobrados += 1
-                else:
-                    sin_deuda += 1
-
-                pedido.pagado = True
-                pedido.save(update_fields=['pagado'])
+            tiene_cuenta = CuentaCliente.objects.filter(cliente=cliente).exists()
+            if tiene_cuenta:
+                # Cliente con cuenta: registrar pago en cuenta corriente.
+                total = Decimal(calcular_total_venta(venta) or 0)
+                try:
+                    pedido.set_monto_pagado(total, user=request.user)
+                    total_cobrado += total
+                    saldados_con_cuenta += 1
+                except ValueError:
+                    errores += 1
+            else:
+                # Sin cuenta: solo marcar pagado. No se inventa cuenta.
+                if not pedido.pagado:
+                    pedido.pagado = True
+                    pedido.save(update_fields=['pagado'])
+                saldados_al_contado += 1
 
         partes = []
-        if cobrados:
-            partes.append(f'{cobrados} cobrados (${total_cobrado:,.2f} en total)')
-        if sin_deuda:
-            partes.append(f'{sin_deuda} marcados pagados sin movimiento (ya cubiertos)')
-        if ya_pagados:
-            partes.append(f'{ya_pagados} ya estaban pagados')
-        if sin_venta:
-            partes.append(f'{sin_venta} sin venta asociada (saltados)')
+        if saldados_con_cuenta:
+            partes.append(
+                f'{saldados_con_cuenta} con cuenta corriente '
+                f'(${total_cobrado:,.2f} registrados como pago)'
+            )
+        if saldados_al_contado:
+            partes.append(
+                f'{saldados_al_contado} al contado '
+                f'(cliente sin cuenta corriente — solo se marcaron como pagados)'
+            )
+        if ya_estaban:
+            partes.append(f'{ya_estaban} ya estaban saldados')
+        if errores:
+            partes.append(f'{errores} con error')
         resumen = ' · '.join(partes) if partes else 'Sin cambios.'
         self.message_user(request, f'✓ {resumen}', level=messages.SUCCESS)
 
-        ids_csv = ','.join(map(str, pedido_ids))
-        return HttpResponseRedirect(
-            reverse('generar_pdf_pedidos') + f'?pedidos_ids={ids_csv}',
-        )
-
-    @admin.action(description='💰 Generar PDFs y registrar pago (preguntar cuánto)')
-    def generar_pdfs_y_registrar_pago(self, request, queryset):
+    @admin.action(description='💰 Registrar pago (preguntar cuánto cobró por cada uno)')
+    def registrar_pago(self, request, queryset):
         """
-        Redirige a la pantalla intermedia `cobrar_y_generar_pdf` con los
-        ids seleccionados. Ahí el operador completa, por pedido, cuánto
-        quiere dejar el saldo de cada cliente, y al confirmar el sistema:
+        Lleva a la pantalla intermedia donde el operador ingresa, por
+        pedido, cuánto cobró. La pantalla:
 
-          1) Crea un MovimientoCuenta(AJUSTE) por fila con delta != 0.
-          2) Marca los pedidos como pagados.
-          3) Dispara la generación de PDFs.
+          - Para pedidos sin pago previo: muestra input + preview de
+            saldo nuevo.
+          - Para pedidos con pago ya registrado: muestra "ya registrado
+            $X" y NO permite duplicar el cobro (idempotencia).
 
-        La lógica de aplicación vive en `venta.views_cobrar` para
-        mantener este admin limpio.
+        NO genera PDFs — para imprimir las comandas usar "Generar PDFs"
+        por separado. Decisión deliberada: separar "cobrar" de
+        "imprimir" porque son flujos distintos (cobrar es delicado por
+        la cuenta corriente, imprimir es trivial).
         """
         pedido_ids = list(queryset.values_list('id', flat=True))
         if not pedido_ids:
@@ -452,7 +508,7 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
             return None
         ids_csv = ','.join(map(str, pedido_ids))
         return HttpResponseRedirect(
-            reverse('cobrar_y_generar_pdf') + f'?pedidos_ids={ids_csv}',
+            reverse('registrar_pago_pedidos') + f'?pedidos_ids={ids_csv}',
         )
 
     def get_urls(self):
@@ -473,28 +529,125 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         return ''
 
     def mostrar_articulos(self, obj):
-        if obj.venta:
-            articulosVentas = obj.venta.ventas.all()
-            html = '<table>'
-            html += "<tr><th>Nombre</th><th>Cantidad</th><th>Precio</th><th>Subtotal</th></tr>"
-            for articuloVenta in articulosVentas:
-                html += f"<tr><td>{articuloVenta.articulo.get_articulo_short_name()}</td>" \
-                        f"<td>{articuloVenta.cantidad}</td>" \
-                        f"<td>{articuloVenta.precio}</td>" \
-                        f"<td>{articuloVenta.total}</td></tr>"
-            html +=f"<tr><td colspan='3'><strong>Total</strong> </td><td><p style='color:blue'><b>{obj.venta.precio_total}</b></p></td></tr>"
-            html += "</table>"
-            html += f'<br> {self.descargar_pdf(obj)}'
-            return format_html(html)
-        return "No hay artículos"
-    mostrar_articulos.short_description = 'Artículos de la Venta'
+        """
+        Renderiza un bloque HTML grande con:
+          1. Estado de cobro (total / cobrado / pendiente) + botón
+             Registrar/Editar pago.
+          2. Tabla de artículos de la venta.
+          3. Link al PDF.
+
+        Lo metemos todo en este método porque material-admin renderiza
+        mal los campos readonly como readonly_fields separados (label
+        flotante encima del valor). Acá devolvemos HTML libre que el
+        admin no envuelve con su markup roto.
+        """
+        if not obj or not obj.venta:
+            return 'No hay artículos'
+        from decimal import Decimal
+        from venta.utils import total_venta as calcular_total_venta
+
+        # ---- Estado de cobro ----
+        total = Decimal(calcular_total_venta(obj.venta) or 0)
+        cobrado = obj.monto_pagado or Decimal('0')
+        pendiente = total - cobrado
+        if obj.monto_pagado is None:
+            cobrado_html = '<span style="color: #94a3b8; font-style: italic;">(sin registrar)</span>'
+        else:
+            cobrado_html = f'<span style="color: #047857; font-weight: 600;">${cobrado:,.2f}</span>'
+        if pendiente <= 0:
+            sobrante_txt = (
+                f' — sobrante ${abs(pendiente):,.2f}' if pendiente < 0 else ''
+            )
+            pendiente_html = (
+                f'<span style="color: #047857; font-weight: 600;">'
+                f'✓ Saldado{sobrante_txt}</span>'
+            )
+        else:
+            pendiente_html = (
+                f'<span style="color: #b91c1c; font-weight: 600;">'
+                f'${pendiente:,.2f}</span>'
+            )
+
+        # Botón de registrar/editar pago al lado del estado.
+        url_pago = reverse('registrar_pago_pedidos') + f'?pedidos_ids={obj.pk}'
+        if obj.monto_pagado is None:
+            boton_label = '💰 Registrar pago'
+            boton_color = '#4f46e5'
+        else:
+            boton_label = '✏️ Editar pago'
+            boton_color = '#059669'
+
+        # ---- Tabla de artículos ----
+        filas_html = ''
+        for av in obj.venta.ventas.all():
+            filas_html += (
+                f'<tr>'
+                f'<td style="padding:4px 8px;">{av.articulo.get_articulo_short_name()}</td>'
+                f'<td style="padding:4px 8px; text-align:right;">{av.cantidad}</td>'
+                f'<td style="padding:4px 8px; text-align:right;">${av.precio}</td>'
+                f'<td style="padding:4px 8px; text-align:right;">${av.total}</td>'
+                f'</tr>'
+            )
+
+        html = f'''
+        <div style="margin-top:8px;">
+
+          <div style="padding:12px; background:#f1f5f9; border-radius:8px; margin-bottom:16px;
+                      display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+            <table style="border-collapse:collapse; font-size:14px;">
+              <tr><td style="padding:2px 16px 2px 0; color:#64748b;">Total venta:</td>
+                  <td style="padding:2px 0; font-weight:600;">${total:,.2f}</td></tr>
+              <tr><td style="padding:2px 16px 2px 0; color:#64748b;">Cobrado:</td>
+                  <td style="padding:2px 0;">{cobrado_html}</td></tr>
+              <tr><td style="padding:2px 16px 2px 0; color:#64748b;">Pendiente:</td>
+                  <td style="padding:2px 0;">{pendiente_html}</td></tr>
+            </table>
+            <a href="{url_pago}" style="padding:10px 18px; background:{boton_color};
+                                       color:white; border-radius:6px; text-decoration:none;
+                                       font-weight:500; white-space:nowrap;">{boton_label}</a>
+          </div>
+
+          <table style="width:100%; border-collapse:collapse;">
+            <thead>
+              <tr style="background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+                <th style="padding:6px 8px; text-align:left;">Nombre</th>
+                <th style="padding:6px 8px; text-align:right;">Cantidad</th>
+                <th style="padding:6px 8px; text-align:right;">Precio</th>
+                <th style="padding:6px 8px; text-align:right;">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filas_html}
+              <tr style="border-top:2px solid #e2e8f0;">
+                <td colspan="3" style="padding:6px 8px; text-align:right;"><strong>Total</strong></td>
+                <td style="padding:6px 8px; text-align:right;"><strong style="color:#2563eb;">${total:,.2f}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="margin-top:12px;">{self.descargar_pdf(obj)}</div>
+        </div>
+        '''
+        return format_html(html)
+    mostrar_articulos.short_description = 'Detalle del pedido'
+
+    # `mostrar_articulos` renderiza TODO el bloque grande: estado de
+    # cobro + botón de registrar/editar pago + tabla de artículos + PDF.
+    # Lo hacemos así porque material-admin envuelve los readonly fields
+    # individuales con un label flotante que se solapa con el contenido
+    # HTML. Al meterlo todo dentro de UN solo field readonly, el
+    # markup queda controlado por nosotros y no hay solapamiento.
+    readonly_fields = ('venta', 'mostrar_articulos')
 
     fieldsets = (
         (None, {
-            'fields': ('venta', 'estado',
-                       ('mostrar_articulos',))
+            'fields': ('venta', 'estado', 'pagado', 'mostrar_articulos')
         }),
     )
+
+    # El botón "Registrar/Editar pago" y el bloque "Estado de cobro"
+    # se renderizan ahora dentro de `mostrar_articulos` (para evitar el
+    # solapamiento visual de material-admin con floating labels).
 
     # def get_readonly_fields(self, request, obj=None):
     #        return self.readonly_fields + ('venta',)

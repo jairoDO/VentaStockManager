@@ -1,21 +1,21 @@
 {% comment %}
-Pantalla intermedia "Generar PDFs y registrar pago".
+Pantalla intermedia "Registrar pago" — disparada desde la acción del
+PedidoAdmin. Una fila por pedido con input "¿Cuánto pagó?" + nota.
 
-Disparada desde la acción del PedidoAdmin. Muestra una fila por pedido
-con saldo actual del cliente + input "Dejar saldo en". El operador
-ingresa los valores objetivo y al confirmar:
+Idempotencia: si pedido.monto_pagado is not None, la fila aparece
+read-only con "Ya registrado: $X" — no se duplica el cobro aunque
+el operador vuelva a disparar la acción.
 
-  1. Crea un MovimientoCuenta(AJUSTE) por cada fila con delta != 0.
-  2. Marca todos los pedidos como pagados.
-  3. Redirige al generador de PDFs.
+NO genera PDFs (esa es una acción separada). Solo registra pagos
+y actualiza la cuenta corriente.
 
-Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
+Stack: Tailwind CDN + Alpine 3.
 {% endcomment %}
 <!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Generar PDFs y registrar pago — {{ total_filas }} pedido{{ total_filas|pluralize }}</title>
+  <title>Registrar pago — {{ total_filas }} pedido{{ total_filas|pluralize }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -23,7 +23,8 @@ Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen">
 
-<div class="max-w-6xl mx-auto p-6">
+<div class="max-w-6xl mx-auto p-6"
+     x-data="paginaCobrar()">
 
   {# ---- Header ---- #}
   <div class="mb-6">
@@ -31,11 +32,15 @@ Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
        class="text-sm text-blue-600 hover:underline">
       ← Volver al listado de pedidos
     </a>
-    <h1 class="text-2xl font-bold mt-2">💰 Generar PDFs y registrar pago</h1>
+    <h1 class="text-2xl font-bold mt-2">💰 Registrar pago</h1>
     <p class="text-sm text-slate-500 mt-1">
-      Indicá <b>en cuánto querés dejar el saldo</b> de cada cliente. El sistema
-      calcula el delta y crea el ajuste correspondiente. Después marca los
-      pedidos como pagados y genera los PDFs.
+      Indicá <b>cuánto pagó</b> cada cliente. El sistema calcula el saldo
+      nuevo y registra el movimiento en cuenta corriente. Los pedidos
+      quedan marcados como cobrados.
+    </p>
+    <p class="text-xs text-slate-400 mt-1">
+      <b>Idempotente:</b> si un pedido ya tiene pago registrado, aparece
+      en gris y no se vuelve a procesar.
     </p>
   </div>
 
@@ -56,10 +61,10 @@ Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
 
   {# ---- Tip rápido ---- #}
   <div class="mb-4 p-3 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-800 text-sm">
-    💡 <b>Cómo funciona:</b> el valor que pongas en "Dejar saldo en" es el saldo
-    <b>final</b> que va a tener el cliente. <b>0</b> = lo dejás saldado.
-    <b>Negativo</b> (ej. -1500) = sigue debiendo $1.500. <b>Positivo</b> = queda a favor.
-    Dejá vacío si solo querés marcar el pedido como pagado sin tocar la cuenta.
+    💡 <b>Tipá cuánto pagó cada cliente</b> — el sistema calcula solo cómo
+    queda el saldo. El default sugerido es el total de la venta (cliente pagó
+    todo). Si pagó menos, le queda saldo en deuda; si pagó más, queda a favor.
+    Dejá vacío para no tocar la cuenta (solo marca el pedido como pagado).
   </div>
 
   <form method="post" action="">
@@ -74,23 +79,38 @@ Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
             <th class="text-left px-4 py-3">Cliente</th>
             <th class="text-right px-4 py-3">Total venta</th>
             <th class="text-right px-4 py-3">Saldo actual</th>
-            <th class="text-left px-4 py-3 w-40">Dejar saldo en</th>
+            <th class="text-left px-4 py-3 w-44">¿Cuánto pagó?</th>
+            <th class="text-left px-4 py-3 w-56">Saldo nuevo</th>
             <th class="text-left px-4 py-3">Nota (opcional)</th>
           </tr>
         </thead>
         <tbody>
           {% for fila in filas %}
           <tr x-data="{
-                dejar: '{{ fila.dejar_en_default|escapejs }}',
+                monto: '{{ fila.monto_default }}',
+                montoOriginal: '{{ fila.monto_default }}',
+                yaRegistrado: {% if fila.ya_registrado %}true{% else %}false{% endif %},
                 saldoActual: {{ fila.saldo_actual }},
-                get dejarNum() {
-                  if (this.dejar === '' || this.dejar === null) return null;
-                  const n = parseFloat((this.dejar + '').replace(',', '.'));
-                  return isNaN(n) ? null : n;
+                deudaPendienteVenta: {{ fila.deuda_pendiente_venta }},
+                get montoNum() {
+                  if (this.monto === '' || this.monto === null) return null;
+                  const n = parseFloat((this.monto + '').replace(',', '.'));
+                  return isNaN(n) || n < 0 ? null : n;
                 },
-                get delta() {
-                  if (this.dejarNum === null) return null;
-                  return this.dejarNum - this.saldoActual;
+                get cambioMonto() {
+                  // Cuando el pedido ya estaba registrado, mostrar el
+                  // delta entre el valor original y el nuevo.
+                  if (!this.yaRegistrado || this.montoNum === null) return 0;
+                  return this.montoNum - parseFloat(this.montoOriginal);
+                },
+                get saldoNuevo() {
+                  if (this.montoNum === null) return null;
+                  // Si yaRegistrado: el saldo actual ya tiene el PAGO viejo
+                  // descontado. El delta a aplicar = montoNum - montoOriginal.
+                  if (this.yaRegistrado) {
+                    return this.saldoActual + this.cambioMonto;
+                  }
+                  return this.saldoActual - this.deudaPendienteVenta + this.montoNum;
                 }
               }"
               class="border-t border-slate-100 hover:bg-slate-50">
@@ -110,7 +130,9 @@ Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
               ${{ fila.total_venta }}
             </td>
             <td class="px-4 py-3 text-right align-top font-medium">
-              {% if fila.saldo_actual_display > 0 %}
+              {% if not fila.tiene_cuenta %}
+                <span class="text-xs text-slate-400 italic">— sin cuenta —</span>
+              {% elif fila.saldo_actual_display > 0 %}
                 <span class="text-emerald-700">+${{ fila.saldo_actual }}</span>
               {% elif fila.saldo_actual_display < 0 %}
                 <span class="text-red-700">${{ fila.saldo_actual }}</span>
@@ -119,24 +141,82 @@ Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
               {% endif %}
             </td>
             <td class="px-4 py-3 align-top">
-              <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
-                <input type="number" step="0.01"
-                       name="dejar_en_{{ fila.pedido.id }}"
-                       x-model="dejar"
-                       placeholder="0 para saldar"
-                       class="w-full pl-7 pr-2 py-2 border-2 border-slate-300 rounded-lg
-                              focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200
-                              focus:outline-none text-sm">
-              </div>
-              <div x-show="delta !== null && delta !== 0" x-cloak
-                   class="mt-1 text-xs"
-                   :class="delta > 0 ? 'text-emerald-700' : 'text-red-700'">
-                <span x-text="(delta > 0 ? 'Ajuste +$' : 'Ajuste -$') + Math.abs(delta).toFixed(2)"></span>
-              </div>
-              <div x-show="delta === 0" x-cloak class="mt-1 text-xs text-slate-500">
-                Sin cambio en el saldo.
-              </div>
+              {% if fila.tiene_cuenta %}
+                {% if fila.ya_registrado %}
+                  <div class="text-xs text-emerald-700 font-medium mb-1">
+                    ✓ Ya registrado: ${{ fila.monto_default }}
+                  </div>
+                {% endif %}
+                <div class="relative">
+                  <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                  <input type="number" step="0.01" min="0"
+                         name="monto_pagado_{{ fila.pedido.id }}"
+                         x-model="monto"
+                         placeholder="(dejá vacío para no tocar)"
+                         class="w-full pl-7 pr-2 py-2 border-2 rounded-lg
+                                focus:ring-2 focus:outline-none text-sm
+                                {% if fila.ya_registrado %}border-emerald-300 focus:border-emerald-500 focus:ring-emerald-200{% else %}border-slate-300 focus:border-indigo-500 focus:ring-indigo-200{% endif %}">
+                </div>
+                <div class="mt-1 text-xs text-slate-500">
+                  Total venta: <span class="font-medium">${{ fila.total_venta }}</span>
+                  {% if fila.saldo_actual_display < 0 %}
+                    <br>Deuda total cliente: <span class="font-medium text-red-700">${{ fila.deuda_total_str }}</span>
+                  {% endif %}
+                </div>
+              {% else %}
+                {% comment %}
+                  Cliente sin cuenta corriente: no permitir cargar monto.
+                  Botón que abre modal de confirmación → crea cuenta.
+                {% endcomment %}
+                <div class="text-xs text-amber-700 mb-2">
+                  ⚠ Sin cuenta corriente
+                </div>
+                <button type="button"
+                        @click="confirmarCrearCuenta({{ fila.cliente.id }}, '{{ fila.cliente.nombre_completo|escapejs }}')"
+                        class="w-full px-3 py-2 text-sm font-medium rounded-lg
+                               bg-amber-50 border-2 border-amber-200 text-amber-800
+                               hover:bg-amber-100 hover:border-amber-300">
+                  + Crear cuenta corriente
+                </button>
+                <div class="mt-1 text-xs text-slate-500">
+                  Total venta: <span class="font-medium">${{ fila.total_venta }}</span>
+                </div>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 align-top">
+              {% if fila.tiene_cuenta %}
+                <div x-show="montoNum === null" x-cloak class="text-xs text-slate-400 italic">
+                  (no toca la cuenta)
+                </div>
+                <div x-show="montoNum !== null" x-cloak class="text-sm">
+                  <template x-if="saldoNuevo === 0">
+                    <span class="text-emerald-700 font-semibold">✓ Queda al día ($0)</span>
+                  </template>
+                  <template x-if="saldoNuevo < 0">
+                    <span class="text-red-700 font-semibold">
+                      Sigue debiendo <span x-text="'$' + Math.abs(saldoNuevo).toFixed(2)"></span>
+                    </span>
+                  </template>
+                  <template x-if="saldoNuevo > 0">
+                    <span class="text-amber-700 font-semibold">
+                      ⚠ Queda <span x-text="'$' + saldoNuevo.toFixed(2)"></span> a favor del cliente
+                    </span>
+                  </template>
+                  {% if fila.ya_registrado %}
+                    <div x-show="cambioMonto !== 0" x-cloak class="mt-1 text-xs text-amber-700">
+                      Cambio sobre el pago previo:
+                      <span x-text="(cambioMonto > 0 ? '+$' : '-$') + Math.abs(cambioMonto).toFixed(2)"></span>
+                    </div>
+                    <div x-show="cambioMonto === 0" x-cloak class="mt-1 text-xs text-slate-400 italic">
+                      (sin cambio — mismo monto que ya estaba)
+                    </div>
+                  {% endif %}
+                </div>
+              {% else %}
+                <span class="text-xs text-slate-400 italic">
+                  Creá la cuenta para poder registrar el pago.
+                </span>
+              {% endif %}
             </td>
             <td class="px-4 py-3 align-top">
               <input type="text"
@@ -163,12 +243,68 @@ Mismo stack que registrar_movimiento.html (Tailwind CDN + Alpine 3).
       </div>
       <button type="submit"
               class="px-6 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm">
-        Aplicar y generar PDFs
+        Registrar pagos
       </button>
     </div>
   </form>
 
+  {# Modal Alpine reutilizable — usado por el botón "Crear cuenta corriente" #}
+  {% include "partials/_modal_alpine.html" %}
+
 </div>
+
+<script>
+  // Componente Alpine raíz de la página. Mergea state del modal partial
+  // + el método `confirmarCrearCuenta` que abre el modal y, al confirmar,
+  // POSTea al endpoint y recarga la página para que la fila pase a tener
+  // input de monto (en vez del botón).
+  function paginaCobrar() {
+    return {
+      ...modalState(),
+      confirmarCrearCuenta(clienteId, nombre) {
+        this.abrirModal({
+          tipo: 'confirm',
+          titulo: 'Crear cuenta corriente',
+          mensaje: `¿Crear una cuenta corriente vacía (saldo $0) para ${nombre}?\n\nLa vas a poder usar para registrar el pago de este pedido y futuros.`,
+          okLabel: 'Crear cuenta',
+          cancelLabel: 'Cancelar',
+          callback: () => this.crearCuenta(clienteId, nombre),
+        });
+      },
+      async crearCuenta(clienteId, nombre) {
+        // CSRF: Django setea el cookie `csrftoken` y exige el header
+        // X-CSRFToken en POSTs. Lo leemos del cookie.
+        const csrf = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
+        try {
+          const r = await fetch(`/clientes/${clienteId}/crear-cuenta/`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'X-CSRFToken': csrf},
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            this.abrirModal({
+              tipo: 'error', titulo: 'No se pudo crear la cuenta',
+              mensaje: `Error del servidor (${r.status}). Probá de nuevo o avisá al equipo.`,
+            });
+            return;
+          }
+          // Recargar para que la fila aparezca con input de monto en
+          // lugar del botón. El form vacío no se pierde porque el
+          // operador no llenó nada todavía en otras filas (si lo hizo,
+          // se pierde — trade-off aceptable porque crear cuenta es algo
+          // raro y conviene hacerlo apenas se carga la página).
+          window.location.reload();
+        } catch (e) {
+          this.abrirModal({
+            tipo: 'error', titulo: 'Error de red',
+            mensaje: e.message || String(e),
+          });
+        }
+      },
+    };
+  }
+</script>
 
 </body>
 </html>

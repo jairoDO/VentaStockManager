@@ -1,29 +1,27 @@
 """
-Pantalla intermedia para "Generar PDFs y registrar pago" — disparada
-desde la acción del PedidoAdmin.
+Pantalla intermedia "Registrar pago" — disparada desde la acción del
+PedidoAdmin "💰 Registrar pago".
 
 Flujo:
-  - El operador selecciona N pedidos en el admin y elige la acción
-    "💰 Generar PDFs y registrar pago".
+  - El operador selecciona N pedidos en el admin y elige la acción.
   - La acción redirige acá (GET con ?pedidos_ids=...) y se muestra una
     tabla con una fila por pedido: cliente, total venta, saldo actual,
-    e input "Dejar saldo en" + nota opcional.
-  - El operador llena los valores que quiera para cada cliente.
-  - POST: por cada fila se crea un MovimientoCuenta de tipo AJUSTE para
-    dejar el saldo del cliente en el valor objetivo, se marca el pedido
-    como pagado, y al final redirige a la generación de PDFs (que ya
-    existe).
+    input "¿Cuánto pagó?" + nota.
+  - **Idempotencia**: si el pedido ya tiene `monto_pagado != null`, la
+    fila muestra "Ya registrado: $X" en lugar del input, y la acción
+    NO duplica el movimiento aunque se vuelva a disparar por error.
+  - POST: por cada fila con monto y SIN registro previo, crea un
+    MovimientoCuenta(PAGO) y guarda `pedido.monto_pagado = monto`.
 
-Por qué pantalla intermedia y no acción automática:
-  - Pocas veces el operador que cobra es el mismo que cargó la venta.
-  - La administradora quiere DECIDIR cuánto deja al cliente (puede dejar
-    saldo a favor, puede dejar deuda parcial, puede saldar). El cobro
-    automático (todo o nada) no le sirve.
+NO genera PDFs — eso es trabajo de la acción "Generar PDFs" separada.
 
-Idempotencia: si el operador cierra el form sin enviar, no se aplica
-nada. Si lo envía dos veces, cada submit aplica un AJUSTE — el segundo
-casi siempre va a ser 0 (porque el saldo ya está donde lo dejó), pero
-en cualquier caso queda registrado en el historial.
+Filosofía:
+  - "Cobrar" es una decisión sensible (toca la cuenta corriente).
+    Separar de "imprimir" minimiza el riesgo de cobros accidentales.
+  - El campo `monto_pagado` del Pedido es la fuente de verdad de "este
+    pedido ya se cobró por esta vía". Si está seteado, no se vuelve a
+    procesar — para "des-cobrar" el operador debe limpiarlo a mano
+    desde el admin de Pedido.
 """
 from __future__ import annotations
 
@@ -34,7 +32,6 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import render
-from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
 from cliente.models import CuentaCliente, MovimientoCuenta
@@ -43,7 +40,6 @@ from venta.utils import total_venta as calcular_total_venta
 
 
 def _parse_ids(raw: str) -> list[int]:
-    """Convierte '1,2,3' → [1, 2, 3], saltando lo que no sea entero."""
     ids: list[int] = []
     for tok in (raw or '').split(','):
         tok = tok.strip()
@@ -58,7 +54,7 @@ def _parse_ids(raw: str) -> list[int]:
 
 @staff_member_required
 @require_http_methods(['GET', 'POST'])
-def cobrar_y_generar_pdf(request: HttpRequest) -> HttpResponse:
+def registrar_pago_pedidos(request: HttpRequest) -> HttpResponse:
     pedidos_ids_raw = (
         request.POST.get('pedidos_ids') or request.GET.get('pedidos_ids') or ''
     )
@@ -67,8 +63,6 @@ def cobrar_y_generar_pdf(request: HttpRequest) -> HttpResponse:
         messages.error(request, 'No hay pedidos seleccionados.')
         return HttpResponseRedirect('/admin/venta/pedido/')
 
-    # Cargar pedidos en el ORDEN del query string (orden estable para
-    # que el operador vea las filas igual que las seleccionó en el admin).
     pedidos_map = {
         p.id: p for p in Pedido.objects
         .select_related('venta__cliente__cuenta')
@@ -79,79 +73,70 @@ def cobrar_y_generar_pdf(request: HttpRequest) -> HttpResponse:
         messages.error(request, 'Los pedidos seleccionados ya no existen.')
         return HttpResponseRedirect('/admin/venta/pedido/')
 
-    # ---- POST: aplicar ajustes + redirigir al PDF ----
+    # ---- POST: registrar/actualizar pagos ----
+    # El helper set_monto_pagado es idempotente: si el monto no cambió,
+    # no hace nada; si cambió, ACTUALIZA el PAGO existente (no duplica).
+    # Esto permite que el operador edite un pago ya registrado desde
+    # el mismo form sin tener que ir a otra pantalla.
     if request.method == 'POST':
-        aplicados = 0
+        registrados = 0
+        actualizados = 0
         sin_cambio = 0
+        sin_monto = 0
         errores: list[str] = []
-        total_movido = Decimal('0')
+        total_cobrado = Decimal('0')
 
         with transaction.atomic():
             for pedido in pedidos:
-                cliente = pedido.venta.cliente if pedido.venta else None
-                if not cliente:
-                    errores.append(f'Pedido #{pedido.id}: sin cliente, no se procesó.')
-                    continue
-
-                dejar_raw = (
-                    request.POST.get(f'dejar_en_{pedido.id}') or ''
+                monto_raw = (
+                    request.POST.get(f'monto_pagado_{pedido.id}') or ''
                 ).strip().replace(',', '.')
-                nota = (request.POST.get(f'nota_{pedido.id}') or '').strip()
 
-                if dejar_raw == '':
-                    # El operador dejó la fila vacía → no aplicar ajuste, pero
-                    # SÍ marcar pedido como pagado igual (asume que el cobro fue
-                    # gestionado por otra vía). Si no quería ni eso, debería
-                    # deseleccionarlo en el admin.
-                    pedido.pagado = True
-                    pedido.save(update_fields=['pagado'])
-                    sin_cambio += 1
+                if monto_raw == '':
+                    # Input vacío: si ya tenía pago, lo dejamos como está;
+                    # si no tenía, lo saltamos.
+                    if pedido.monto_pagado is None:
+                        sin_monto += 1
+                    else:
+                        sin_cambio += 1
                     continue
 
                 try:
-                    objetivo = Decimal(dejar_raw)
+                    monto = Decimal(monto_raw)
                 except (InvalidOperation, ValueError):
                     errores.append(
-                        f'Pedido #{pedido.id} ({cliente.nombre_completo()}): '
-                        f'"{dejar_raw}" no es un número válido.'
+                        f'Pedido #{pedido.id}: "{monto_raw}" no es un número válido.'
+                    )
+                    continue
+                if monto < 0:
+                    errores.append(
+                        f'Pedido #{pedido.id}: el monto no puede ser negativo.'
                     )
                     continue
 
-                cuenta, _ = CuentaCliente.objects.select_for_update().get_or_create(
-                    cliente=cliente,
-                )
-                saldo_actual = cuenta.saldo
-                delta = objetivo - saldo_actual
+                # Delego en el helper: crea/actualiza/no-op según el caso.
+                try:
+                    user = request.user if request.user.is_authenticated else None
+                    resultado = pedido.set_monto_pagado(monto, user=user)
+                    if resultado.get('creado'):
+                        registrados += 1
+                        total_cobrado += monto
+                    elif resultado.get('actualizado'):
+                        actualizados += 1
+                    else:
+                        sin_cambio += 1
+                except ValueError as e:
+                    errores.append(f'Pedido #{pedido.id}: {e}')
 
-                if delta != 0:
-                    traza = (
-                        f'Cobro al generar comanda — saldo objetivo ${objetivo:,.2f} '
-                        f'(previo ${saldo_actual:,.2f}, delta {"+" if delta > 0 else ""}{delta:,.2f}) '
-                        f'· venta #{pedido.venta_id}'
-                    )
-                    desc = f'{traza}. {nota}'.strip().rstrip('.')
-                    MovimientoCuenta.objects.create(
-                        cuenta=cuenta,
-                        tipo=MovimientoCuenta.TIPO_AJUSTE,
-                        monto=delta,
-                        venta=pedido.venta,
-                        descripcion=desc,
-                        creado_por=request.user if request.user.is_authenticated else None,
-                    )
-                    total_movido += abs(delta)
-                    aplicados += 1
-                else:
-                    sin_cambio += 1
-
-                pedido.pagado = True
-                pedido.save(update_fields=['pagado'])
-
-        # Resumen al operador.
         partes = []
-        if aplicados:
-            partes.append(f'{aplicados} ajustes aplicados (${total_movido:,.2f} movidos)')
+        if registrados:
+            partes.append(f'{registrados} pagos nuevos (${total_cobrado:,.2f})')
+        if actualizados:
+            partes.append(f'{actualizados} actualizados')
         if sin_cambio:
-            partes.append(f'{sin_cambio} marcados pagados sin cambio de saldo')
+            partes.append(f'{sin_cambio} sin cambio')
+        if sin_monto:
+            partes.append(f'{sin_monto} sin monto cargado')
         if errores:
             partes.append(f'{len(errores)} con error')
         resumen = ' · '.join(partes) if partes else 'Sin cambios.'
@@ -159,13 +144,9 @@ def cobrar_y_generar_pdf(request: HttpRequest) -> HttpResponse:
         for err in errores:
             messages.warning(request, err)
 
-        # Disparar PDFs (reusa la URL existente).
-        ids_csv = ','.join(str(p.id) for p in pedidos)
-        return HttpResponseRedirect(
-            reverse('generar_pdf_pedidos') + f'?pedidos_ids={ids_csv}'
-        )
+        return HttpResponseRedirect('/admin/venta/pedido/')
 
-    # ---- GET: armar la tabla con saldo actual + total venta ----
+    # ---- GET: armar la tabla ----
     filas = []
     for pedido in pedidos:
         venta = pedido.venta
@@ -173,14 +154,29 @@ def cobrar_y_generar_pdf(request: HttpRequest) -> HttpResponse:
         if not cliente:
             continue
         total = Decimal(calcular_total_venta(venta) or 0) if venta else Decimal('0')
-        # get_or_create defensivo — algunos clientes legacy podían no
-        # tener CuentaCliente. Igual lo creamos para que .saldo no rompa.
-        cuenta, _ = CuentaCliente.objects.get_or_create(cliente=cliente)
-        saldo = cuenta.saldo
-        # Default sugerido: si el cliente paga TODO ahora (incluyendo lo
-        # que ya debía), querría dejar el saldo en lo que tenga PRE-venta.
-        # Pero como esa lógica es ambigua, el default más natural es 0
-        # (cliente queda al día). El operador la cambia si quiere.
+        cuenta = CuentaCliente.objects.filter(cliente=cliente).first()
+        tiene_cuenta = cuenta is not None
+        saldo = cuenta.saldo if cuenta else Decimal('0')
+
+        # Si la venta ya tiene una VENTA_A_CUENTA, asumimos que está
+        # reflejada en el saldo (deuda_pendiente=0). Si no, asumimos
+        # que es deuda nueva no contabilizada (deuda_pendiente=total).
+        venta_ya_en_saldo = bool(
+            venta and MovimientoCuenta.objects.filter(
+                venta=venta, tipo=MovimientoCuenta.TIPO_VENTA_A_CUENTA,
+            ).exists()
+        )
+        deuda_pendiente = Decimal('0') if venta_ya_en_saldo else total
+
+        # Pedido con pago previo: pre-cargamos el input con ese monto
+        # para que el operador pueda editarlo en lugar de re-tipearlo.
+        # `set_monto_pagado` es idempotente — si no cambia, no-op; si
+        # cambia, actualiza el PAGO existente sin duplicar.
+        ya_registrado = pedido.monto_pagado is not None
+        monto_default = (
+            f'{pedido.monto_pagado:.2f}' if ya_registrado else f'{total:.2f}'
+        )
+
         filas.append({
             'pedido': pedido,
             'venta': venta,
@@ -188,12 +184,15 @@ def cobrar_y_generar_pdf(request: HttpRequest) -> HttpResponse:
             'total_venta': f'{total:.2f}',
             'saldo_actual': f'{saldo:.2f}',
             'saldo_actual_display': saldo,
+            'deuda_pendiente_venta': f'{deuda_pendiente:.2f}',
+            'deuda_total_str': f'{abs(saldo):.2f}' if saldo < 0 else '0.00',
             'fecha_compra': venta.fecha_compra if venta else None,
-            # Sugerimos `0` (saldar) como default para "cobré todo".
-            'dejar_en_default': '0',
+            'tiene_cuenta': tiene_cuenta,
+            'ya_registrado': ya_registrado,
+            'monto_default': monto_default,
         })
 
-    return render(request, 'venta/cobrar_y_generar_pdf.html', {
+    return render(request, 'venta/registrar_pago_pedidos.html', {
         'filas': filas,
         'pedidos_ids_csv': ','.join(str(p.id) for p in pedidos),
         'total_filas': len(filas),

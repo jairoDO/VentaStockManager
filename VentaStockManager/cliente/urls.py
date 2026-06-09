@@ -6,7 +6,7 @@ from .views import (
     ClienteAutocomplete,
     extracto_cliente,
 )
-from .views_movimientos import registrar_movimiento
+from .views_movimientos import registrar_movimiento, crear_cuenta_cliente
 
 urlpatterns = [
     path('mostrar_todos_los_clientes/', mostrar_todos_los_clientes, name='clientes'),
@@ -22,6 +22,9 @@ urlpatterns = [
     # form de /admin/cliente/movimientocuenta/add/ que tenía bugs
     # visuales irresolubles con material-admin (inputs invisibles).
     path('<int:cliente_id>/movimiento/', registrar_movimiento, name='cliente_registrar_movimiento'),
+    # Endpoint JSON para crear la CuentaCliente cuando no existe.
+    # Disparado desde el modal de la pantalla "Cobrar y generar PDF".
+    path('<int:cliente_id>/crear-cuenta/', crear_cuenta_cliente, name='cliente_crear_cuenta'),
 ]
 
 # NOTA: la gestión de usuarios (/usuarios/...) vive en cliente/urls_usuarios.py

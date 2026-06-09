@@ -309,6 +309,29 @@ class MovimientoCuenta(models.Model):
         related_name='movimientos_cuenta',
         on_delete=models.SET_NULL,
     )
+    # OneToOne con Pedido: este movimiento es EL pago canónico de este
+    # pedido (creado por `pedido.set_monto_pagado()`). Permite
+    # identificar y actualizar/borrar el movimiento sin parsear
+    # descripciones cuando cambia `pedido.monto_pagado`.
+    #
+    # Solo lo setea la lógica de "registrar pago" (acción bulk + edit
+    # del campo en el admin). Movimientos cargados por otras vías
+    # (pagos a mano desde "Registrar pago" del cliente, ajustes, etc)
+    # quedan con este campo en NULL — no son el pago canónico de un
+    # pedido en particular.
+    pedido_origen = models.OneToOneField(
+        'venta.Pedido',
+        null=True,
+        blank=True,
+        related_name='movimiento_pago',
+        on_delete=models.SET_NULL,
+        help_text=(
+            'Pedido cuyo "monto_pagado" generó este movimiento. Si está '
+            'seteado, este es el pago canónico de ese pedido y se '
+            'edita/borra automáticamente cuando el operador cambia el '
+            'campo monto_pagado del pedido.'
+        ),
+    )
     descripcion = models.TextField(blank=True, default='')
     creado_por = models.ForeignKey(
         'auth.User',

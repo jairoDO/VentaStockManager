@@ -20,6 +20,7 @@ from venta.views_nueva import (
     api_articulos_buscar,
     api_clientes_buscar,
     api_cliente_saldo,
+    api_cliente_crear,
     api_venta_guardar,
 )
 
@@ -27,9 +28,11 @@ from venta.views_nueva import (
 # caja al final del día. Server-rendered, simple, con selector de fecha.
 from venta.views_caja import caja_del_dia
 
-# Pantalla intermedia "Generar PDFs y registrar pago" (disparada desde
-# la acción del PedidoAdmin).
-from venta.views_cobrar import cobrar_y_generar_pdf
+
+# Pantalla intermedia "Registrar pago" (disparada desde la acción del
+# PedidoAdmin). NO genera PDFs — solo registra el monto cobrado por
+# pedido y actualiza la cuenta corriente.
+from venta.views_cobrar import registrar_pago_pedidos
 
 urlpatterns = [
     # Pantalla nueva de venta (Alpine + Tailwind). Estas rutas tienen
@@ -41,6 +44,7 @@ urlpatterns = [
     path('venta/<int:id>/editar/', venta_editar, name='venta_editar'),
     path('venta/api/articulos/buscar/', api_articulos_buscar, name='venta_api_articulos_buscar'),
     path('venta/api/clientes/buscar/', api_clientes_buscar, name='venta_api_clientes_buscar'),
+    path('venta/api/clientes/crear/', api_cliente_crear, name='venta_api_cliente_crear'),
     path('venta/api/clientes/<int:cliente_id>/saldo/', api_cliente_saldo, name='venta_api_cliente_saldo'),
     path('venta/api/guardar/', api_venta_guardar, name='venta_api_guardar'),
 
@@ -72,10 +76,11 @@ urlpatterns = [
     path('admin/venta/', redirect_to_ventas, name='redirect_to_ventas'),
     # Caja del día — pantalla read-only para reconciliar caja.
     path('caja/', caja_del_dia, name='caja_del_dia'),
-    # Pantalla intermedia "Generar PDFs y registrar pago" — disparada
-    # desde la acción del PedidoAdmin con ?pedidos_ids=1,2,3.
-    path('venta/pedido/cobrar-y-generar-pdf/', cobrar_y_generar_pdf,
-         name='cobrar_y_generar_pdf'),
+    # Pantalla intermedia "Registrar pago" — disparada desde la acción
+    # del PedidoAdmin con ?pedidos_ids=1,2,3. Idempotente por pedido:
+    # un pedido con monto_pagado != null no se vuelve a procesar.
+    path('venta/pedido/registrar-pago/', registrar_pago_pedidos,
+         name='registrar_pago_pedidos'),
 ]
 # url(r'^/(?P<venta_id>\d+)/detalle/$', views.venta_detalle, name='category-detail'),
 

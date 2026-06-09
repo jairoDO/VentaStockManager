@@ -400,4 +400,138 @@ class Pedido(models.Model):
     venta = models.OneToOneField(Venta, on_delete=models.CASCADE, related_name='pedido')
     pagado = models.BooleanField(default=False)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=PENDIENTE)
+    # Monto efectivamente cobrado por la acción "Registrar pago" (ya sea
+    # bulk desde el listado o desde el detalle del pedido). NULL = nunca
+    # se registró pago por esta vía. Cualquier valor (incluso 0) = ya se
+    # registró: la acción no debe duplicar el movimiento si se vuelve a
+    # disparar por error. Para "des-registrar" hay que limpiar el campo
+    # a mano desde el admin de Pedido.
+    #
+    # Se mantiene SEPARADO del flag `pagado` a propósito: pagado=True
+    # puede setearse por la acción "Marcar como saldada" sin tocar
+    # cuenta corriente; monto_pagado solo se setea cuando se registra
+    # el pago efectivo + se crea el MovimientoCuenta.
+    monto_pagado = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=(
+            'Monto cobrado al registrar el pago. NULL = aún no se '
+            'registró pago. Cualquier valor = idempotente: la acción '
+            '"Registrar pago" no vuelve a aplicarse sobre este pedido.'
+        ),
+    )
+
+    def set_monto_pagado(self, nuevo_monto, user=None):
+        """
+        Centraliza la lógica de "registrar/actualizar/borrar el pago de
+        este pedido". Único punto de entrada para que TODAS las vías
+        (acción bulk "Registrar pago", acción "Marcar como saldada",
+        edit del campo en el admin individual) produzcan el mismo
+        resultado en cuenta corriente.
+
+        Reglas:
+          - `nuevo_monto = None` → borra el MovimientoCuenta(PAGO) que
+            estaba asociado a este pedido (si existe). El pedido vuelve
+            a estar disponible para "Registrar pago".
+          - `nuevo_monto = D` (Decimal positivo o 0) → asegura que la
+            venta esté en el saldo del cliente (VENTA_A_CUENTA), y
+            crea/actualiza el MovimientoCuenta(PAGO) asociado a este
+            pedido por `nuevo_monto`. Si ya había un PAGO de este
+            pedido por otro monto, lo ACTUALIZA (no duplica) — el
+            saldo del cliente cambia solo por el delta.
+
+        El operador no tiene que pensar en "factura vs cuenta corriente":
+        cambiar `monto_pagado` de 50 a 60 deja la factura cobrada en 60
+        y mueve el saldo del cliente +10 (no +60+50=+110).
+
+        Idempotente: si `nuevo_monto == self.monto_pagado`, no-op.
+
+        Returns: dict con `{'creado': bool, 'actualizado': bool,
+        'borrado': bool, 'delta_saldo': Decimal}`.
+        """
+        from decimal import Decimal
+        from cliente.models import CuentaCliente, MovimientoCuenta
+        from venta.utils import total_venta as calcular_total_venta
+
+        resultado = {'creado': False, 'actualizado': False, 'borrado': False,
+                     'delta_saldo': Decimal('0')}
+
+        if nuevo_monto == self.monto_pagado:
+            return resultado  # idempotente
+
+        cliente = self.venta.cliente if self.venta else None
+        if not cliente:
+            raise ValueError('Pedido sin cliente — no se puede registrar pago.')
+
+        # Buscar el PAGO existente asociado a ESTE pedido.
+        pago_existente = MovimientoCuenta.objects.filter(
+            pedido_origen=self,
+        ).first()
+
+        # Caso A: nuevo_monto = None → borrar pago anterior (si hay).
+        if nuevo_monto is None:
+            if pago_existente:
+                resultado['delta_saldo'] = -pago_existente.monto  # revertir
+                pago_existente.delete()
+                resultado['borrado'] = True
+            self.monto_pagado = None
+            self.save(update_fields=['monto_pagado'])
+            return resultado
+
+        # Caso B: nuevo_monto = D → crear o actualizar.
+        cuenta = CuentaCliente.objects.filter(cliente=cliente).first()
+        if not cuenta:
+            raise ValueError(
+                f'Cliente {cliente.nombre_completo()} sin cuenta corriente — '
+                f'crealá antes de registrar el pago.'
+            )
+
+        # Asegurar VENTA_A_CUENTA si no existe (factura en el saldo).
+        total_v = Decimal(calcular_total_venta(self.venta) or 0)
+        tiene_vac = MovimientoCuenta.objects.filter(
+            venta=self.venta, tipo=MovimientoCuenta.TIPO_VENTA_A_CUENTA,
+        ).exists()
+        if not tiene_vac and total_v > 0:
+            MovimientoCuenta.objects.create(
+                cuenta=cuenta,
+                tipo=MovimientoCuenta.TIPO_VENTA_A_CUENTA,
+                monto=-total_v,
+                venta=self.venta,
+                descripcion=f'Arrastre — venta #{self.venta_id}',
+                creado_por=user,
+            )
+
+        if pago_existente:
+            # Actualizar monto (solo cambia el saldo por el delta).
+            delta = Decimal(nuevo_monto) - pago_existente.monto
+            pago_existente.monto = Decimal(nuevo_monto)
+            pago_existente.descripcion = (
+                f'Pago de pedido #{self.id} (monto actualizado de '
+                f'${pago_existente.monto:,.2f} a ${nuevo_monto:,.2f})'
+            )
+            pago_existente.save(update_fields=['monto', 'descripcion'])
+            resultado['actualizado'] = True
+            resultado['delta_saldo'] = delta
+        else:
+            # Crear PAGO nuevo asociado al pedido.
+            if Decimal(nuevo_monto) > 0:
+                MovimientoCuenta.objects.create(
+                    cuenta=cuenta,
+                    tipo=MovimientoCuenta.TIPO_PAGO,
+                    monto=Decimal(nuevo_monto),
+                    venta=self.venta,
+                    pedido_origen=self,
+                    descripcion=f'Pago de pedido #{self.id}',
+                    creado_por=user,
+                )
+                resultado['creado'] = True
+                resultado['delta_saldo'] = Decimal(nuevo_monto)
+
+        self.monto_pagado = Decimal(nuevo_monto)
+        # Si registramos pago, marcamos pedido como pagado.
+        self.pagado = True
+        self.save(update_fields=['monto_pagado', 'pagado'])
+        return resultado
 

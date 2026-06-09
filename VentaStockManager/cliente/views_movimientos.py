@@ -30,10 +30,10 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Sum
-from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 
 from cliente.models import Cliente, CuentaCliente, MovimientoCuenta
 from venta.models import Venta
@@ -305,4 +305,75 @@ def _render_form(request, cliente, cuenta, modo, config,
         'saldo_actual_js': saldo_js,
         'ventas_impagas': ventas_impagas,
         'venta_id_sugerida': venta_id_sugerida,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Crear CuentaCliente (endpoint JSON)
+# ---------------------------------------------------------------------------
+@staff_member_required
+@require_POST
+def crear_cuenta_cliente(request: HttpRequest, cliente_id: int) -> HttpResponse:
+    """
+    Crea la CuentaCliente del cliente si no la tiene. Usado desde la
+    pantalla "Cobrar y generar PDF" cuando un pedido cae a un cliente
+    sin cuenta corriente.
+
+    Al crearla, **arrastra las ventas pendientes pre-existentes** como
+    movimientos `VENTA_A_CUENTA` (monto=-total). Eso es lo que pasaría
+    si esas ventas hubieran sido creadas por el flujo nuevo
+    (api_venta_guardar) — entran como deuda en el saldo.
+
+    Sin este arrastre, las ventas pendientes "no contabilizadas" hacían
+    que el cliente terminara con saldo a favor después de pagar (porque
+    el PAGO entraba sin un debit que cancelar).
+
+    Idempotente: si la cuenta ya existe, no toca nada y devuelve los
+    datos actuales.
+    """
+    from venta.models import Venta
+    from venta.utils import total_venta as calcular_total_venta
+    from decimal import Decimal
+
+    cliente = get_object_or_404(Cliente, pk=cliente_id)
+    with transaction.atomic():
+        cuenta, created = CuentaCliente.objects.get_or_create(cliente=cliente)
+        ventas_arrastradas = 0
+        deuda_arrastrada = Decimal('0')
+        if created:
+            # Iterar ventas pendientes (pedido.pagado=False) no archivadas
+            # del cliente. Por cada una, crear el VENTA_A_CUENTA con el
+            # total. Filtramos por seguridad las que ya tengan algún
+            # movimiento asociado (no debería pasar, pero idempotente).
+            ventas_pendientes = (
+                Venta.objects
+                .filter(cliente=cliente, pedido__pagado=False, archivada_en__isnull=True)
+                .exclude(movimientos_cuenta__isnull=False)
+                .distinct()
+            )
+            for v in ventas_pendientes:
+                total = Decimal(calcular_total_venta(v) or 0)
+                if total <= 0:
+                    continue
+                MovimientoCuenta.objects.create(
+                    cuenta=cuenta,
+                    tipo=MovimientoCuenta.TIPO_VENTA_A_CUENTA,
+                    monto=-total,
+                    venta=v,
+                    descripcion=(
+                        f'Arrastre al crear cuenta — venta #{v.id} '
+                        f'pendiente pre-existente'
+                    ),
+                    creado_por=request.user if request.user.is_authenticated else None,
+                )
+                ventas_arrastradas += 1
+                deuda_arrastrada += total
+    return JsonResponse({
+        'ok': True,
+        'created': created,
+        'cuenta_id': cuenta.pk,
+        'cliente_id': cliente.pk,
+        'saldo': str(cuenta.saldo),
+        'ventas_arrastradas': ventas_arrastradas,
+        'deuda_arrastrada': str(deuda_arrastrada),
     })

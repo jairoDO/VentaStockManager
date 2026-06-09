@@ -53,7 +53,14 @@
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 
       <div class="relative">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Cliente</label>
+        <label class="block text-sm font-medium text-slate-700 mb-1 flex items-center justify-between">
+          <span>Cliente</span>
+          <button type="button"
+                  @click="abrirModalNuevoCliente()"
+                  class="text-xs px-2 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded font-semibold">
+            + Nuevo cliente
+          </button>
+        </label>
         <input type="text"
                x-model="cliente.query"
                @input.debounce.300ms="buscarClientes()"
@@ -512,6 +519,75 @@
   </div>
 
   {% include "partials/_modal_alpine.html" %}
+
+  {% comment %}
+    Modal "Nuevo cliente" — inline en el form de venta. El operador
+    abre, carga datos mínimos, se crea + se selecciona automático.
+  {% endcomment %}
+  <div x-show="modalNuevoCliente.abierto" x-cloak
+       class="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div class="absolute inset-0 bg-slate-900/50"
+         @click="cerrarModalNuevoCliente()"></div>
+    <div class="relative bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden"
+         @keydown.escape.window="cerrarModalNuevoCliente()">
+      <div class="px-5 py-4 border-b bg-emerald-50 border-emerald-200">
+        <h3 class="text-lg font-semibold text-emerald-900">+ Nuevo cliente</h3>
+        <p class="text-xs text-emerald-700 mt-1">
+          Solo nombre es obligatorio. Los demás campos los podés cargar después.
+        </p>
+      </div>
+      <div class="px-5 py-4 space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">
+            Nombre <span class="text-red-500">*</span>
+          </label>
+          <input type="text" x-model="modalNuevoCliente.nombre"
+                 placeholder="Ej. Juan"
+                 @keydown.enter.prevent="guardarNuevoCliente()"
+                 class="w-full border border-slate-300 rounded px-3 py-2 focus:ring-2 focus:ring-emerald-400">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Apellido</label>
+          <input type="text" x-model="modalNuevoCliente.apellido"
+                 placeholder="Ej. Pérez"
+                 @keydown.enter.prevent="guardarNuevoCliente()"
+                 class="w-full border border-slate-300 rounded px-3 py-2 focus:ring-2 focus:ring-emerald-400">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Teléfono</label>
+          <input type="text" x-model="modalNuevoCliente.telefono"
+                 placeholder="Ej. 1144441234"
+                 @keydown.enter.prevent="guardarNuevoCliente()"
+                 class="w-full border border-slate-300 rounded px-3 py-2 focus:ring-2 focus:ring-emerald-400">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Dirección</label>
+          <input type="text" x-model="modalNuevoCliente.direccion"
+                 placeholder="Ej. Av. San Martín 123"
+                 @keydown.enter.prevent="guardarNuevoCliente()"
+                 class="w-full border border-slate-300 rounded px-3 py-2 focus:ring-2 focus:ring-emerald-400">
+        </div>
+        <div x-show="modalNuevoCliente.error" x-cloak
+             class="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2"
+             x-text="modalNuevoCliente.error"></div>
+      </div>
+      <div class="px-5 py-3 bg-slate-50 border-t flex justify-end gap-2">
+        <button type="button" @click="cerrarModalNuevoCliente()"
+                :disabled="modalNuevoCliente.guardando"
+                class="px-4 py-2 text-sm text-slate-700 hover:text-slate-900">
+          Cancelar
+        </button>
+        <button type="button" @click="guardarNuevoCliente()"
+                :disabled="modalNuevoCliente.guardando || !modalNuevoCliente.nombre.trim()"
+                class="px-5 py-2 text-sm font-medium text-white rounded shadow-sm
+                       bg-emerald-600 hover:bg-emerald-700
+                       disabled:bg-slate-300 disabled:cursor-not-allowed">
+          <span x-show="!modalNuevoCliente.guardando">Crear y seleccionar</span>
+          <span x-show="modalNuevoCliente.guardando" x-cloak>Creando…</span>
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -553,6 +629,18 @@
       vendedorId: '{{ vendedor_default_id|default_if_none:"" }}',
       fechaCompra: '{{ fecha_hoy }}',
       fechaEntrega: '{{ fecha_hoy }}',
+
+      // Modal "Nuevo cliente" — para crear un cliente sin salir de la
+      // pantalla de venta. Se selecciona automáticamente al crearlo.
+      modalNuevoCliente: {
+        abierto: false,
+        guardando: false,
+        nombre: '',
+        apellido: '',
+        telefono: '',
+        direccion: '',
+        error: '',
+      },
       descuentoPorcentaje: 0,
       descuentoMotivo: '',
       items: [],
@@ -689,6 +777,62 @@
         this.cliente.results = [];
         this.aplicarSaldo = false;
         this.saldoAAplicar = 0;
+      },
+
+      // ---- Modal "Nuevo cliente" ----
+      abrirModalNuevoCliente() {
+        // Pre-llenar el nombre con lo que el operador venía tipeando
+        // en el buscador — frecuente que ya esté tipeando el nombre
+        // cuando se da cuenta que no existe.
+        const queryActual = (this.cliente.query || '').trim();
+        this.modalNuevoCliente = {
+          abierto: true, guardando: false,
+          nombre: queryActual, apellido: '',
+          telefono: '', direccion: '', error: '',
+        };
+      },
+      cerrarModalNuevoCliente() {
+        this.modalNuevoCliente.abierto = false;
+      },
+      async guardarNuevoCliente() {
+        const m = this.modalNuevoCliente;
+        m.error = '';
+        if (!m.nombre.trim()) {
+          m.error = 'El nombre es obligatorio.';
+          return;
+        }
+        m.guardando = true;
+        try {
+          const csrf = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
+          const r = await fetch('/venta/api/clientes/crear/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+            body: JSON.stringify({
+              nombre: m.nombre, apellido: m.apellido,
+              telefono: m.telefono, direccion: m.direccion,
+            }),
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            m.error = data.error || `Error del servidor (HTTP ${r.status})`;
+            m.guardando = false;
+            return;
+          }
+          // Cerrar modal + seleccionar al cliente recién creado.
+          this.cerrarModalNuevoCliente();
+          this.seleccionarCliente(data.cliente);
+          if (data.duplicado_warning) {
+            this.abrirModal({
+              tipo: 'warning', titulo: 'Cliente con nombre similar ya existe',
+              mensaje: data.duplicado_warning,
+              okLabel: 'Entendido',
+            });
+          }
+        } catch (e) {
+          m.error = 'Error de red: ' + (e.message || e);
+          m.guardando = false;
+        }
       },
       async refrescarSaldoCliente() {
         // En modo editar el contexto inicial no trae el saldo (porque

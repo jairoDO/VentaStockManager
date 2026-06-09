@@ -1,0 +1,41 @@
+{% extends "admin/change_list.html" %}
+{% comment %}
+Override del change_list de Pedido para mostrar arriba de la tabla un
+resumen de cobranza con los pedidos visibles según el filtro actual.
+
+Útil para reconciliar caja: filtrá "Pagado=Sí + fecha_compra=hoy" y
+en una sola línea ves cuánto debería estar en efectivo.
+
+El contexto `resumen_cobranza` lo inyecta `PedidoAdmin.changelist_view`.
+{% endcomment %}
+
+{% block result_list %}
+  {% if resumen_cobranza %}
+    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
+                padding:14px 18px; margin-bottom:14px; display:flex; gap:24px;
+                flex-wrap:wrap; align-items:center; font-size:14px;">
+      <div>
+        <span style="color:#64748b;">Cobrado en esta vista:</span>
+        <span style="font-weight:700; color:#047857; font-size:18px; margin-left:4px;">
+          ${{ resumen_cobranza.cobrado_str }}
+        </span>
+      </div>
+      <div style="border-left:1px solid #e2e8f0; padding-left:24px;">
+        <span style="color:#64748b;">Pedidos saldados:</span>
+        <span style="font-weight:600; color:#047857; margin-left:4px;">
+          {{ resumen_cobranza.saldados }}
+        </span>
+      </div>
+      <div style="border-left:1px solid #e2e8f0; padding-left:24px;">
+        <span style="color:#64748b;">Pendientes:</span>
+        <span style="font-weight:600; color:#b91c1c; margin-left:4px;">
+          {{ resumen_cobranza.pendientes }}
+        </span>
+      </div>
+      <div style="margin-left:auto; color:#94a3b8; font-size:12px; font-style:italic;">
+        Filtrá fecha + "Pagado: Sí" para ver cuánta plata cobraste en un día.
+      </div>
+    </div>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

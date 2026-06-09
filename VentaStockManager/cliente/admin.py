@@ -183,20 +183,27 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         # `obj.saldo` (que hace 2 queries por fila). En el change
         # view individual el annotate no aplica → fallback al
         # property `.saldo` que sí va a la DB pero solo una vez.
+        #
+        # Mostramos etiqueta explícita (debe / a favor / al día) al
+        # lado del número — accesibilidad y claridad: no depender del
+        # color rojo/verde para entender el signo (daltonismo, PDF
+        # impreso en B&N, lectura rápida).
         saldo = getattr(obj, 'saldo_anotado', None)
         if saldo is None:
             saldo = obj.saldo
         if saldo == 0:
-            return format_html('<span style="color: #888;">$0,00</span>')
-        if saldo > 0:
-            # A favor del cliente — el negocio le debe. Verde.
             return format_html(
-                '<span style="color: #2e7d32; font-weight: bold;">+${}</span>',
+                '<span style="color: #888;">$0,00 <em>(al día)</em></span>'
+            )
+        if saldo > 0:
+            return format_html(
+                '<span style="color: #2e7d32; font-weight: bold;">'
+                '+${} <em style="font-weight: normal;">(a favor)</em></span>',
                 f'{saldo:,.2f}',
             )
-        # Saldo negativo: cliente debe. Rojo.
         return format_html(
-            '<span style="color: #c62828; font-weight: bold;">-${}</span>',
+            '<span style="color: #c62828; font-weight: bold;">'
+            '-${} <em style="font-weight: normal;">(debe)</em></span>',
             f'{abs(saldo):,.2f}',
         )
     saldo_actual.short_description = 'Saldo'
@@ -349,7 +356,7 @@ class CuentaClienteAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
 
     def acciones(self, obj):
         """
-        Dos botones lado a lado. Apuntan a una pantalla CUSTOM Alpine
+        Tres botones lado a lado. Apuntan a una pantalla CUSTOM Alpine
         fuera del admin (porque el admin material tiene bugs visuales
         irresolubles con readonly fields e inputs invisibles).
 
@@ -360,26 +367,32 @@ class CuentaClienteAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
             a fiar, anulación de pago erróneo, etc.).
             URL: /clientes/<id>/movimiento/?modo=deuda
 
-        En ambos casos el operador ingresa POSITIVO. La view aplica el
-        signo (pago = +, deuda = -) automáticamente al guardar.
+          - 🎯 "Setear saldo" (indigo): el operador pone el saldo
+            objetivo al que quiere dejar al cliente y el sistema
+            calcula el ajuste automáticamente. Útil cuando se cobra
+            todo a mano y no se quiere pensar en sumas/restas.
+            URL: /clientes/<id>/movimiento/?modo=dejar_en
+
+        En los modos pago/deuda el operador ingresa POSITIVO. En
+        dejar_en ingresa el saldo objetivo (puede ser negativo si
+        cliente sigue debiendo).
         """
         if not obj or not obj.pk:
             return '—'
         cliente_id = obj.cliente_id
+        boton_style = (
+            'display:inline-block; padding:8px 16px; margin-right:8px; '
+            'color:white; border-radius:6px; text-decoration:none; '
+            'font-weight:500; margin-bottom:4px;'
+        )
         return format_html(
-            '<a href="/clientes/{}/movimiento/?modo=pago" '
-            'style="display:inline-block; padding:8px 16px; margin-right:8px; '
-            'background:#059669; color:white; border-radius:6px; '
-            'text-decoration:none; font-weight:500;">'
-            '💰 Registrar pago'
-            '</a>'
-            '<a href="/clientes/{}/movimiento/?modo=deuda" '
-            'style="display:inline-block; padding:8px 16px; '
-            'background:#dc2626; color:white; border-radius:6px; '
-            'text-decoration:none; font-weight:500;">'
-            '🧾 Registrar deuda'
-            '</a>',
-            cliente_id, cliente_id,
+            '<a href="/clientes/{cid}/movimiento/?modo=pago" '
+            'style="{style} background:#059669;">💰 Registrar pago</a>'
+            '<a href="/clientes/{cid}/movimiento/?modo=deuda" '
+            'style="{style} background:#dc2626;">🧾 Registrar deuda</a>'
+            '<a href="/clientes/{cid}/movimiento/?modo=dejar_en" '
+            'style="{style} background:#4f46e5;">🎯 Setear saldo</a>',
+            cid=cliente_id, style=boton_style,
         )
     acciones.short_description = 'Registrar movimiento'
 
@@ -408,14 +421,25 @@ class CuentaClienteAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     def saldo_display(self, obj):
         # Si la fila viene del list_display, tiene el annotate. En
         # change view individual usamos el property como fallback.
+        # Mostramos etiqueta explícita (debe / a favor / al día) además
+        # del color — el color solo no alcanza (daltonismo, PDF B&N).
         saldo = getattr(obj, 'saldo_anotado', None)
         if saldo is None:
             saldo = obj.saldo
-        color = '#888' if saldo == 0 else ('#2e7d32' if saldo > 0 else '#c62828')
-        signo = '' if saldo <= 0 else '+'
+        if saldo == 0:
+            return format_html(
+                '<span style="color: #888;">$0,00 <em>(al día)</em></span>'
+            )
+        if saldo > 0:
+            return format_html(
+                '<span style="color: #2e7d32; font-weight: bold;">'
+                '+${} <em style="font-weight: normal;">(a favor)</em></span>',
+                f'{saldo:,.2f}',
+            )
         return format_html(
-            '<span style="color: {}; font-weight: bold;">{}${}</span>',
-            color, signo, f'{abs(saldo):,.2f}' if saldo < 0 else f'{saldo:,.2f}',
+            '<span style="color: #c62828; font-weight: bold;">'
+            '-${} <em style="font-weight: normal;">(debe)</em></span>',
+            f'{abs(saldo):,.2f}',
         )
     saldo_display.short_description = 'Saldo'
     saldo_display.admin_order_field = 'saldo_anotado'

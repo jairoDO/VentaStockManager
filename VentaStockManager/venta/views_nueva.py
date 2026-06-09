@@ -318,6 +318,80 @@ def api_articulos_buscar(request):
 
 
 @login_required
+@require_POST
+def api_cliente_crear(request):
+    """
+    Crea un Cliente mínimo desde la pantalla de venta nueva.
+
+    Pensado para el caso "el cliente llegó a comprar y no estaba
+    cargado". El operador abre el modal "+ Nuevo cliente", carga los
+    datos básicos, y el cliente queda disponible en la búsqueda Y
+    pre-seleccionado en el form de venta.
+
+    Campos requeridos:
+      - nombre: obligatorio.
+      - apellido: opcional (default "").
+
+    Campos opcionales:
+      - telefono, direccion: ayudan para la cuenta corriente y WhatsApp.
+
+    Devuelve el cliente en el mismo formato que `api_clientes_buscar`
+    (id, nombre, direccion, telefono, saldo) para que el front lo
+    pueda seleccionar directamente.
+
+    NO crea CuentaCliente — eso queda para la pantalla "Registrar
+    pago" si llega a hacer falta (sigue el patrón explícito que ya
+    teníamos).
+    """
+    try:
+        payload = json.loads(request.body or b'{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON inválido'}, status=400)
+
+    nombre = (payload.get('nombre') or '').strip()
+    apellido = (payload.get('apellido') or '').strip()
+    telefono = (payload.get('telefono') or '').strip()
+    direccion = (payload.get('direccion') or '').strip()
+
+    if not nombre:
+        return JsonResponse(
+            {'ok': False, 'error': 'El nombre es obligatorio.'}, status=400,
+        )
+
+    # Detección suave de duplicado por nombre+apellido exactos: avisamos
+    # pero NO bloqueamos — el operador puede tener dos clientes que
+    # se llamen igual (la dirección/telefono los distingue).
+    duplicados = Cliente.objects.filter(nombre__iexact=nombre)
+    if apellido:
+        duplicados = duplicados.filter(apellido__iexact=apellido)
+    duplicado_existente = duplicados.first()
+
+    cliente = Cliente(
+        nombre=nombre,
+        apellido=apellido or '',
+        telefono=telefono or '',
+        direccion=direccion or '',
+    )
+    cliente.save()
+
+    return JsonResponse({
+        'ok': True,
+        'cliente': {
+            'id': cliente.id,
+            'nombre': cliente.nombre_completo(),
+            'direccion': cliente.direccion or '',
+            'telefono': cliente.telefono or '',
+            'saldo': '0',
+        },
+        'duplicado_warning': (
+            f'Ya existía un cliente "{duplicado_existente.nombre_completo()}" '
+            f'(id={duplicado_existente.id}). Creé el nuevo igual — revisá '
+            f'si querés mergearlos después.'
+        ) if duplicado_existente else None,
+    })
+
+
+@login_required
 @require_GET
 def api_clientes_buscar(request):
     """
@@ -770,43 +844,65 @@ def api_venta_guardar(request):
                         creado_por=request.user if request.user.is_authenticated else None,
                     )
 
-                # Diferencia entre lo que el cliente debía pagar y lo
-                # que efectivamente trajo. Si no manda monto_pagado,
-                # asumimos pagó el total efectivo (venta paga al contado).
+                # Total efectivo de la venta (después de aplicar saldo).
+                # Si el operador no envió monto_pagado, asumimos "pagó
+                # al contado" (caso default histórico).
                 total_a_cobrar = total_venta - aplicado
                 if monto_pagado is None:
                     monto_pagado = total_a_cobrar
 
-                diferencia = monto_pagado - total_a_cobrar
-                if diferencia < 0:
-                    # Pagó de menos: la diferencia queda como deuda.
+                # Estrategia: SIEMPRE separamos la venta del pago en dos
+                # movimientos. Saldo final = igual que antes, pero ahora
+                # cada cosa queda trazable y el pedido sabe cuánto se
+                # cobró (pedido.monto_pagado + FK pedido_origen del PAGO).
+                # Antes se condensaba todo en un único movimiento neto,
+                # lo que dejaba al pedido sin pago asociado y al operador
+                # sin ver cuánto había cobrado de la venta.
+
+                # 1) La venta entra como debt por el total efectivo.
+                if total_a_cobrar > 0:
                     MovimientoCuenta.objects.create(
                         cuenta=cuenta,
                         tipo=MovimientoCuenta.TIPO_VENTA_A_CUENTA,
-                        monto=diferencia,  # ya viene negativo
+                        monto=-total_a_cobrar,
                         venta=venta,
-                        descripcion=(
-                            f'Venta #{venta.id}: total {total_venta}, '
-                            f'aplicado saldo {aplicado}, pagó {monto_pagado}'
-                        ),
+                        descripcion=f'Venta #{venta.id}',
                         creado_por=request.user if request.user.is_authenticated else None,
                     )
-                elif diferencia > 0:
-                    # Pagó de más. Hay dos sub-casos:
-                    #   a) El operador tildó "cobrar deuda anterior" Y el
-                    #      cliente tenía deuda: el exceso se registra como
-                    #      TIPO_PAGO (cancela la deuda vieja). Si el exceso
-                    #      cubre la deuda exactamente, no queda saldo a
-                    #      favor; si es mayor, lo que sobre va como
-                    #      EXCEDENTE adicional.
-                    #   b) Resto de casos (cliente sin deuda, o sin tildar
-                    #      el flag): el excedente entero va como
-                    #      TIPO_EXCEDENTE (saldo a favor del cliente).
+
+                # 2) Lo cobrado para ESTA venta (capped al total) va como
+                #    PAGO asociado al pedido. Esto es lo que va a aparecer
+                #    como pedido.monto_pagado y como `movimiento_pago` del
+                #    pedido.
+                monto_para_pedido = (
+                    min(monto_pagado, total_a_cobrar)
+                    if total_a_cobrar > 0 else Decimal('0')
+                )
+                if monto_para_pedido > 0:
+                    MovimientoCuenta.objects.create(
+                        cuenta=cuenta,
+                        tipo=MovimientoCuenta.TIPO_PAGO,
+                        monto=monto_para_pedido,
+                        venta=venta,
+                        pedido_origen=venta.pedido,
+                        descripcion=f'Pago al cargar venta #{venta.id}',
+                        creado_por=request.user if request.user.is_authenticated else None,
+                    )
+                    venta.pedido.monto_pagado = monto_para_pedido
+                    venta.pedido.save(update_fields=['monto_pagado'])
+
+                # 3) Sobrante: si pagó MÁS que el total de la venta.
+                sobrante = monto_pagado - total_a_cobrar
+                if sobrante > 0:
                     deuda_anterior_abs = (
                         abs(saldo_actual) if saldo_actual < 0 else Decimal('0')
                     )
                     if cobrar_deuda_anterior and deuda_anterior_abs > 0:
-                        pago_a_deuda = min(diferencia, deuda_anterior_abs)
+                        # El operador tildó "cobrar deuda anterior" + el
+                        # cliente tenía deuda → aplicar el sobrante a la
+                        # deuda vieja como PAGO genérico (no asociado al
+                        # pedido, porque es de OTRAS ventas).
+                        pago_a_deuda = min(sobrante, deuda_anterior_abs)
                         MovimientoCuenta.objects.create(
                             cuenta=cuenta,
                             tipo=MovimientoCuenta.TIPO_PAGO,
@@ -814,19 +910,16 @@ def api_venta_guardar(request):
                             venta=venta,
                             descripcion=(
                                 f'Venta #{venta.id}: pago de deuda anterior '
-                                f'(cliente debía {deuda_anterior_abs}, '
-                                f'pagó {monto_pagado}, total venta {total_venta})'
+                                f'(cliente debía {deuda_anterior_abs})'
                             ),
                             creado_por=request.user if request.user.is_authenticated else None,
                         )
-                        # Si pagó MÁS que la deuda + venta, el sobrante
-                        # restante va como saldo a favor (excedente).
-                        sobrante = diferencia - pago_a_deuda
-                        if sobrante > 0:
+                        excedente = sobrante - pago_a_deuda
+                        if excedente > 0:
                             MovimientoCuenta.objects.create(
                                 cuenta=cuenta,
                                 tipo=MovimientoCuenta.TIPO_EXCEDENTE,
-                                monto=sobrante,
+                                monto=excedente,
                                 venta=venta,
                                 descripcion=(
                                     f'Venta #{venta.id}: sobrante después de '
@@ -835,24 +928,22 @@ def api_venta_guardar(request):
                                 creado_por=request.user if request.user.is_authenticated else None,
                             )
                     else:
-                        # Sin deuda anterior o sin flag: todo es saldo a favor.
+                        # Sin deuda anterior o sin flag: sobrante como
+                        # saldo a favor del cliente.
                         MovimientoCuenta.objects.create(
                             cuenta=cuenta,
                             tipo=MovimientoCuenta.TIPO_EXCEDENTE,
-                            monto=diferencia,
+                            monto=sobrante,
                             venta=venta,
                             descripcion=(
-                                f'Venta #{venta.id}: total {total_venta}, '
-                                f'pagó {monto_pagado}'
+                                f'Venta #{venta.id}: cliente pagó de más'
                             ),
                             creado_por=request.user if request.user.is_authenticated else None,
                         )
-                # Si diferencia == 0: venta pagada exacta, no hay
-                # movimiento extra.
 
-                # Marcar el pedido como pagado si quedó saldado al
-                # contado (total efectivo cubierto sin generar deuda).
-                if diferencia >= 0:
+                # Marcar pedido pagado si quedó saldado al contado
+                # (monto_pagado cubrió el total).
+                if monto_pagado >= total_a_cobrar:
                     venta.pedido.pagado = True
                     venta.pedido.save(update_fields=['pagado'])
 
