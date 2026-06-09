@@ -15,8 +15,11 @@ services:
       POSTGRES_USER: ventastock
       POSTGRES_PASSWORD: ventastock_dev
       POSTGRES_DB: ventastock
-    ports:
-      - "5432:5432"
+    # Sin binding al host: web/qcluster hablan con db por la red interna
+    # de Docker. Si necesitás conectarte con psql local descomentá esto
+    # (usá 5434 si tenés otro Postgres en 5432).
+    # ports:
+    #   - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -36,7 +39,7 @@ services:
       SECRET_KEY: dev-only-not-for-production
       DEBUG: "True"
       ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0
-      CSRF_TRUSTED_ORIGINS: http://localhost:8000
+      CSRF_TRUSTED_ORIGINS: http://localhost:8080,http://localhost:8000
       # Para probar el sync de Google Sheets localmente, montá tu
       # credentials.json como volumen (ver abajo) y apuntá acá:
       GOOGLE_CREDENTIALS_PATH: /run/secrets/google-credentials.json
@@ -51,7 +54,9 @@ services:
       # tener el MISMO valor.
       WHATSAPP_API_TOKEN: ""
     ports:
-      - "8000:8000"
+      # Host 8080 → container 8000. abs-stack ocupa 8000-8003,
+      # así que vamos a 8080. App queda en http://localhost:8080
+      - "8080:8000"
     volumes:
       # Montar el código actual — cambios se reflejan al instante
       - .:/app
@@ -108,11 +113,12 @@ services:
       # Cuando deployemos, esto debe coincidir con
       # `WHATSAPP_API_TOKEN` en el web service.
       WA_BOT_TOKEN: ""
-    ports:
-      # Expuesto al host SOLO para poder escanear el QR vía
-      # http://localhost:3000/qr cuando hace falta. En producción
-      # este puerto NO debería estar abierto al mundo.
-      - "3000:3000"
+    # Sin binding al host: el container web habla con wa-bot por la
+    # red interna de Docker (http://wa-bot:3000). Si necesitás escanear
+    # el QR localmente, descomentá esto (usá otro puerto si tenés algo
+    # en 3000) o entrá con `docker compose exec wa-bot ...`.
+    # ports:
+    #   - "3001:3000"
     volumes:
       - wa_bot_sessions:/sessions
 
