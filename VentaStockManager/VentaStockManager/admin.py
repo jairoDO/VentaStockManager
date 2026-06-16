@@ -100,6 +100,21 @@ class MyAdminSite(MaterialAdminSite):
                     )
                 except Exception:
                     ctx['clientes_inactivos_pendientes'] = 0
+                # Clientes sin WhatsApp configurado — el campo es CharField
+                # con default='' (no NULL), así que filtramos por vacío.
+                # Excluimos clientes "fantasma" (sin telefono ni dirección)
+                # para no inflar el contador con registros vacíos legacy.
+                try:
+                    from cliente.models import Cliente
+                    from django.db.models import Q
+                    ctx['clientes_sin_whatsapp'] = (
+                        Cliente.objects
+                        .filter(whatsapp_number='')
+                        .exclude(Q(telefono__isnull=True) | Q(telefono='') | Q(telefono='00000000'))
+                        .count()
+                    )
+                except Exception:
+                    ctx['clientes_sin_whatsapp'] = 0
         return ctx
 
     def get_app_list(self, request, app_label=None):

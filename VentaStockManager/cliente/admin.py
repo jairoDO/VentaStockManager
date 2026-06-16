@@ -3,6 +3,7 @@ from decimal import Decimal
 from django import forms
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
+from django.db import models
 from django.db.models import Sum, Subquery, OuterRef, Value, Count
 from django.db.models.functions import Coalesce
 from django.urls import reverse
@@ -117,6 +118,47 @@ class RegistrarDeudaForm(_RegistrarMovimientoBase):
         }
 
 
+class WhatsappConfiguradoFilter(admin.SimpleListFilter):
+    """
+    Filtro para clientes según si tienen `whatsapp_number` cargado o no.
+
+    Útil para limpiar la base: los clientes con `telefono` pero sin
+    `whatsapp_number` no van a recibir difusiones, campañas, ni
+    auto-respuestas del bot. El badge del header linkea acá con
+    `?wa_configurado=falta` preseleccionado.
+    """
+    title = 'WhatsApp configurado'
+    parameter_name = 'wa_configurado'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('falta', 'Sin WhatsApp (con teléfono cargado)'),
+            ('si',    'Con WhatsApp'),
+            ('no_aplica', 'Sin teléfono ni WhatsApp'),
+        )
+
+    def queryset(self, request, qs):
+        v = self.value()
+        if v == 'falta':
+            # Clientes que tienen un teléfono real (no placeholder) pero
+            # no se les normalizó/cargó el whatsapp_number — son los que
+            # se pueden "rescatar" con un click.
+            return qs.filter(whatsapp_number='').exclude(
+                models.Q(telefono__isnull=True) |
+                models.Q(telefono='') |
+                models.Q(telefono='00000000')
+            )
+        if v == 'si':
+            return qs.exclude(whatsapp_number='')
+        if v == 'no_aplica':
+            return qs.filter(whatsapp_number='').filter(
+                models.Q(telefono__isnull=True) |
+                models.Q(telefono='') |
+                models.Q(telefono='00000000')
+            )
+        return qs
+
+
 class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     icon_name = "account_circle"
     model = Cliente
@@ -135,7 +177,7 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'saldo_actual',
         'link_extracto',
     )
-    list_filter = ('puede_recibir_whatsapp',)
+    list_filter = ('puede_recibir_whatsapp', WhatsappConfiguradoFilter)
     actions = ['accion_habilitar_whatsapp', 'accion_deshabilitar_whatsapp']
 
     def get_queryset(self, request):

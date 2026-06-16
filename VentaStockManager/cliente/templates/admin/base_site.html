@@ -80,5 +80,12 @@ el link al final.
             😴 {{ clientes_inactivos_pendientes }} cliente{{ clientes_inactivos_pendientes|pluralize }} inactivo{{ clientes_inactivos_pendientes|pluralize }}
         </a>
     {% endif %}
+    {% if user.is_superuser and clientes_sin_whatsapp %}
+        <a href="/admin/cliente/cliente/?wa_configurado=falta"
+           class="badge-solicitudes-lista"
+           title="Clientes que tienen teléfono cargado pero no tienen WhatsApp configurado. No reciben difusiones ni campañas hasta que se les complete el número.">
+            📱 {{ clientes_sin_whatsapp }} sin WhatsApp
+        </a>
+    {% endif %}
     {{ block.super }}
 {% endblock %}
