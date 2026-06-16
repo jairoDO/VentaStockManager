@@ -65,6 +65,7 @@ except Exception:  # pragma: no cover - solo se daría con un import roto
 # sin tener que abrir cada artículo o hacer bulk acciones desde el
 # admin clásico.
 CAMPOS_EDITABLES = (
+    'nombre',
     'precio_minorista', 'precio_mayorista', 'stock', 'cantidad_por_mayor',
     'categoria_id', 'proveedor_id',
 )
@@ -272,6 +273,17 @@ def _validar_y_normalizar(cambio: dict[str, Any]) -> tuple[dict[str, Any] | None
     if item_id is None:
         errores.append({'id': '', 'campo': 'id', 'mensaje': 'Falta el id del artículo.'})
         return None, errores
+
+    # Nombre: si viene, lo limpiamos y validamos no-vacío. Lo aceptamos
+    # editar inline en la grilla porque a veces el operador necesita
+    # corregir tipeos / cambiar descripción sin entrar al admin clásico.
+    if 'nombre' in cambio:
+        nombre = (cambio.get('nombre') or '').strip()
+        if not nombre:
+            errores.append({'id': str(item_id), 'campo': 'nombre',
+                            'mensaje': 'El nombre no puede quedar vacío.'})
+        else:
+            normalizado['nombre'] = nombre[:255]
 
     for campo in ('precio_minorista', 'precio_mayorista'):
         if campo in cambio:

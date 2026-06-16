@@ -406,14 +406,24 @@ Alpine las lee sin riesgo de XSS y sin tener que recorrerlas con
               <div x-text="item.codigo"></div>
             </td>
             <td class="px-2 py-1.5">
-              <div x-text="item.nombre" class="font-medium"></div>
-              <div class="text-xs text-slate-500" x-show="item.marca && item.marca !== 'Generico'"
+              {% comment %}
+                Nombre editable inline — antes era solo display. El operador
+                puede corregir tipeos / completar descripción desde la grilla
+                sin entrar al admin clásico. Cambio se confirma con "Guardar
+                cambios" (mismo patrón que precios / categoría).
+              {% endcomment %}
+              <input type="text"
+                     x-model="item.nombre"
+                     @input="marcarCambio(item.id, 'nombre', item.nombre)"
+                     class="w-full font-medium bg-transparent border-2 rounded px-2 py-1 text-sm"
+                     :class="esCeldaModificada(item.id, 'nombre') ? 'border-amber-400 bg-amber-50' : 'border-transparent hover:border-slate-200 focus:border-blue-300'">
+              <div class="text-xs text-slate-500 px-2" x-show="item.marca && item.marca !== 'Generico'"
                    x-text="item.marca"></div>
               {% comment %}
                 En mobile mostramos código + categoría chiquitos debajo del
                 nombre para que el operador igual los vea sin scroll horizontal.
               {% endcomment %}
-              <div class="sm:hidden text-[10px] text-slate-400 font-mono mt-0.5"
+              <div class="sm:hidden text-[10px] text-slate-400 font-mono mt-0.5 px-2"
                    x-text="'Cód: ' + (item.codigo || '—')"></div>
             </td>
             {% comment %}
