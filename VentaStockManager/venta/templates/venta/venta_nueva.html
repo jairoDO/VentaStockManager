@@ -123,6 +123,49 @@
   </div>
 
   {% comment %}
+  Panel "Cargar WhatsApp del cliente" — aparece SOLO si el cliente
+  seleccionado no tiene whatsapp_number cargado. Política del negocio:
+  no se puede crear una venta nueva sin WhatsApp del cliente. El
+  operador completa acá inline y al guardar se habilita el botón
+  Guardar venta.
+  {% endcomment %}
+  <div x-show="cliente.id && !cliente.whatsapp_number && modo === 'crear'"
+       x-cloak
+       class="bg-amber-50 border-2 border-amber-300 rounded-lg p-4 mb-4">
+    <div class="flex items-center gap-2 text-amber-900 font-semibold text-sm mb-2">
+      📱 Este cliente no tiene WhatsApp cargado
+    </div>
+    <p class="text-xs text-amber-800 mb-3">
+      Cargá el número antes de poder crear la venta. Si tipeás un
+      teléfono argentino (10 dígitos o con 0/15), el sistema lo
+      normaliza automáticamente al formato WhatsApp (549...).
+      <span x-show="cliente.telefono" x-cloak>
+        Teléfono cargado: <span class="font-mono" x-text="cliente.telefono"></span>.
+      </span>
+    </p>
+    <div class="flex flex-wrap gap-2 items-start">
+      <input type="text"
+             x-model="panelWhatsApp.nuevoNumero"
+             @keydown.enter.prevent="guardarWhatsAppCliente()"
+             :disabled="panelWhatsApp.guardando"
+             placeholder="Ej. 1144441234 o 5491144441234"
+             class="flex-1 min-w-[200px] border-2 border-amber-300 rounded px-3 py-2
+                    focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none">
+      <button type="button"
+              @click="guardarWhatsAppCliente()"
+              :disabled="panelWhatsApp.guardando || !panelWhatsApp.nuevoNumero.trim()"
+              class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded
+                     shadow-sm disabled:bg-slate-300 disabled:cursor-not-allowed">
+        <span x-show="!panelWhatsApp.guardando">Guardar WhatsApp</span>
+        <span x-show="panelWhatsApp.guardando" x-cloak>Guardando…</span>
+      </button>
+    </div>
+    <div x-show="panelWhatsApp.error" x-cloak
+         class="mt-2 text-sm text-red-800 bg-red-50 border border-red-200 rounded p-2"
+         x-text="panelWhatsApp.error"></div>
+  </div>
+
+  {% comment %}
   Banner de listas de precios vigentes del cliente con descuento > 0.
   Aparece SOLO si el cliente tiene listas aplicables. El operador
   decide si aplicar el descuento — no es automático. Si ya hay
@@ -509,10 +552,20 @@
 
   <div class="flex items-center justify-end gap-3">
     <a href="/admin/venta/venta/" class="px-4 py-2 text-slate-600 hover:text-slate-900">Cancelar</a>
+    {% comment %}
+      Botón Guardar bloqueado si:
+       - Ya está guardando (anti doble-submit).
+       - Modo crear + cliente seleccionado sin WhatsApp (política nueva).
+      Edits (modo='editar') NO se bloquean por esto — la venta ya existe.
+    {% endcomment %}
     <button type="button"
             @click="guardar()"
-            :disabled="guardando"
-            class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+            :disabled="guardando || (modo === 'crear' && cliente.id && !cliente.whatsapp_number)"
+            :title="(modo === 'crear' && cliente.id && !cliente.whatsapp_number)
+                    ? 'Cargá el WhatsApp del cliente antes de crear la venta'
+                    : ''"
+            class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700
+                   disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed">
       <span x-show="!guardando">Guardar</span>
       <span x-show="guardando" x-cloak>Guardando…</span>
     </button>
@@ -619,12 +672,26 @@
         // al seleccionar. En modo editar, lo cargamos vía fetch en
         // init() porque el contexto inicial no lo trae.
         saldo: '0',
+        // WhatsApp del cliente. Si está vacío, el form bloquea el
+        // guardado y muestra un panel inline para que el operador lo
+        // complete antes de crear la venta. Se carga en seleccionar
+        // y se refresca después de actualizar.
+        whatsapp_number: '',
+        telefono: '',
         // Listas de precios del cliente con descuento > 0. El banner
         // de "aplicar descuento de lista" las muestra como botones.
         // Se llena en `refrescarSaldoCliente`.
         listas_activas: [],
         results: [],
         dropdownAbierto: false,
+      },
+
+      // Panel inline para cargar WhatsApp cuando el cliente
+      // seleccionado no lo tiene. Aparece encima del form principal.
+      panelWhatsApp: {
+        nuevoNumero: '',
+        guardando: false,
+        error: '',
       },
       vendedorId: '{{ vendedor_default_id|default_if_none:"" }}',
       fechaCompra: '{{ fecha_hoy }}',
@@ -757,6 +824,11 @@
         this.cliente.label = c.nombre;
         this.cliente.query = c.nombre;
         this.cliente.saldo = c.saldo || '0';
+        // Pre-cargar WhatsApp y teléfono desde el resultado del
+        // buscador para evitar el flash del panel "Sin WhatsApp"
+        // entre el click y el fetch del endpoint /saldo/.
+        this.cliente.whatsapp_number = c.whatsapp_number || '';
+        this.cliente.telefono = c.telefono || '';
         this.cliente.listas_activas = [];  // se completa en refrescarSaldoCliente
         this.cliente.dropdownAbierto = false;
         this.cliente.results = [];
@@ -834,6 +906,47 @@
           m.guardando = false;
         }
       },
+
+      // ---- Cargar WhatsApp del cliente seleccionado ----
+      // Política: no se puede crear venta sin WhatsApp. Si el cliente
+      // no lo tiene, mostramos un panel inline encima del form para
+      // completarlo SIN salir de la pantalla. Después de guardar se
+      // refresca el estado del cliente y el botón Guardar venta se
+      // habilita solo.
+      async guardarWhatsAppCliente() {
+        const p = this.panelWhatsApp;
+        p.error = '';
+        if (!p.nuevoNumero.trim()) {
+          p.error = 'Cargá un número antes de guardar.';
+          return;
+        }
+        if (!this.cliente.id) {
+          p.error = 'Seleccioná un cliente antes.';
+          return;
+        }
+        p.guardando = true;
+        try {
+          const csrf = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
+          const r = await fetch(`/venta/api/clientes/${this.cliente.id}/whatsapp/`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+            body: JSON.stringify({whatsapp_number: p.nuevoNumero}),
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            p.error = data.error || `Error del servidor (HTTP ${r.status})`;
+            p.guardando = false;
+            return;
+          }
+          this.cliente.whatsapp_number = data.whatsapp_number;
+          p.nuevoNumero = '';
+          p.guardando = false;
+        } catch (e) {
+          p.error = 'Error de red: ' + (e.message || e);
+          p.guardando = false;
+        }
+      },
       async refrescarSaldoCliente() {
         // En modo editar el contexto inicial no trae el saldo (porque
         // se carga desde la búsqueda). Hacemos un fetch puntual.
@@ -848,6 +961,12 @@
           const data = await r.json();
           this.cliente.saldo = data.saldo || '0';
           this.cliente.listas_activas = data.listas_activas || [];
+          this.cliente.whatsapp_number = data.whatsapp_number || '';
+          this.cliente.telefono = data.telefono || '';
+          // Resetear el panel inline cada vez que cambia de cliente,
+          // así no aparece pre-llenado con el número del cliente anterior.
+          this.panelWhatsApp.nuevoNumero = '';
+          this.panelWhatsApp.error = '';
           // Reset defensivo de ambos flags ANTES de auto-tildar el
           // que corresponda. Caso real: el saldo del cliente cambió
           // entre el primer fetch y este refresh (alguien le cargó

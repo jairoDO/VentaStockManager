@@ -421,6 +421,7 @@ def api_clientes_buscar(request):
         'nombre': c.nombre_completo(),
         'direccion': c.direccion or '',
         'telefono': c.telefono or '',
+        'whatsapp_number': c.whatsapp_number or '',
         'saldo': str(c.saldo),
     } for c in qs]
     return JsonResponse({'results': results})
@@ -484,7 +485,58 @@ def api_cliente_saldo(request, cliente_id):
         'cliente_id': cliente.id,
         'nombre': cliente.nombre_completo(),
         'saldo': str(cliente.saldo),
+        # `whatsapp_number` se incluye para que el front pueda decidir
+        # si bloquear el "Guardar venta" hasta que se complete el campo.
+        # Política nueva: ninguna venta debería poder crearse contra un
+        # cliente que no tenga WhatsApp cargado.
+        'whatsapp_number': cliente.whatsapp_number or '',
+        'telefono': cliente.telefono or '',
         'listas_activas': _listas_activas_de_cliente(cliente),
+    })
+
+
+@login_required
+@require_POST
+def api_cliente_actualizar_whatsapp(request, cliente_id):
+    """
+    Carga o actualiza el `whatsapp_number` de un cliente desde la
+    pantalla de venta. Usado cuando el operador selecciona un cliente
+    sin WhatsApp y completa el campo inline para poder seguir cargando
+    la venta.
+
+    Recibe JSON {whatsapp_number: '54911...'}. Acepta cualquier string
+    no vacío (la validación más fuerte vive en `Cliente.save()` que
+    auto-normaliza vía `normalizar_telefono_ar`). Devuelve el cliente
+    actualizado con `whatsapp_number` final.
+    """
+    try:
+        payload = json.loads(request.body or b'{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON inválido'}, status=400)
+
+    raw = (payload.get('whatsapp_number') or '').strip()
+    if not raw:
+        return JsonResponse(
+            {'ok': False, 'error': 'El WhatsApp es obligatorio.'}, status=400,
+        )
+
+    cliente = get_object_or_404(Cliente, pk=cliente_id)
+    # Si el caller pasó algo que parece teléfono raw, intentamos
+    # normalizarlo a formato WA argentino. Si ya viene normalizado
+    # (10+ dígitos), lo dejamos tal cual.
+    from cliente.phone_utils import normalizar_telefono_ar
+    normalizado = normalizar_telefono_ar(raw) or raw
+    cliente.whatsapp_number = normalizado
+    # Si el cliente no tenía telefono cargado, también lo guardamos
+    # como referencia para futuras búsquedas (telefono libre vs WA
+    # canónico). No pisa un telefono ya cargado.
+    if not (cliente.telefono or '').strip():
+        cliente.telefono = raw
+    cliente.save(update_fields=['whatsapp_number', 'telefono'])
+    return JsonResponse({
+        'ok': True,
+        'cliente_id': cliente.id,
+        'whatsapp_number': cliente.whatsapp_number,
     })
 
 
@@ -575,6 +627,21 @@ def api_venta_guardar(request):
         cliente = Cliente.objects.filter(pk=cliente_id).first()
         if not cliente:
             errores.append(f'cliente_id={cliente_id} no existe')
+        elif not (cliente.whatsapp_number or '').strip():
+            # Política del negocio: ninguna venta puede crearse contra
+            # un cliente sin WhatsApp cargado. El front muestra un
+            # panel para cargarlo inline antes de habilitar el guardar,
+            # pero validamos de nuevo acá por si el operador hackeó
+            # el HTML o el cliente fue editado en otra pestaña.
+            #
+            # Solo aplica a CREATE — los edits de ventas existentes
+            # (venta_id != None) no se bloquean porque la venta ya
+            # existe y forzar el campo retroactivamente sería ruido.
+            if not venta_id:
+                errores.append(
+                    f'El cliente {cliente.nombre_completo()} no tiene WhatsApp cargado. '
+                    f'Completá el campo antes de guardar la venta.'
+                )
     if vendedor_id:
         vendedor = Vendedor.objects.filter(pk=vendedor_id).first()
         if not vendedor:

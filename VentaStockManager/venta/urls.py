@@ -21,6 +21,7 @@ from venta.views_nueva import (
     api_clientes_buscar,
     api_cliente_saldo,
     api_cliente_crear,
+    api_cliente_actualizar_whatsapp,
     api_venta_guardar,
 )
 
@@ -46,6 +47,7 @@ urlpatterns = [
     path('venta/api/clientes/buscar/', api_clientes_buscar, name='venta_api_clientes_buscar'),
     path('venta/api/clientes/crear/', api_cliente_crear, name='venta_api_cliente_crear'),
     path('venta/api/clientes/<int:cliente_id>/saldo/', api_cliente_saldo, name='venta_api_cliente_saldo'),
+    path('venta/api/clientes/<int:cliente_id>/whatsapp/', api_cliente_actualizar_whatsapp, name='venta_api_cliente_whatsapp'),
     path('venta/api/guardar/', api_venta_guardar, name='venta_api_guardar'),
 
     re_path(
