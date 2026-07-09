@@ -1,0 +1,68 @@
+{% comment %}
+Página servida por VentaStockManager.middleware_horario.FueraDeHorarioMiddleware
+cuando un usuario no-admin intenta acceder entre 00:00 y 06:00 ARG.
+
+Standalone (no extiende base.html) para no arrastrar el chrome del admin
+ni dependencias de session/contexto. Tiene un link a /admin/login/ para
+que un superuser pueda iniciar sesión y bypassear el bloqueo.
+{% endcomment %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fuera de horario · Golosinas Insa</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 2.5rem 2rem;
+            max-width: 28rem;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+        }
+        .icono { font-size: 3rem; line-height: 1; margin-bottom: 0.5rem; }
+        h1 { margin: 0.5rem 0; font-size: 1.5rem; color: #f1f5f9; }
+        p { color: #cbd5e1; line-height: 1.5; margin: 0.75rem 0; }
+        .ventana {
+            display: inline-block;
+            background: #334155;
+            padding: 0.25rem 0.75rem;
+            border-radius: 6px;
+            font-weight: 600;
+            color: #fbbf24;
+        }
+        a.admin-link {
+            display: inline-block;
+            margin-top: 1.5rem;
+            color: #94a3b8;
+            font-size: 0.875rem;
+            text-decoration: none;
+            border-bottom: 1px dashed #475569;
+        }
+        a.admin-link:hover { color: #e2e8f0; border-bottom-color: #cbd5e1; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icono">🌙</div>
+        <h1>Sistema fuera de horario</h1>
+        <p>El sistema no opera entre las <span class="ventana">{{ hora_inicio }} y las {{ hora_fin }}</span> hora Argentina.</p>
+        <p>Volvé después de las <strong>{{ hora_fin }}</strong>.</p>
+        <a class="admin-link" href="/admin/login/">¿Sos administrador? Iniciar sesión</a>
+    </div>
+</body>
+</html>

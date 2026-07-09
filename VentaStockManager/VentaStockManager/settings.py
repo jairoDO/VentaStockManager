@@ -125,6 +125,10 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # Bloquea acceso entre 00:00 y 06:00 ARG a los no-superusers.
+    # Necesita request.user → va DESPUÉS de AuthenticationMiddleware.
+    # Ver VentaStockManager/middleware_horario.py para los detalles.
+    'VentaStockManager.middleware_horario.FueraDeHorarioMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Captura el request.user para asociar cada cambio en el
@@ -165,7 +169,13 @@ TEMPLATES = [
 DATABASES = {
     'default': dj_database_url.config(
         default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-        conn_max_age=600,
+        # Antes: 600s. Con Neon, mantener una conexión abierta 10 min
+        # impide que la DB pueda hacer scale-to-zero — cada conexión
+        # "viva" cuenta como actividad y la mantiene despierta. 60s es
+        # el sweet-spot: corta reuso barato dentro del mismo burst,
+        # pero libera la conexión rápido para que Neon pueda dormir
+        # cuando no hay tráfico.
+        conn_max_age=60,
         conn_health_checks=True,
     ),
 }
@@ -264,6 +274,15 @@ Q_CLUSTER = {
     'queue_limit': 50,
     'bulk': 10,
     'orm': 'default',
+    # Intervalo de polling del broker ORM. El default de django-q2 es
+    # 0.2s, lo que se traduce en ~5M SELECT/mes contra la tabla
+    # `django_q_ormq` solo para "¿hay tareas?". Con Neon, ese polling
+    # constante impide la pausa por inactividad y consume el budget de
+    # Compute Hours del plan (vimos exhaustion del plan free en junio
+    # 2026). Subimos a 10s: las tareas son schedules (diarios/semanales)
+    # + envíos de WhatsApp (rate-limited a 4s), todas tolerantes a una
+    # demora de ~10s.
+    'poll': 10,
 }
 
 
