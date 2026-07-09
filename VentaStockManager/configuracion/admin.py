@@ -154,6 +154,33 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
                 'con el umbral guardado.'
             ),
         }),
+        ('Informe diario por vendedor', {
+            'fields': (
+                'informe_diario_titulo',
+                'informe_diario_incluir_cliente',
+                'informe_diario_incluir_direccion',
+                'informe_diario_incluir_articulos',
+                'informe_diario_incluir_total',
+                'informe_diario_incluir_cobro',
+                'informe_diario_incluir_totales_cobro',
+                'informe_diario_incluir_total_dia',
+            ),
+            'description': (
+                'Informe consolidado del día por vendedor, disparado '
+                'desde el listado de pedidos (acciones '
+                '"📄 Informe diario por vendedor").<br><br>'
+                '<b>Título:</b> texto centrado del encabezado del PDF. '
+                'Poné el nombre del negocio o lo que quieras que salga '
+                'arriba de todo.<br><br>'
+                '<b>Cobro:</b> están separados en dos flags porque son '
+                'independientes — <i>columna estado</i> es una columna '
+                'extra en la tabla con ✔/●; <i>totales de cobro</i> es '
+                'la línea "Cobrado / Pendiente" que va en la cabecera. '
+                'Podés querer una sin la otra.<br><br>'
+                'Si desactivás TODAS las columnas por accidente, el '
+                'informe fuerza al menos Cliente + Total (fallback).'
+            ),
+        }),
         ('Purga de auditoría', {
             'fields': (
                 'auditlog_purge_habilitado',

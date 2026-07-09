@@ -35,6 +35,10 @@ from venta.views_caja import caja_del_dia
 # pedido y actualiza la cuenta corriente.
 from venta.views_cobrar import registrar_pago_pedidos
 
+# Informe diario por vendedor — PDF consolidado disparado por bulk
+# action del PedidoAdmin con ?pedidos_ids=... & tamano=a4|config.
+from venta.views_informe import generar_informe_diario_vendedor
+
 urlpatterns = [
     # Pantalla nueva de venta (Alpine + Tailwind). Estas rutas tienen
     # que ir ANTES que las legacy de comprobante para evitar que el
@@ -83,6 +87,10 @@ urlpatterns = [
     # un pedido con monto_pagado != null no se vuelve a procesar.
     path('venta/pedido/registrar-pago/', registrar_pago_pedidos,
          name='registrar_pago_pedidos'),
+    # Informe diario por vendedor — disparado por dos bulk actions
+    # del PedidoAdmin (A4 y tamaño según FacturaConfiguration).
+    path('venta/pedido/informe-diario/', generar_informe_diario_vendedor,
+         name='informe_diario_vendedor'),
 ]
 # url(r'^/(?P<venta_id>\d+)/detalle/$', views.venta_detalle, name='category-detail'),
 

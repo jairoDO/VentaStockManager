@@ -266,6 +266,75 @@ class ConfiguracionGeneral(models.Model):
         help_text='Cuántos registros borró la última corrida (read-only).',
     )
 
+    # ------------------------------------------------------------------
+    # Informe diario por vendedor
+    # ------------------------------------------------------------------
+    # Bulk action del PedidoAdmin: el operador filtra pedidos por
+    # vendedor + fecha, los selecciona y genera un PDF consolidado
+    # tipo "planilla del día". Estos flags controlan qué columnas
+    # aparecen en la tabla del informe.
+    #
+    # No hay toggles para vendedor/fecha porque son constantes del
+    # informe (aparecen en la cabecera, no como columnas).
+    informe_diario_incluir_cliente = models.BooleanField(
+        default=True,
+        help_text='Mostrar la columna con el nombre del cliente.',
+    )
+    informe_diario_incluir_direccion = models.BooleanField(
+        default=False,
+        help_text=(
+            'Mostrar la dirección del cliente. Útil si el vendedor usa el '
+            'informe también como hoja de reparto.'
+        ),
+    )
+    informe_diario_incluir_articulos = models.BooleanField(
+        default=True,
+        help_text=(
+            'Mostrar el detalle de artículos + cantidades de cada pedido. '
+            'Si está apagado, solo se muestra la fila-resumen sin desglose.'
+        ),
+    )
+    informe_diario_incluir_total = models.BooleanField(
+        default=True,
+        help_text='Mostrar la columna con el total en pesos de cada pedido.',
+    )
+    informe_diario_incluir_cobro = models.BooleanField(
+        default=True,
+        help_text=(
+            'Mostrar una columna extra con el estado de cobro de cada '
+            'pedido: ✔ Pagado o ● Pendiente.'
+        ),
+    )
+    informe_diario_incluir_totales_cobro = models.BooleanField(
+        default=True,
+        help_text=(
+            'Mostrar la línea "Cobrado / Pendiente" en la cabecera con '
+            'los subtotales del día. Independiente del checkbox anterior '
+            '— podés querer los totales en la cabecera sin la columna, '
+            'o al revés.'
+        ),
+    )
+    informe_diario_incluir_total_dia = models.BooleanField(
+        default=False,
+        help_text=(
+            'Mostrar la línea "Total del día: $XXX" en la cabecera. '
+            'Es la suma bruta de todos los pedidos del vendedor ese día. '
+            'Apagado por default porque muchas veces el cierre del día se '
+            'discute con Cobrado/Pendiente aparte y este total repetido '
+            'confunde.'
+        ),
+    )
+    informe_diario_titulo = models.CharField(
+        max_length=120,
+        default='Informe diario por vendedor',
+        help_text=(
+            'Texto del encabezado principal del PDF. Va centrado arriba, '
+            'seguido del nombre del vendedor y la fecha. Cambialo si '
+            'querés poner el nombre del negocio (ej. "Golosinas Insa — '
+            'Cierre diario").'
+        ),
+    )
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

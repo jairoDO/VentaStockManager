@@ -280,7 +280,15 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'descargar_pdf',
     ]
     # `pagado` permite filtrar "lo del día que ya cobré" vs pendientes.
-    list_filter = ['pagado', 'estado', 'venta__fecha_compra', 'venta__fecha_entrega']
+    # `venta__vendedor` es necesario para el flujo "Informe diario por
+    # vendedor" — el operador filtra por vendedor + fecha, selecciona
+    # los pedidos que le interesan y usa el bulk action para generar
+    # el informe consolidado.
+    list_filter = [
+        'pagado', 'estado',
+        'venta__vendedor',
+        'venta__fecha_compra', 'venta__fecha_entrega',
+    ]
     # Buscador pedido por nombre de cliente y por vendedor
     # (nombre/apellido del vendedor o su usuario de login).
     search_fields = (
@@ -292,6 +300,8 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     icon_name = "library_books"
     actions = [
         'generar_pdfs',
+        'informe_diario_vendedor_a4',
+        'informe_diario_vendedor_configurado',
         'marcar_como_saldada',
         'registrar_pago',
     ]
@@ -406,6 +416,34 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         return HttpResponseRedirect(reverse('generar_pdf_pedidos') + f"?pedidos_ids={','.join(map(str, pedido_ids))}")
 
     generar_pdfs.short_description = "Generar PDFs para pedidos seleccionados"
+
+    @admin.action(description='📄 Informe diario por vendedor (A4)')
+    def informe_diario_vendedor_a4(self, request, queryset):
+        """
+        Genera un PDF A4 consolidado con los pedidos seleccionados,
+        agrupados por vendedor.
+
+        Los campos a incluir salen de `ConfiguracionGeneral`
+        (fieldset "Informe diario por vendedor" en /admin/configuracion/).
+        Ver `venta/views_informe.py`.
+        """
+        ids = ','.join(map(str, queryset.values_list('id', flat=True)))
+        return HttpResponseRedirect(
+            reverse('informe_diario_vendedor') + f'?pedidos_ids={ids}&tamano=a4'
+        )
+
+    @admin.action(description='🎨 Informe diario por vendedor (según configuración de comprobante)')
+    def informe_diario_vendedor_configurado(self, request, queryset):
+        """
+        Igual que `informe_diario_vendedor_a4` pero usa el tamaño de
+        página + fuentes + colores del `FacturaConfiguration` — así
+        el informe queda visualmente idéntico a los comprobantes
+        individuales que ya se imprimen para los pedidos.
+        """
+        ids = ','.join(map(str, queryset.values_list('id', flat=True)))
+        return HttpResponseRedirect(
+            reverse('informe_diario_vendedor') + f'?pedidos_ids={ids}&tamano=config'
+        )
 
     @admin.action(description='✓ Marcar como saldada (venta al contado)')
     def marcar_como_saldada(self, request, queryset):
