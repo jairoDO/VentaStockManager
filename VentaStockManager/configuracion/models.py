@@ -324,6 +324,15 @@ class ConfiguracionGeneral(models.Model):
             'confunde.'
         ),
     )
+    informe_diario_incluir_formas_pago = models.BooleanField(
+        default=True,
+        help_text=(
+            'Agregar una columna con 3 casillas vacías por pedido para '
+            'tildar a mano cómo se cobró: transferencia, efectivo o '
+            'cuenta corriente. Útil como planilla de conciliación al '
+            'cierre del día.'
+        ),
+    )
     informe_diario_titulo = models.CharField(
         max_length=120,
         default='Informe diario por vendedor',

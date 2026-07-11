@@ -206,6 +206,15 @@ def _fila_pedido(pedido, cfg_flags, estilos):
     if cfg_flags['cobro']:
         marca = '✔ Pagado' if pedido.pagado else '● Pendiente'
         fila.append(Paragraph(marca, body))
+    if cfg_flags['formas_pago']:
+        # 3 casillas vacías tildables a mano. Usamos "[ ]" en vez de
+        # unicode ☐ porque Helvetica (fuente default de reportlab) es
+        # WinAnsi-only y renderiza los codepoints > 255 como cajitas
+        # negras — inaceptable. [ ] siempre funciona.
+        fila.append(Paragraph(
+            '[ ] Transf.<br/>[ ] Efec.<br/>[ ] Cta. cte.',
+            body,
+        ))
     return fila
 
 
@@ -221,6 +230,8 @@ def _columnas(cfg_flags):
         cols.append(('Total', 2.0 * cm))
     if cfg_flags['cobro']:
         cols.append(('Estado', 2.2 * cm))
+    if cfg_flags['formas_pago']:
+        cols.append(('Forma de pago', 2.6 * cm))
     return cols
 
 
@@ -323,6 +334,7 @@ def generar_informe_diario_vendedor(request):
         'articulos':     config.informe_diario_incluir_articulos,
         'total':         config.informe_diario_incluir_total,
         'cobro':         config.informe_diario_incluir_cobro,
+        'formas_pago':   config.informe_diario_incluir_formas_pago,
         'totales_cobro': config.informe_diario_incluir_totales_cobro,
         'total_dia':     config.informe_diario_incluir_total_dia,
     }
@@ -330,7 +342,8 @@ def generar_informe_diario_vendedor(request):
     # operador podría haber desactivado todas las columnas por accidente
     # — dejamos al menos cliente+total. `totales_cobro` es de la cabecera,
     # queda como esté.
-    if not any(cfg_flags[k] for k in ('cliente', 'direccion', 'articulos', 'total', 'cobro')):
+    columnas = ('cliente', 'direccion', 'articulos', 'total', 'cobro', 'formas_pago')
+    if not any(cfg_flags[k] for k in columnas):
         cfg_flags['cliente'] = True
         cfg_flags['total'] = True
 

@@ -162,6 +162,7 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
                 'informe_diario_incluir_articulos',
                 'informe_diario_incluir_total',
                 'informe_diario_incluir_cobro',
+                'informe_diario_incluir_formas_pago',
                 'informe_diario_incluir_totales_cobro',
                 'informe_diario_incluir_total_dia',
             ),
