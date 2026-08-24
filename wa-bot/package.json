@@ -5,7 +5,8 @@
   "description": "Bridge HTTP entre VentaStockManager (Django) y WhatsApp via @whiskeysockets/baileys. Migrado de @open-wa/wa-automate (discontinuada).",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

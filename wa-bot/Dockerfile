@@ -32,7 +32,7 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
 
-COPY index.js ./
+COPY index.js safe-signal-logging.js safe-signal-logging.test.js ./
 
 # Volume para persistir credenciales de Baileys (`useMultiFileAuthState`).
 # Si se borra, hay que re-escanear el QR. Sobrevive a restarts del

@@ -42,6 +42,12 @@ const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
 const QRCode = require('qrcode');
+const { installSafeSignalLogging } = require('./safe-signal-logging');
+
+// libsignal imprime el objeto SessionEntry completo al cerrar una sesión,
+// incluyendo claves privadas y ratchets. Filtramos únicamente ese mensaje;
+// el resto de console.info sigue funcionando normalmente.
+installSafeSignalLogging(console);
 
 const PORT = process.env.WA_BOT_PORT || 3000;
 const SESSION_DIR = process.env.WA_BOT_SESSION_DIR || '/sessions';
@@ -59,7 +65,7 @@ if (!TOKEN) {
 
 // Logger de Baileys: silencioso por default para no ahogar la consola
 // con paquetes de protocolo. Subir a 'info' o 'debug' para troubleshoot.
-const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'warn' });
+const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'fatal' });
 
 const app = express();
 // Body grande para adjuntos en base64 (PDFs/imágenes hasta ~16MB
@@ -96,6 +102,7 @@ let lastQRPng = null;     // bytes del PNG renderizado (cacheado)
 let me = null;            // info de la cuenta conectada (id, name)
 let connectionState = 'starting';  // ver lista arriba
 let lastDisconnectMsg = '';        // motivo del último disconnect (debug)
+let reconnectTimer = null;          // evita reconexiones superpuestas
 
 /**
  * Convierte un número telefónico arbitrario a un JID de WhatsApp.
@@ -185,7 +192,7 @@ async function startSock() {
   const { version, isLatest } = await fetchLatestBaileysVersion();
   console.log(`[wa-bot] Baileys version=${version.join('.')} (isLatest=${isLatest})`);
 
-  sock = makeWASocket({
+  const currentSock = makeWASocket({
     version,
     auth: state,
     logger,
@@ -223,9 +230,10 @@ async function startSock() {
     //   reenviar mensajes históricos.
     getMessage: async () => undefined,
   });
+  sock = currentSock;
 
   // Persistir credenciales cuando cambien (después de cada handshake).
-  sock.ev.on('creds.update', saveCreds);
+  currentSock.ev.on('creds.update', saveCreds);
 
   // Auto-responder: cuando entra un mensaje, lo forwardeamos a Django
   // (endpoint /wa-campania/api/incoming/) que decide qué hacer. Si
@@ -237,7 +245,7 @@ async function startSock() {
   //   - Ignorar grupos (@g.us) y status broadcast (@broadcast).
   //   - Ignorar mensajes no-texto (audios, fotos, etc. — el operador
   //     los responde a mano).
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+  currentSock.ev.on('messages.upsert', async ({ messages, type }) => {
     // type='notify' = mensaje nuevo. 'append' = relleno de historial.
     // Solo procesamos los notify (mensajes que llegan en vivo).
     if (type !== 'notify') return;
@@ -253,7 +261,7 @@ async function startSock() {
   });
 
   // Eventos de conexión: QR, conexión exitosa, desconexión.
-  sock.ev.on('connection.update', async (update) => {
+  currentSock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -282,7 +290,8 @@ async function startSock() {
     }
 
     if (connection === 'open') {
-      me = sock.user || null;
+      if (sock !== currentSock) return;
+      me = currentSock.user || null;
       connectionState = 'CONNECTED';
       lastQR = null;
       lastQRPng = null;
@@ -294,6 +303,10 @@ async function startSock() {
     }
 
     if (connection === 'close') {
+      // Un socket viejo puede emitir su cierre después de que ya arrancó
+      // otro. Ignorarlo evita borrar la sesión recién creada.
+      if (sock !== currentSock) return;
+
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const reason = lastDisconnect?.error?.message || 'sin detalle';
       lastDisconnectMsg = `${statusCode || '?'}: ${reason}`;
@@ -301,15 +314,30 @@ async function startSock() {
       const isLoggedOut = statusCode === DisconnectReason.loggedOut;
       if (isLoggedOut) {
         // El usuario desvinculó la sesión desde el celular. Borrar
-        // archivos para que el próximo arranque pida QR nuevo.
+        // archivos y crear un socket fresco que pida QR, sin tumbar el
+        // proceso HTTP ni hacer que Render lo marque como caída.
         connectionState = 'logged_out';
-        console.log('[wa-bot] Sesión desvinculada desde el celular. Borrando credenciales.');
+        me = null;
+        lastQR = null;
+        lastQRPng = null;
+        console.warn(
+          '[wa-bot] Sesión desvinculada desde el celular. '
+          + 'Se limpiarán las credenciales y se generará un QR nuevo.',
+        );
+        currentSock.ev.removeAllListeners('creds.update');
         try {
           fs.rmSync(sessionPath, { recursive: true, force: true });
         } catch (e) { /* ignore */ }
-        // process.exit(0) para que docker-compose reinicie limpio
-        // (con restart: unless-stopped) y emita un QR nuevo.
-        setTimeout(() => process.exit(0), 500);
+        sock = null;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          connectionState = 'starting';
+          startSock().catch((err) => {
+            connectionState = 'connection_error';
+            console.error('[wa-bot] No se pudo generar una sesión nueva:', err.message || err);
+          });
+        }, 1000);
         return;
       }
 
@@ -318,7 +346,9 @@ async function startSock() {
       // solo — lo hacemos acá.
       connectionState = 'connection_error';
       console.log('[wa-bot] Desconectado.', lastDisconnectMsg, '— reconectando en 3s…');
-      setTimeout(() => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
         startSock().catch((err) => {
           console.error('[wa-bot] Reconexión falló:', err);
         });
