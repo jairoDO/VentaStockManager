@@ -32,7 +32,22 @@ def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
     f = filtro or {}
     qs = Cliente.objects.all()
 
-    if f.get('todos'):
+    # Selección manual: si hay IDs, representan la audiencia exacta.
+    # Las reglas de consentimiento y número válido se siguen aplicando
+    # más abajo; nunca se pueden saltear desde el widget.
+    clientes_ids = f.get('clientes_ids') or []
+    if clientes_ids:
+        ids_validos = []
+        for cliente_id in clientes_ids:
+            try:
+                ids_validos.append(int(cliente_id))
+            except (TypeError, ValueError):
+                continue
+        qs = qs.filter(pk__in=ids_validos)
+
+    if clientes_ids:
+        pass
+    elif f.get('todos'):
         # Bypass de los otros filtros, pero respetamos
         # `solo_con_whatsapp_valido` al final.
         pass

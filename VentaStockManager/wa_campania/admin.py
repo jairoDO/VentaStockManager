@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from django.contrib import admin, messages
 from django.db import models as django_models
+from django.http import HttpResponseRedirect
+from django.urls import reverse
 from django.utils.html import format_html
 from django_q.tasks import async_task
 
@@ -49,6 +51,7 @@ class _SuperuserOnlyMixin:
 
 class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
     icon_name = 'campaign'
+    change_form_template = 'admin/wa_campania/campania/change_form.html'
     # Compactado de 8 a 5 columnas. Combinamos los 3 contadores
     # (total/ok/fallidos) en una sola celda visual con códigos de
     # color, y sacamos `enviada_at` (es ruido para el changelist —
@@ -199,6 +202,50 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
             obj.audiencia_filtro = dict(Campania.AUDIENCIA_DEFAULT)
         super().save_model(request, obj, form, change)
 
+    def _encolar_campania(self, request, campania):
+        """Prepara y encola una campaña borrador. Devuelve si pudo enviarse."""
+        if campania.estado != Campania.ESTADO_BORRADOR:
+            self.message_user(
+                request,
+                f'La campaña ya está en estado "{campania.get_estado_display()}". '
+                f'Solo se pueden enviar campañas en borrador.',
+                level=messages.WARNING,
+            )
+            return False
+
+        n = crear_envios_pendientes(campania)
+        if n == 0:
+            self.message_user(
+                request,
+                'La campaña se guardó, pero la audiencia tiene 0 clientes. '
+                'Revisá la selección o los filtros.',
+                level=messages.ERROR,
+            )
+            return False
+
+        async_task('wa_campania.tasks.enviar_campania', campania.id)
+        self.message_user(
+            request,
+            f'Campaña guardada y encolada. Se van a procesar {n} envíos en '
+            f'background (uno cada ~4 segundos).',
+            level=messages.SUCCESS,
+        )
+        return True
+
+    def _respuesta_guardar_y_enviar(self, request, obj):
+        self._encolar_campania(request, obj)
+        return HttpResponseRedirect(reverse('admin:wa_campania_campania_change', args=[obj.pk]))
+
+    def response_add(self, request, obj, post_url_continue=None):
+        if '_saveandsend' in request.POST:
+            return self._respuesta_guardar_y_enviar(request, obj)
+        return super().response_add(request, obj, post_url_continue)
+
+    def response_change(self, request, obj):
+        if '_saveandsend' in request.POST:
+            return self._respuesta_guardar_y_enviar(request, obj)
+        return super().response_change(request, obj)
+
     @admin.action(description='Enviar campaña a la audiencia configurada')
     def accion_enviar_campania(self, request, queryset):
         # Para evitar disparos accidentales, solo procesamos UNA
@@ -211,31 +258,7 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
             )
             return
         campania = queryset.first()
-        if campania.estado != Campania.ESTADO_BORRADOR:
-            self.message_user(
-                request,
-                f'La campaña ya está en estado "{campania.get_estado_display()}". '
-                f'Solo se pueden enviar campañas en borrador.',
-                level=messages.WARNING,
-            )
-            return
-        # Crear envíos pendientes (síncrono — es rápido, queries bulk).
-        n = crear_envios_pendientes(campania)
-        if n == 0:
-            self.message_user(
-                request,
-                'La audiencia resolvió a 0 clientes. Revisá los filtros.',
-                level=messages.ERROR,
-            )
-            return
-        # Encolar el procesamiento real en django-q2.
-        async_task('wa_campania.tasks.enviar_campania', campania.id)
-        self.message_user(
-            request,
-            f'Campaña encolada. Se van a procesar {n} envíos en background '
-            f'(uno cada ~4 segundos). Refrescá esta página para ver el progreso.',
-            level=messages.SUCCESS,
-        )
+        self._encolar_campania(request, campania)
 
 
 class EnvioWhatsappAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):

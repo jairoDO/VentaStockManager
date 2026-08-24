@@ -131,6 +131,28 @@ class AudienciaFiltroWidget(forms.Widget):
               </div>
             </div>
 
+            <!-- Selección manual paginada -->
+            <div class="af-seleccion-manual" style="margin-top: 16px; border-top: 1px solid #cbd5e1; padding-top: 14px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
+                <div>
+                  <b style="color:#0f172a;">👥 Elegir clientes manualmente</b>
+                  <div style="font-size:11px; color:#64748b;">Si marcás alguno, reemplaza “todos” y los filtros.</div>
+                </div>
+                <span class="af-selected-count" style="background:#dbeafe; color:#1d4ed8; padding:3px 9px; border-radius:12px; font-size:11px; font-weight:600;">0 seleccionados</span>
+              </div>
+              <input type="search" class="af-client-search" placeholder="Buscar por nombre, dirección o WhatsApp…"
+                     style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; margin-bottom:8px;">
+              <div class="af-sender-notice" style="display:none; margin-bottom:8px; padding:8px 10px; background:#fff7ed; border:1px solid #fdba74; border-radius:6px; font-size:11px; color:#9a3412;"></div>
+              <div class="af-client-list" style="background:white; border:1px solid #e2e8f0; border-radius:6px; min-height:80px; overflow:hidden;">
+                <div style="padding:16px; color:#64748b; text-align:center;">Cargando clientes…</div>
+              </div>
+              <div class="af-pagination" style="display:flex; align-items:center; justify-content:center; gap:10px; margin-top:8px;">
+                <button type="button" class="af-prev" style="padding:5px 10px;">← Anterior</button>
+                <span class="af-page-info" style="font-size:12px; color:#64748b;">Página 1</span>
+                <button type="button" class="af-next" style="padding:5px 10px;">Siguiente →</button>
+              </div>
+            </div>
+
             <p style="margin: 10px 0 0 0; padding: 8px 10px; background: #fefce8;
                       border: 1px solid #fde047; border-radius: 6px; font-size: 11px;
                       color: #854d0e;">

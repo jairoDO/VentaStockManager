@@ -12,6 +12,11 @@ from . import views
 
 
 urlpatterns = [
+    path(
+        'wa-campania/api/clientes/',
+        views.api_clientes_campania,
+        name='wa_api_clientes_campania',
+    ),
     path('wa-campania/conexion/', views.panel_conexion, name='wa_panel_conexion'),
     path(
         'wa-campania/api/conexion/status/',

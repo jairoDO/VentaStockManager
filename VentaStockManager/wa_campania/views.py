@@ -26,6 +26,8 @@ import logging
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.decorators import user_passes_test
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.core.paginator import Paginator
+from django.db.models import Q
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -52,6 +54,67 @@ _superuser_required = user_passes_test(_solo_superuser, login_url='/admin/login/
 def panel_conexion(request: HttpRequest) -> HttpResponse:
     """Render del panel. El front carga el estado vía AJAX."""
     return render(request, 'wa_campania/panel_conexion.html', {})
+
+
+@_superuser_required
+@require_GET
+def api_clientes_campania(request: HttpRequest) -> JsonResponse:
+    """Lista paginada de clientes elegibles para selección manual."""
+    from cliente.models import Cliente
+
+    qs = Cliente.objects.filter(
+        puede_recibir_whatsapp=True,
+    ).exclude(whatsapp_number='').order_by('nombre', 'apellido', 'id')
+
+    # WhatsApp no entrega de forma visible mensajes enviados a la misma
+    # cuenta que está vinculada al bot. Evitamos ofrecerla como destinataria
+    # y devolvemos el dato para que el widget pueda explicárselo al operador.
+    sender_number = ''
+    excluded_sender_client_ids = []
+    try:
+        status = wa_client.get_status_detail()
+        raw_user = (
+            ((status.get('me') or {}).get('id') or {}).get('user') or ''
+        )
+        sender_number = raw_user.split(':', 1)[0]
+    except Exception:
+        log.exception('No se pudo identificar el número conectado al wa-bot')
+
+    if sender_number:
+        excluded_sender_client_ids = list(
+            qs.filter(whatsapp_number=sender_number).values_list('id', flat=True)
+        )
+        qs = qs.exclude(whatsapp_number=sender_number)
+
+    buscar = (request.GET.get('q') or '').strip()
+    if buscar:
+        qs = qs.filter(
+            Q(nombre__icontains=buscar)
+            | Q(apellido__icontains=buscar)
+            | Q(direccion__icontains=buscar)
+            | Q(whatsapp_number__icontains=buscar)
+        )
+
+    paginator = Paginator(qs, 10)
+    pagina = paginator.get_page(request.GET.get('page') or 1)
+    return JsonResponse({
+        'results': [
+            {
+                'id': cliente.id,
+                'nombre': cliente.nombre_completo().strip(),
+                'direccion': cliente.direccion or '',
+                'whatsapp': cliente.whatsapp_number,
+            }
+            for cliente in pagina.object_list
+        ],
+        'page': pagina.number,
+        'pages': paginator.num_pages,
+        'total': paginator.count,
+        'has_previous': pagina.has_previous(),
+        'has_next': pagina.has_next(),
+        'excluded_sender_number': sender_number,
+        'excluded_sender_client_ids': excluded_sender_client_ids,
+    })
 
 
 @_superuser_required

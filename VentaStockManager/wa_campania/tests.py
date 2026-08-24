@@ -18,6 +18,7 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.urls import reverse
 
 from cliente.models import Cliente, CuentaCliente, MovimientoCuenta
 from wa_campania.audiencia import resolver_clientes
@@ -94,6 +95,108 @@ class AudienciaResolverTests(TestCase):
         )
         qs = resolver_clientes({'todos': True, 'solo_con_whatsapp_valido': True})
         self.assertNotIn(c_no_consintio.id, qs.values_list('id', flat=True))
+
+    def test_seleccion_manual_devuelve_solo_ids_elegidos(self):
+        qs = resolver_clientes({
+            'todos': True,
+            'clientes_ids': [self.c_con_wa.id],
+            'solo_con_whatsapp_valido': True,
+        })
+        self.assertEqual(list(qs.values_list('id', flat=True)), [self.c_con_wa.id])
+
+    def test_seleccion_manual_respeta_consentimiento(self):
+        no_consentido = _crear_cliente(
+            'No', 'Consentido', whatsapp='5494444444444', puede_recibir=False,
+        )
+        qs = resolver_clientes({
+            'clientes_ids': [no_consentido.id],
+            'solo_con_whatsapp_valido': True,
+        })
+        self.assertFalse(qs.exists())
+
+
+class ClientesCampaniaApiTests(TestCase):
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            'api_admin', password='x', is_staff=True, is_superuser=True,
+        )
+        for numero in range(12):
+            _crear_cliente(
+                f'Cliente {numero:02d}',
+                whatsapp=f'549351555{numero:04d}',
+            )
+        _crear_cliente(
+            'Sin permiso', whatsapp='5493519999999', puede_recibir=False,
+        )
+        self.client.force_login(self.admin)
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_lista_paginada_de_diez(self, mock_status):
+        response = self.client.get('/wa-campania/api/clientes/')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data['results']), 10)
+        self.assertEqual(data['total'], 12)
+        self.assertEqual(data['pages'], 2)
+        self.assertTrue(data['has_next'])
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_busqueda_y_opt_in(self, mock_status):
+        response = self.client.get('/wa-campania/api/clientes/', {'q': 'Cliente 11'})
+        data = response.json()
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['results'][0]['nombre'], 'Cliente 11')
+
+        response = self.client.get('/wa-campania/api/clientes/', {'q': 'Sin permiso'})
+        self.assertEqual(response.json()['total'], 0)
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail')
+    def test_excluye_el_numero_conectado_al_bot(self, mock_status):
+        cliente = Cliente.objects.get(nombre='Cliente 03')
+        mock_status.return_value = {
+            'me': {'id': {'user': f'{cliente.whatsapp_number}:12'}},
+        }
+
+        data = self.client.get('/wa-campania/api/clientes/').json()
+
+        self.assertEqual(data['total'], 11)
+        self.assertEqual(data['excluded_sender_number'], cliente.whatsapp_number)
+        self.assertEqual(data['excluded_sender_client_ids'], [cliente.id])
+        self.assertNotIn(cliente.id, [item['id'] for item in data['results']])
+
+
+class CampaniaAdminTests(TestCase):
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            'campaign_admin', password='x', is_staff=True, is_superuser=True,
+        )
+        self.client.force_login(self.admin)
+
+    @mock.patch('wa_campania.admin.async_task')
+    @mock.patch('wa_campania.admin.crear_envios_pendientes', return_value=1)
+    def test_guardar_y_enviar_guarda_y_encola(self, mock_crear, mock_async):
+        response = self.client.post(
+            reverse('admin:wa_campania_campania_add'),
+            {
+                'nombre': 'Promo directa',
+                'mensaje': 'Hola {{nombre}}',
+                'audiencia_filtro': '{"todos": true, "solo_con_whatsapp_valido": true}',
+                '_saveandsend': 'Guardar y enviar',
+            },
+        )
+
+        campania = Campania.objects.get(nombre='Promo directa')
+        self.assertRedirects(
+            response,
+            reverse('admin:wa_campania_campania_change', args=[campania.pk]),
+            fetch_redirect_response=False,
+        )
+        mock_crear.assert_called_once_with(campania)
+        mock_async.assert_called_once_with(
+            'wa_campania.tasks.enviar_campania', campania.id,
+        )
 
 
 class RenderMensajeTests(TestCase):
