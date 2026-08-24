@@ -27,6 +27,7 @@ from wa_campania.tasks import (
     _render_mensaje,
     crear_envios_pendientes,
     enviar_campania,
+    preparar_reenvio_fallidos,
 )
 
 
@@ -198,6 +199,62 @@ class CampaniaAdminTests(TestCase):
             'wa_campania.tasks.enviar_campania', campania.id,
         )
 
+    @mock.patch('wa_campania.admin.async_task')
+    @mock.patch('wa_campania.admin.wa_client.is_ready', return_value=(True, 'CONNECTED'))
+    def test_reenviar_fallidos_solo_al_finalizar(self, mock_ready, mock_async):
+        cliente = _crear_cliente('Cliente', 'Reintento', whatsapp='5493515559999')
+        campania = Campania.objects.create(
+            nombre='Promo fallida',
+            mensaje='Hola {{nombre}}',
+            audiencia_filtro={'todos': True, 'solo_con_whatsapp_valido': True},
+            estado=Campania.ESTADO_FINALIZADA,
+            creado_por=self.admin,
+        )
+        envio = EnvioWhatsapp.objects.create(
+            campania=campania,
+            cliente=cliente,
+            telefono_usado=cliente.whatsapp_number,
+            status=EnvioWhatsapp.STATUS_FALLIDO,
+            error_msg='bot desconectado',
+        )
+
+        response = self.client.post(
+            reverse('admin:wa_campania_campania_change', args=[campania.pk]),
+            {
+                'nombre': campania.nombre,
+                'mensaje': campania.mensaje,
+                'audiencia_filtro': '{"todos": true, "solo_con_whatsapp_valido": true}',
+                '_retryfailed': 'Reenviar fallidos',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        campania.refresh_from_db()
+        envio.refresh_from_db()
+        self.assertEqual(campania.estado, Campania.ESTADO_ENVIANDO)
+        self.assertEqual(envio.status, EnvioWhatsapp.STATUS_PENDIENTE)
+        self.assertEqual(envio.error_msg, '')
+        mock_async.assert_called_once_with(
+            'wa_campania.tasks.enviar_campania', campania.pk,
+        )
+
+    def test_preparar_reenvio_no_duplica_si_ya_esta_enviando(self):
+        cliente = _crear_cliente('Cliente', 'Bloqueado', whatsapp='5493515559998')
+        campania = Campania.objects.create(
+            nombre='Promo procesando',
+            mensaje='Hola',
+            estado=Campania.ESTADO_ENVIANDO,
+            creado_por=self.admin,
+        )
+        EnvioWhatsapp.objects.create(
+            campania=campania,
+            cliente=cliente,
+            telefono_usado=cliente.whatsapp_number,
+            status=EnvioWhatsapp.STATUS_FALLIDO,
+        )
+
+        self.assertEqual(preparar_reenvio_fallidos(campania.pk), 0)
+
 
 class RenderMensajeTests(TestCase):
 
@@ -281,3 +338,23 @@ class EnviarCampaniaTests(TestCase):
         for e in self.campania.envios.all():
             self.assertEqual(e.status, EnvioWhatsapp.STATUS_FALLIDO)
             self.assertIn('wa-bot no disponible', e.error_msg)
+
+    @mock.patch('wa_campania.tasks.wa_client.send_text', return_value={
+        'ok': False, 'error': 'wa-bot no conectado',
+    })
+    @mock.patch('wa_campania.tasks.wa_client.is_ready')
+    def test_desconexion_durante_campania_corta_el_resto(self, mock_ready, mock_send):
+        mock_ready.side_effect = [
+            (True, 'CONNECTED'),
+            (False, 'logged_out'),
+        ]
+        crear_envios_pendientes(self.campania)
+
+        resultado = enviar_campania(self.campania.id)
+
+        self.assertEqual(resultado['enviados'], 0)
+        self.assertEqual(resultado['fallidos'], self.campania.envios.count())
+        self.assertEqual(mock_send.call_count, 1)
+        self.assertFalse(
+            self.campania.envios.exclude(status=EnvioWhatsapp.STATUS_FALLIDO).exists()
+        )

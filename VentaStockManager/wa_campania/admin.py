@@ -21,9 +21,10 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django_q.tasks import async_task
 
+from wa_campania import wa_client
 from wa_campania.audiencia import resolver_clientes
 from wa_campania.models import Campania, EnvioWhatsapp
-from wa_campania.tasks import crear_envios_pendientes
+from wa_campania.tasks import crear_envios_pendientes, preparar_reenvio_fallidos
 from wa_campania.widgets import AudienciaFiltroWidget
 
 
@@ -242,9 +243,44 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
         return super().response_add(request, obj, post_url_continue)
 
     def response_change(self, request, obj):
+        if '_retryfailed' in request.POST:
+            return self._respuesta_reenviar_fallidos(request, obj)
         if '_saveandsend' in request.POST:
             return self._respuesta_guardar_y_enviar(request, obj)
         return super().response_change(request, obj)
+
+    def _respuesta_reenviar_fallidos(self, request, obj):
+        if obj.estado != Campania.ESTADO_FINALIZADA:
+            self.message_user(
+                request,
+                'El reenvío solo se habilita cuando terminó el procesamiento anterior.',
+                level=messages.WARNING,
+            )
+        else:
+            bot_ready, motivo = wa_client.is_ready()
+            if not bot_ready:
+                self.message_user(
+                    request,
+                    f'No se reenviaron mensajes porque WhatsApp no está conectado ({motivo}).',
+                    level=messages.ERROR,
+                )
+            else:
+                cantidad = preparar_reenvio_fallidos(obj.pk)
+                if cantidad:
+                    async_task('wa_campania.tasks.enviar_campania', obj.pk)
+                    self.message_user(
+                        request,
+                        f'Se reencolaron {cantidad} envíos fallidos. '
+                        'El botón quedará deshabilitado hasta que termine el proceso.',
+                        level=messages.SUCCESS,
+                    )
+                else:
+                    self.message_user(
+                        request,
+                        'La campaña no tiene envíos fallidos para reenviar.',
+                        level=messages.INFO,
+                    )
+        return HttpResponseRedirect(reverse('admin:wa_campania_campania_change', args=[obj.pk]))
 
     @admin.action(description='Enviar campaña a la audiencia configurada')
     def accion_enviar_campania(self, request, queryset):

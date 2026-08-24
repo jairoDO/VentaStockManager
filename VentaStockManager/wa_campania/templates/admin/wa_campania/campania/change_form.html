@@ -6,5 +6,12 @@
     <div class="submit-row">
       <input type="submit" value="Guardar y enviar" name="_saveandsend" class="default">
     </div>
+  {% elif original.estado == "finalizada" and original.total_fallidos %}
+    <div class="submit-row">
+      <input type="submit" value="Reenviar fallidos ({{ original.total_fallidos }})" name="_retryfailed" class="default">
+      <p class="deletelink-box" style="float:none; margin:8px 0 0; color:#64748b;">
+        Solo vuelve a intentar los fallidos; los enviados correctamente no se duplican.
+      </p>
+    </div>
   {% endif %}
 {% endblock %}

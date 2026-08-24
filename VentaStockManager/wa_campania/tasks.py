@@ -25,6 +25,7 @@ import logging
 import time
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from wa_campania import wa_client
@@ -58,6 +59,34 @@ def crear_envios_pendientes(campania: Campania) -> int:
     # rebota los duplicados sin lanzar excepción.
     EnvioWhatsapp.objects.bulk_create(nuevos, batch_size=500, ignore_conflicts=True)
     return campania.envios.filter(status=EnvioWhatsapp.STATUS_PENDIENTE).count()
+
+
+def preparar_reenvio_fallidos(campania_id: int) -> int:
+    """
+    Pasa a pendiente solo los envíos fallidos de una campaña finalizada.
+
+    El bloqueo de fila + cambio inmediato a ENVIANDO evita que dos clics
+    simultáneos creen dos tasks para la misma campaña.
+    """
+    with transaction.atomic():
+        campania = Campania.objects.select_for_update().get(pk=campania_id)
+        if campania.estado != Campania.ESTADO_FINALIZADA:
+            return 0
+
+        fallidos = campania.envios.filter(status=EnvioWhatsapp.STATUS_FALLIDO)
+        cantidad = fallidos.count()
+        if cantidad == 0:
+            return 0
+
+        fallidos.update(
+            status=EnvioWhatsapp.STATUS_PENDIENTE,
+            error_msg='',
+            sent_at=None,
+        )
+        campania.estado = Campania.ESTADO_ENVIANDO
+        campania.enviada_at = None
+        campania.save(update_fields=['estado', 'enviada_at'])
+        return cantidad
 
 
 def _render_mensaje(template_str: str, cliente) -> str:
@@ -178,6 +207,23 @@ def enviar_campania(campania_id: int) -> dict:
             fallidos += 1
         envio.sent_at = timezone.now()
         envio.save(update_fields=['status', 'error_msg', 'sent_at'])
+
+        # Si el bot se cayó durante una campaña grande, no hacemos cientos
+        # de requests condenadas a fallar. Cerramos rápidamente la campaña
+        # y dejamos todos los pendientes como fallidos para que el operador
+        # pueda usar "Reenviar fallidos" después de reconectar.
+        if not resultado.get('ok'):
+            bot_ready, bot_reason = wa_client.is_ready()
+            if not bot_ready:
+                restantes = campania.envios.filter(
+                    status=EnvioWhatsapp.STATUS_PENDIENTE,
+                ).update(
+                    status=EnvioWhatsapp.STATUS_FALLIDO,
+                    error_msg=f'wa-bot no disponible: {bot_reason}',
+                    sent_at=timezone.now(),
+                )
+                fallidos += restantes
+                break
 
         # Rate limit. Si el delay es 0 (testing), no esperamos.
         if delay > 0:
