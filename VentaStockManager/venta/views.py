@@ -609,6 +609,33 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         ])
         tabla_articulos.setStyle(estilo_tabla_articulos)
 
+        # Control interno para depósito/reparto. La casilla y el campo de
+        # observaciones se imprimen vacíos para completar a mano antes de
+        # que el pedido salga. Usamos celdas dibujadas (en vez del glifo
+        # Unicode de checkbox) para que funcione con cualquier fuente.
+        ancho_comprobante = sum(col_widths)
+        tabla_control = Table(
+            [
+                ['', 'PEDIDO CONTROLADO'],
+                ['Observaciones del control:', ''],
+                ['', ''],
+            ],
+            colWidths=[0.55 * cm, ancho_comprobante - 0.55 * cm],
+            rowHeights=[0.62 * cm, 0.52 * cm, 1.05 * cm],
+        )
+        tabla_control.setStyle(TableStyle([
+            ('BOX', (0, 0), (0, 0), 1, config.content_color),
+            ('SPAN', (0, 1), (1, 1)),
+            ('SPAN', (0, 2), (1, 2)),
+            ('BOX', (0, 1), (1, 2), 1, config.content_color),
+            ('FONTNAME', (0, 0), (-1, -1), config.content_font),
+            ('FONTSIZE', (0, 0), (-1, -1), config.font_size_content),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (1, 0), (1, 0), 5),
+            ('LEFTPADDING', (0, 1), (1, 2), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ]))
+
         # Tabla del total. Si hay descuento global, mostramos 3 líneas
         # (subtotal, descuento, total). Si además hubo saldo a favor
         # del cliente aplicado a esta venta, se muestra como línea
@@ -644,6 +671,8 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         # Añadir tablas a los elementos
         elements.append(tabla_cliente)
         elements.append(Spacer(1, padding))
+        elements.append(tabla_control)
+        elements.append(Spacer(1, padding))
         elements.append(tabla_articulos)
         elements.append(Spacer(1, padding))
         elements.append(tabla_total)
@@ -678,6 +707,33 @@ def generar_pdf_pedidos(request, pedido_ids=None):
                 '(*) Artículo con precio pactado con el cliente.',
                 nota_style,
             ))
+
+        # Recepción del cliente. Va al final de cada comprobante para que
+        # pueda marcar conformidad o dejar asentado cualquier faltante,
+        # diferencia o rotura al momento de recibir el pedido.
+        tabla_conformidad = Table(
+            [
+                ['', 'CLIENTE CONFORME CON LO RECIBIDO'],
+                ['Aclaración si no está conforme:', ''],
+                ['', ''],
+            ],
+            colWidths=[0.55 * cm, ancho_comprobante - 0.55 * cm],
+            rowHeights=[0.62 * cm, 0.52 * cm, 1.15 * cm],
+        )
+        tabla_conformidad.setStyle(TableStyle([
+            ('BOX', (0, 0), (0, 0), 1, config.content_color),
+            ('FONTNAME', (0, 0), (-1, -1), config.content_font),
+            ('FONTSIZE', (0, 0), (-1, -1), config.font_size_content),
+            ('SPAN', (0, 1), (1, 1)),
+            ('SPAN', (0, 2), (1, 2)),
+            ('BOX', (0, 1), (1, 2), 1, config.content_color),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (1, 0), (1, 0), 5),
+            ('LEFTPADDING', (0, 1), (1, 2), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(Spacer(1, padding))
+        elements.append(tabla_conformidad)
         elements.append(Spacer(1, padding))
         if index < len(pedido_ids) - 1:
             elements.append(PageBreak())
