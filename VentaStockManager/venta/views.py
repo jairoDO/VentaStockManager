@@ -472,13 +472,15 @@ def generar_pdf_pedidos(request, pedido_ids=None):
     elements = []
     styles = getSampleStyleSheet()
     padding = 0.5 * cm
+    compact_padding = 0.18 * cm
     pedidos_count = len(pedido_ids)
     cantidad_articulos = []
-    total_element = []
+    alturas_pedidos = []
     config = FacturaConfiguration.objects.first()
     if not config:
         config = FacturaConfiguration()
     for index, pedido_id in enumerate(pedido_ids):
+        inicio_elementos_pedido = len(elements)
         pedido = Pedido.objects.get(id=pedido_id)
         cantidad_articulos.append(pedido.venta.ventas.count())
         # Vendedor: usamos `display_name()` para mostrar
@@ -621,7 +623,7 @@ def generar_pdf_pedidos(request, pedido_ids=None):
                 ['', ''],
             ],
             colWidths=[0.55 * cm, ancho_comprobante - 0.55 * cm],
-            rowHeights=[0.62 * cm, 0.52 * cm, 1.05 * cm],
+            rowHeights=[0.50 * cm, 0.40 * cm, 0.65 * cm],
         )
         tabla_control.setStyle(TableStyle([
             ('BOX', (0, 0), (0, 0), 1, config.content_color),
@@ -633,7 +635,8 @@ def generar_pdf_pedidos(request, pedido_ids=None):
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LEFTPADDING', (1, 0), (1, 0), 5),
             ('LEFTPADDING', (0, 1), (1, 2), 5),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
         ]))
 
         # Tabla del total. Si hay descuento global, mostramos 3 líneas
@@ -670,11 +673,11 @@ def generar_pdf_pedidos(request, pedido_ids=None):
 
         # Añadir tablas a los elementos
         elements.append(tabla_cliente)
-        elements.append(Spacer(1, padding))
+        elements.append(Spacer(1, compact_padding))
         elements.append(tabla_control)
-        elements.append(Spacer(1, padding))
+        elements.append(Spacer(1, compact_padding))
         elements.append(tabla_articulos)
-        elements.append(Spacer(1, padding))
+        elements.append(Spacer(1, compact_padding))
         elements.append(tabla_total)
         # Motivo del descuento global (opcional, solo si fue cargado).
         if descuento_global > 0 and motivo_descuento:
@@ -718,7 +721,7 @@ def generar_pdf_pedidos(request, pedido_ids=None):
                 ['', ''],
             ],
             colWidths=[0.55 * cm, ancho_comprobante - 0.55 * cm],
-            rowHeights=[0.62 * cm, 0.52 * cm, 1.15 * cm],
+            rowHeights=[0.50 * cm, 0.40 * cm, 0.75 * cm],
         )
         tabla_conformidad.setStyle(TableStyle([
             ('BOX', (0, 0), (0, 0), 1, config.content_color),
@@ -730,17 +733,31 @@ def generar_pdf_pedidos(request, pedido_ids=None):
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LEFTPADDING', (1, 0), (1, 0), 5),
             ('LEFTPADDING', (0, 1), (1, 2), 5),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
         ]))
-        elements.append(Spacer(1, padding))
+        elements.append(Spacer(1, compact_padding))
         elements.append(tabla_conformidad)
-        elements.append(Spacer(1, padding))
+
+        # La altura de la hoja debe depender del contenido real. Contar la
+        # cantidad de flowables agrandaba mucho la factura al sumar controles
+        # y separadores, aunque visualmente ocuparan pocos milímetros.
+        ancho_disponible = (
+            config.page_width * cm - config.margin_bottom - config.margin_right
+        )
+        altura_pedido = 0
+        for elemento in elements[inicio_elementos_pedido:]:
+            _, altura = elemento.wrap(ancho_disponible, 1000 * cm)
+            altura_pedido += altura
+        alturas_pedidos.append(altura_pedido)
+
         if index < len(pedido_ids) - 1:
             elements.append(PageBreak())
-        total_element.append(len(elements))
         
 
-    page_height = (max(total_element)  * (1.6+config.font_size_content/10)* cm)  + (-2*cm if max(cantidad_articulos) < 7 else 5) + (max(cantidad_articulos) * 0.3 *cm) + (doble_space*cm) # Adjust the multiplier as needed
+    # Dejamos un pequeño margen de seguridad para el frame de ReportLab, sin
+    # convertirlo en una franja vacía visible al final del comprobante.
+    page_height = max(8 * cm, max(alturas_pedidos) + 0.65 * cm)
     page_size = (config.page_width * cm, page_height)
 
     # Set margins to zero
