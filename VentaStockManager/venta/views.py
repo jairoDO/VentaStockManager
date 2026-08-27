@@ -672,9 +672,9 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         tabla_total.setStyle(estilo_tabla_total)
 
         # Añadir tablas a los elementos
-        elements.append(tabla_cliente)
-        elements.append(Spacer(1, compact_padding))
         elements.append(tabla_control)
+        elements.append(Spacer(1, compact_padding))
+        elements.append(tabla_cliente)
         elements.append(Spacer(1, compact_padding))
         elements.append(tabla_articulos)
         elements.append(Spacer(1, compact_padding))
@@ -717,7 +717,7 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         tabla_conformidad = Table(
             [
                 ['', 'CLIENTE CONFORME CON LO RECIBIDO'],
-                ['Aclaración si no está conforme:', ''],
+                ['Firma o aclaración:', ''],
                 ['', ''],
             ],
             colWidths=[0.55 * cm, ancho_comprobante - 0.55 * cm],
