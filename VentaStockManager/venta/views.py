@@ -499,14 +499,13 @@ def generar_pdf_pedidos(request, pedido_ids=None):
             ['Vendedor:', nombre_vendedor],
         ]
 
-        # Tabla del cliente
-        tabla_cliente = Table(data_cliente, colWidths=[4* cm, 4 * cm, 4 * cm,  4 * cm])
+        # Estilo de los datos del cliente. La tabla se arma más abajo,
+        # cuando ya conocemos el ancho exacto de la tabla de artículos.
         estilo_tabla_cliente = TableStyle([
             ('GRID', (0, 0), (-1, -1), 1, config.header_color),
             ('FONTNAME', (0, 0), (-1, -1), config.header_font),
             ('FONTSIZE', (0, 0), (-1, -1), config.font_size_header)
         ])
-        tabla_cliente.setStyle(estilo_tabla_cliente)
 
         # Tabla de artículos. Para detectar precios pactados, hacemos
         # un solo query por cliente con todos los artículos de esta
@@ -616,6 +615,12 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         # que el pedido salga. Usamos celdas dibujadas (en vez del glifo
         # Unicode de checkbox) para que funcione con cualquier fuente.
         ancho_comprobante = sum(col_widths)
+        tabla_cliente = Table(
+            data_cliente,
+            colWidths=[4 * cm, ancho_comprobante - 4 * cm],
+        )
+        tabla_cliente.setStyle(estilo_tabla_cliente)
+
         tabla_control = Table(
             [
                 ['', 'PEDIDO CONTROLADO'],
@@ -662,7 +667,10 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         if saldo_aplicado_abs > 0:
             data_total.append(['Saldo a favor aplicado:', f'-{saldo_aplicado_abs:.2f}'])
             data_total.append(['Total a pagar:', f'{(total_final - saldo_aplicado_abs):.2f}'])
-        tabla_total = Table(data_total, colWidths=[5 * cm, 3 * cm])
+        tabla_total = Table(
+            data_total,
+            colWidths=[5 * cm, ancho_comprobante - 5 * cm],
+        )
         estilo_tabla_total = TableStyle([
             ('GRID', (0, 0), (-1, -1), 1, config.content_color),
             ('FONTNAME', (0, 0), (-1, -1), config.content_font),
