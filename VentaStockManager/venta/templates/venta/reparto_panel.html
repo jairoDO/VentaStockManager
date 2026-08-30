@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Repartos de {{ repartidor }}</title>
+  <title>{% if es_vista_general %}Mapa general de repartos{% else %}Repartos de {{ repartidor }}{% endif %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -17,8 +17,8 @@
   <main x-data="repartoPanel()" x-init="init()" class="max-w-6xl mx-auto p-3 md:p-6">
     <header class="bg-white rounded-xl shadow-sm p-4 mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <div>
-        <p class="text-xs uppercase tracking-wide text-slate-500">Repartidor</p>
-        <h1 class="text-xl font-bold">{{ repartidor }}</h1>
+        <p class="text-xs uppercase tracking-wide text-slate-500">{% if es_vista_general %}Administración{% else %}Repartidor{% endif %}</p>
+        <h1 class="text-xl font-bold">{% if es_vista_general %}Mapa general de repartos{% else %}{{ repartidor }}{% endif %}</h1>
         <p class="text-sm text-slate-500">{{ pedidos|length }} entrega(s) para {{ fecha|date:"d/m/Y" }}</p>
       </div>
       {% if es_vista_admin %}
@@ -31,8 +31,18 @@
       {% endif %}
     </header>
 
-    <form method="get" class="bg-white rounded-xl shadow-sm p-4 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-      {% if es_vista_admin %}<input type="hidden" name="repartidor_id" value="{{ repartidor.id }}">{% endif %}
+    <form method="get" class="bg-white rounded-xl shadow-sm p-4 mb-4 grid grid-cols-1 {% if es_vista_admin %}sm:grid-cols-4{% else %}sm:grid-cols-3{% endif %} gap-3">
+      {% if es_vista_admin %}
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Repartidor</label>
+          <select name="repartidor_id" class="w-full border border-slate-300 rounded px-3 py-2 bg-white">
+            <option value="">Todos</option>
+            {% for opcion in repartidores %}
+              <option value="{{ opcion.id }}" {% if repartidor and opcion.id == repartidor.id %}selected{% endif %}>{{ opcion }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      {% endif %}
       <div>
         <label class="block text-xs font-medium text-slate-600 mb-1">Fecha de entrega</label>
         <input type="date" name="fecha" value="{{ fecha|date:'Y-m-d' }}"
@@ -75,6 +85,7 @@
               <p class="text-sm text-slate-700 mt-1">{{ pedido.direccion_entrega_texto|default:"Sin dirección cargada" }}</p>
               {% if pedido.localidad_entrega %}<p class="text-xs text-slate-500">{{ pedido.localidad_entrega }}, {{ pedido.provincia_entrega }}</p>{% endif %}
               {% if pedido.referencia_entrega %}<p class="text-xs text-blue-700 mt-1">Referencia: {{ pedido.referencia_entrega }}</p>{% endif %}
+              {% if es_vista_admin %}<p class="text-xs text-slate-500 mt-1">🚚 {{ pedido.repartidor|default:"Sin asignar" }}</p>{% endif %}
             </div>
             <span class="text-sm font-semibold">{{ pedido.venta.ventas.count }} renglón(es)</span>
           </div>
@@ -180,6 +191,8 @@
             contenido.append(document.createTextNode(pedido.direccion || 'Sin dirección'));
             contenido.append(document.createElement('br'));
             contenido.append(document.createTextNode(pedido.estado));
+            contenido.append(document.createElement('br'));
+            contenido.append(document.createTextNode('Repartidor: ' + pedido.repartidor));
             L.marker([pedido.latitud, pedido.longitud], {icon: icono})
               .addTo(this.mapa)
               .bindPopup(contenido);

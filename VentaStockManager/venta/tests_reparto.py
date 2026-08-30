@@ -189,6 +189,12 @@ class RepartoFlujoTests(TestCase):
             ).exists()
         )
 
+        mapa_admin = self.client.get(reverse('reparto_panel'))
+        self.assertEqual(mapa_admin.status_code, 200)
+        self.assertContains(mapa_admin, 'Mapa general de repartos')
+        self.assertContains(mapa_admin, 'Cliente Con dirección')
+        self.assertContains(mapa_admin, 'Otro Cliente')
+
     def test_vendedor_no_puede_asignar_pedidos(self):
         pedido = self._crear_venta().pedido
         self.client.force_login(self.usuario_vendedor)
@@ -266,7 +272,7 @@ class RepartoFlujoTests(TestCase):
     def test_repartidor_puede_iniciar_y_cerrar_sesion(self):
         login = self.client.get(reverse('login'))
         self.assertEqual(login.status_code, 200)
-        self.assertContains(login, 'Acceso de repartidores')
+        self.assertContains(login, 'Acceso al sistema')
 
         acceso = self.client.post(reverse('login'), {
             'username': self.usuario_repartidor.username,
@@ -281,6 +287,24 @@ class RepartoFlujoTests(TestCase):
         salida = self.client.post(reverse('logout'))
         self.assertRedirects(
             salida,
+            reverse('login'),
+            fetch_redirect_response=False,
+        )
+
+        acceso_admin = self.client.post(reverse('login'), {
+            'username': self.admin.username,
+            'password': 'x',
+        })
+        self.assertRedirects(
+            acceso_admin,
+            reverse('admin:index'),
+            fetch_redirect_response=False,
+        )
+
+        self.client.logout()
+        acceso_admin_anterior = self.client.get('/admin/login/')
+        self.assertRedirects(
+            acceso_admin_anterior,
             reverse('login'),
             fetch_redirect_response=False,
         )

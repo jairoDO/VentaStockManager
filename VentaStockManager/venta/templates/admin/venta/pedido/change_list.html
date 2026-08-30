@@ -9,6 +9,13 @@ en una sola línea ves cuánto debería estar en efectivo.
 El contexto `resumen_cobranza` lo inyecta `PedidoAdmin.changelist_view`.
 {% endcomment %}
 
+{% block object-tools-items %}
+  {% if request.user.is_superuser %}
+    <li><a href="{% url 'reparto_panel' %}">🗺 Ver mapa de repartos</a></li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}
+
 {% block result_list %}
   {% if resumen_cobranza %}
     <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;

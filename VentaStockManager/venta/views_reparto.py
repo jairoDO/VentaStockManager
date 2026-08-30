@@ -8,9 +8,11 @@ from zoneinfo import ZoneInfo
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.contrib.auth.views import LoginView
 from django.db import transaction
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -23,6 +25,25 @@ ZONA_HORARIA_OPERATIVA = ZoneInfo('America/Argentina/Cordoba')
 
 def _fecha_hoy_operativa():
     return datetime.now(ZONA_HORARIA_OPERATIVA).date()
+
+
+class AccesoSistemaView(LoginView):
+    """Login único: redirige según el rol del usuario autenticado."""
+
+    template_name = 'registration/login.html'
+
+    def get_success_url(self):
+        destino_solicitado = self.get_redirect_url()
+        if destino_solicitado:
+            return destino_solicitado
+        if self.request.user.is_superuser or self.request.user.is_staff:
+            return reverse('admin:index')
+        try:
+            if self.request.user.repartidor.activo:
+                return reverse('reparto_panel')
+        except Repartidor.DoesNotExist:
+            pass
+        return reverse('reparto_panel')
 
 
 def _parse_ids(raw: str) -> list[int]:
@@ -116,8 +137,9 @@ def _repartidor_para_request(request):
 
 @login_required(login_url='login')
 def reparto_panel(request):
+    es_admin = request.user.is_superuser
     repartidor = _repartidor_para_request(request)
-    if not repartidor:
+    if not repartidor and not es_admin:
         return HttpResponseForbidden('Este usuario no tiene perfil de repartidor.')
 
     # No usamos timezone.localdate(): este proyecto trabaja con datetimes
@@ -130,19 +152,24 @@ def reparto_panel(request):
         fecha = _fecha_hoy_operativa()
     localidad = (request.GET.get('localidad') or '').strip()
 
-    qs = (
+    qs_base = (
         Pedido.objects
-        .filter(repartidor=repartidor, venta__fecha_entrega=fecha)
+        .filter(venta__fecha_entrega=fecha)
         .select_related('venta__cliente', 'venta__vendedor', 'direccion_entrega')
+        .select_related('repartidor__usuario')
         .prefetch_related('venta__ventas__articulo')
         .order_by('localidad_entrega', 'venta__cliente__nombre')
     )
+    if repartidor:
+        qs_base = qs_base.filter(repartidor=repartidor)
+
+    qs = qs_base
     if localidad:
         qs = qs.filter(localidad_entrega=localidad)
     pedidos = list(qs)
 
     localidades = list(
-        Pedido.objects.filter(repartidor=repartidor, venta__fecha_entrega=fecha)
+        qs_base
         .exclude(localidad_entrega='')
         .order_by('localidad_entrega')
         .values_list('localidad_entrega', flat=True)
@@ -156,17 +183,23 @@ def reparto_panel(request):
         'latitud': float(pedido.latitud_entrega) if pedido.latitud_entrega is not None else None,
         'longitud': float(pedido.longitud_entrega) if pedido.longitud_entrega is not None else None,
         'estado': pedido.estado,
+        'repartidor': str(pedido.repartidor) if pedido.repartidor else 'Sin asignar',
     } for pedido in pedidos]
 
     return render(request, 'venta/reparto_panel.html', {
         'repartidor': repartidor,
+        'repartidores': (
+            Repartidor.objects.filter(activo=True).select_related('usuario')
+            if es_admin else []
+        ),
         'pedidos': pedidos,
         'fecha': fecha,
         'localidad_actual': localidad,
         'localidades': localidades,
         'mapa': mapa,
         'motivos_no_entrega': Pedido.MOTIVO_NO_ENTREGA_CHOICES,
-        'es_vista_admin': request.user.is_superuser,
+        'es_vista_admin': es_admin,
+        'es_vista_general': es_admin and repartidor is None,
     })
 
 
