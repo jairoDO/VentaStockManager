@@ -1,4 +1,5 @@
 from typing import Iterable
+from django.conf import settings
 from django.db import models
 
 # Create your models here.
@@ -6,7 +7,7 @@ from django.db import models
 from cliente.models import Cliente
 from articulo.models import Articulo
 # from vendedor.models import Vendedor
-from vendedor.models import Vendedor
+from vendedor.models import Repartidor, Vendedor
 from django.utils.translation import gettext_lazy as _
 from django.utils.html import format_html
 from datetime import datetime, timedelta
@@ -56,7 +57,16 @@ class Venta(models.Model):
         es_nuevo = self.pk is None
         super().save(*args, **kwargs)
         if es_nuevo:
-            Pedido.objects.get_or_create(venta=self, defaults={'id': self.id})
+            pedido, _ = Pedido.objects.get_or_create(venta=self, defaults={'id': self.id})
+            direccion = self.cliente.direcciones.filter(es_principal=True).first()
+            if direccion:
+                pedido.aplicar_direccion(direccion)
+                pedido.save(update_fields=[
+                    'direccion_entrega', 'direccion_entrega_texto',
+                    'localidad_entrega', 'provincia_entrega',
+                    'referencia_entrega', 'latitud_entrega',
+                    'longitud_entrega', 'direccion_confirmada',
+                ])
             # Auto-resolución de alertas de inactividad: si este cliente
             # tenía una alerta pendiente por "dejó de comprar", el hecho
             # de registrar una venta nueva la cierra automáticamente.
@@ -388,18 +398,80 @@ class AlertaStock(models.Model):
 
 class Pedido(models.Model):
     PENDIENTE = 'Pendiente'
+    ASIGNADO = 'Asignado'
+    EN_REPARTO = 'En reparto'
     ENTREGADO = 'Entregado'
+    NO_ENTREGADO = 'No entregado'
+    REPROGRAMADO = 'Reprogramado'
     LISTO_PARA_RETIRAR = 'Listo para retirar'
 
     ESTADO_CHOICES = [
         (PENDIENTE, 'Pendiente'),
+        (ASIGNADO, 'Asignado'),
+        (EN_REPARTO, 'En reparto'),
         (ENTREGADO, 'Entregado'),
+        (NO_ENTREGADO, 'No entregado'),
+        (REPROGRAMADO, 'Reprogramado'),
         (LISTO_PARA_RETIRAR, 'Listo para retirar'),
+    ]
+
+    MOTIVO_AUSENTE = 'cliente_ausente'
+    MOTIVO_DIRECCION = 'direccion_incorrecta'
+    MOTIVO_RECHAZADO = 'rechazado'
+    MOTIVO_FALTANTE = 'faltante_danado'
+    MOTIVO_OTRO = 'otro'
+    MOTIVO_NO_ENTREGA_CHOICES = [
+        (MOTIVO_AUSENTE, 'Cliente ausente'),
+        (MOTIVO_DIRECCION, 'Dirección incorrecta o no encontrada'),
+        (MOTIVO_RECHAZADO, 'Cliente rechazó el pedido'),
+        (MOTIVO_FALTANTE, 'Faltantes o productos dañados'),
+        (MOTIVO_OTRO, 'Otro'),
     ]
 
     venta = models.OneToOneField(Venta, on_delete=models.CASCADE, related_name='pedido')
     pagado = models.BooleanField(default=False)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=PENDIENTE)
+    direccion_entrega = models.ForeignKey(
+        'cliente.DireccionCliente',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='pedidos',
+    )
+    direccion_entrega_texto = models.CharField(max_length=255, blank=True, default='')
+    localidad_entrega = models.CharField(max_length=120, blank=True, default='')
+    provincia_entrega = models.CharField(max_length=120, blank=True, default='')
+    referencia_entrega = models.TextField(blank=True, default='')
+    latitud_entrega = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+    )
+    longitud_entrega = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+    )
+    direccion_confirmada = models.BooleanField(default=False)
+    repartidor = models.ForeignKey(
+        Repartidor,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='pedidos',
+    )
+    asignado_en = models.DateTimeField(null=True, blank=True)
+    entregado_en = models.DateTimeField(null=True, blank=True)
+    motivo_no_entrega = models.CharField(
+        max_length=40,
+        choices=MOTIVO_NO_ENTREGA_CHOICES,
+        blank=True,
+        default='',
+    )
+    observacion_entrega = models.TextField(blank=True, default='')
+    actualizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='pedidos_entrega_actualizados',
+    )
     # Monto efectivamente cobrado por la acción "Registrar pago" (ya sea
     # bulk desde el listado o desde el detalle del pedido). NULL = nunca
     # se registró pago por esta vía. Cualquier valor (incluso 0) = ya se
@@ -535,3 +607,84 @@ class Pedido(models.Model):
         self.save(update_fields=['monto_pagado', 'pagado'])
         return resultado
 
+    @property
+    def tiene_coordenadas_entrega(self):
+        return self.latitud_entrega is not None and self.longitud_entrega is not None
+
+    def aplicar_direccion(self, direccion):
+        """Copia la dirección elegida para que el pedido sea histórico."""
+        self.direccion_entrega = direccion
+        self.direccion_entrega_texto = direccion.direccion_texto
+        self.localidad_entrega = direccion.localidad
+        self.provincia_entrega = direccion.provincia
+        self.referencia_entrega = direccion.referencia
+        self.latitud_entrega = direccion.latitud
+        self.longitud_entrega = direccion.longitud
+        self.direccion_confirmada = direccion.confirmada
+
+    def cambiar_estado_entrega(
+        self,
+        nuevo_estado,
+        *,
+        usuario=None,
+        motivo='',
+        observacion='',
+    ):
+        """Actualiza el estado logístico y deja una entrada auditable."""
+        from django.utils import timezone
+
+        estados_validos = {value for value, _ in self.ESTADO_CHOICES}
+        if nuevo_estado not in estados_validos:
+            raise ValueError(f'Estado de pedido inválido: {nuevo_estado}')
+        if nuevo_estado == self.NO_ENTREGADO and not motivo:
+            raise ValueError('Indicá el motivo por el que no se entregó.')
+
+        anterior = self.estado
+        self.estado = nuevo_estado
+        self.actualizado_por = usuario if getattr(usuario, 'is_authenticated', False) else None
+        self.motivo_no_entrega = motivo if nuevo_estado == self.NO_ENTREGADO else ''
+        self.observacion_entrega = observacion
+        if nuevo_estado == self.ENTREGADO:
+            self.entregado_en = timezone.now()
+        elif anterior == self.ENTREGADO:
+            self.entregado_en = None
+        self.save(update_fields=[
+            'estado', 'actualizado_por', 'motivo_no_entrega',
+            'observacion_entrega', 'entregado_en',
+        ])
+        PedidoEstadoHistorial.objects.create(
+            pedido=self,
+            estado_anterior=anterior,
+            estado_nuevo=nuevo_estado,
+            usuario=self.actualizado_por,
+            motivo=motivo,
+            observacion=observacion,
+        )
+
+
+class PedidoEstadoHistorial(models.Model):
+    pedido = models.ForeignKey(
+        Pedido,
+        related_name='historial_estados',
+        on_delete=models.CASCADE,
+    )
+    estado_anterior = models.CharField(max_length=20, blank=True, default='')
+    estado_nuevo = models.CharField(max_length=20)
+    motivo = models.CharField(max_length=40, blank=True, default='')
+    observacion = models.TextField(blank=True, default='')
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='historial_estados_pedido',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('-creado_en',)
+        verbose_name = 'historial de estado de pedido'
+        verbose_name_plural = 'historial de estados de pedidos'
+
+    def __str__(self):
+        return f'Pedido #{self.pedido_id}: {self.estado_anterior} → {self.estado_nuevo}'

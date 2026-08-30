@@ -293,7 +293,12 @@ def generar_pdf_pedidos_(request, pedido_ids=None):
 
         # Información del cliente
         cliente_info = f"Cliente: {pedido.venta.cliente.nombre_completo()}"
-        direccion = f" Dirección: {pedido.venta.cliente.direccion} "
+        direccion_pedido = (
+            pedido.direccion_entrega_texto
+            or pedido.venta.cliente.direccion
+            or ''
+        )
+        direccion = f" Dirección: {direccion_pedido} "
         fecha_compra = f"Fecha de Compra: {pedido.venta.fecha_compra.strftime('%Y-%m-%d')} "
         fecha_entrega = f"Fecha de Entrega: {pedido.venta.fecha_entrega.strftime('%Y-%m-%d')}\n"
         
@@ -494,7 +499,11 @@ def generar_pdf_pedidos(request, pedido_ids=None):
         data_cliente = [
             ['Compra:', pedido.venta.fecha_compra],
             ['Entrega:', pedido.venta.fecha_entrega],
-            ['Dirección:', pedido.venta.cliente.direccion],
+            ['Dirección:', (
+                pedido.direccion_entrega_texto
+                or pedido.venta.cliente.direccion
+                or ''
+            )],
             ['Cliente:', pedido.venta.cliente.nombre_completo()],
             ['Vendedor:', nombre_vendedor],
         ]

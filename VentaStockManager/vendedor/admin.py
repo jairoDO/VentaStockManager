@@ -1,10 +1,10 @@
 from django.contrib import admin
 # Register your models here.
-from vendedor.models import Vendedor
+from vendedor.models import Repartidor, Vendedor
 from django.urls import reverse
 from django.utils.html import format_html
 
-from cliente.admin_permissions import StaffFullAccessAdminMixin
+from cliente.admin_permissions import StaffFullAccessAdminMixin, SuperuserOnlyAdminMixin
 
 
 class VendedorAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
@@ -76,3 +76,22 @@ class VendedorAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 # La registración en el admin_site custom (MaterialAdminSite) se hace
 # en VentaStockManager/admin.py para que aparezca en /admin/.
 admin.site.register(Vendedor, VendedorAdmin)
+
+
+class RepartidorAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
+    icon_name = 'local_shipping'
+    list_display = ('nombre_visible', 'usuario', 'telefono', 'activo', 'abrir_repartos')
+    list_filter = ('activo',)
+    search_fields = ('nombre', 'usuario__username', 'usuario__first_name', 'usuario__last_name')
+    raw_id_fields = ('usuario',)
+
+    def nombre_visible(self, obj):
+        return str(obj)
+    nombre_visible.short_description = 'Repartidor'
+
+    def abrir_repartos(self, obj):
+        return format_html('<a href="{}?repartidor_id={}">Ver repartos</a>', reverse('reparto_panel'), obj.pk)
+    abrir_repartos.short_description = 'Repartos'
+
+
+admin.site.register(Repartidor, RepartidorAdmin)

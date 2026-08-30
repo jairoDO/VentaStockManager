@@ -1,6 +1,6 @@
 {% comment %}
 Gestión de usuarios — pantalla Alpine + Tailwind para que el
-superusuario cree/desactive vendedores y otros admins.
+superusuario cree/desactive vendedores, repartidores y otros admins.
 
 Por qué no usamos el admin clásico de auth.User: tiene 20+ campos
 y permisos granulares que confunden. Acá hay 3 campos + 1 toggle.
@@ -36,9 +36,8 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
       <span>👥</span> <span>Gestión de usuarios</span>
     </h1>
     <p class="text-sm text-slate-500 mt-1">
-      Creá vendedores y otros administradores. Los vendedores pueden cargar
-      ventas y gestionar clientes; no ven cuentas corrientes, listas de
-      precios, WhatsApp ni configuración.
+      Creá vendedores, repartidores y otros administradores. Cada rol accede
+      solamente a las herramientas que necesita.
     </p>
   </div>
 
@@ -79,7 +78,7 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
     {# Selector de tipo #}
     <div class="mb-5">
       <label class="block font-semibold text-slate-800 mb-2">Tipo de usuario</label>
-      <div class="grid grid-cols-2 gap-2">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <label class="cursor-pointer">
           <input type="radio" name="tipo" value="vendedor"
                  x-model="tipo" class="sr-only">
@@ -88,6 +87,16 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
             <div class="text-2xl mb-1">👔</div>
             <div class="font-semibold text-sm">Vendedor</div>
             <div class="text-xs opacity-80 mt-1">Carga ventas, gestiona clientes</div>
+          </div>
+        </label>
+        <label class="cursor-pointer">
+          <input type="radio" name="tipo" value="repartidor"
+                 x-model="tipo" class="sr-only">
+          <div :class="tipo === 'repartidor' ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-300'"
+               class="border-2 rounded-lg p-3 text-center transition">
+            <div class="text-2xl mb-1">🚚</div>
+            <div class="font-semibold text-sm">Repartidor</div>
+            <div class="text-xs opacity-80 mt-1">Ve y actualiza sus entregas</div>
           </div>
         </label>
         <label class="cursor-pointer">
@@ -171,8 +180,8 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
       </button>
       <button type="submit"
               class="flex-1 sm:flex-initial sm:ml-auto px-6 py-3 rounded-lg text-white font-semibold shadow-sm transition"
-              :class="tipo === 'superuser' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'">
-        <span x-text="tipo === 'superuser' ? 'Crear superusuario' : 'Crear vendedor'"></span>
+              :class="tipo === 'superuser' ? 'bg-purple-600 hover:bg-purple-700' : (tipo === 'repartidor' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700')">
+        <span x-text="tipo === 'superuser' ? 'Crear superusuario' : (tipo === 'repartidor' ? 'Crear repartidor' : 'Crear vendedor')"></span>
       </button>
     </div>
   </form>
@@ -193,7 +202,7 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
           <div class="flex items-start gap-3">
             {# Avatar/ícono según tipo #}
             <div class="text-2xl flex-shrink-0">
-              {% if u.is_superuser %}👑{% else %}👔{% endif %}
+              {% if u.is_superuser %}👑{% elif u.es_repartidor %}🚚{% else %}👔{% endif %}
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
@@ -203,6 +212,8 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
                 {% endif %}
                 {% if u.is_superuser %}
                   <span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">Superusuario</span>
+                {% elif u.es_repartidor %}
+                  <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Repartidor</span>
                 {% else %}
                   <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Vendedor</span>
                 {% endif %}
@@ -222,6 +233,9 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
               {% if u.vendedor_nombre %}
                 <div class="text-xs text-slate-400 mt-0.5">Vendedor asociado: {{ u.vendedor_nombre }}</div>
               {% endif %}
+              {% if u.repartidor_nombre %}
+                <div class="text-xs text-slate-400 mt-0.5">Panel: <a class="text-blue-600 underline" href="/reparto/">/reparto/</a></div>
+              {% endif %}
               <div class="text-xs text-slate-400 mt-0.5">
                 {% if u.last_login %}
                   Último login: {{ u.last_login|date:"d/m/y H:i" }}
@@ -235,14 +249,16 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
             {% if not u.es_yo_mismo %}
             <div class="flex flex-wrap gap-1 flex-shrink-0">
               {# Cambiar tipo #}
-              <form method="post" action="/usuarios/{{ u.id }}/cambiar-tipo/" class="inline">
-                {% csrf_token %}
-                <button type="submit"
-                        title="{% if u.is_superuser %}Convertir a vendedor{% else %}Convertir a superusuario{% endif %}"
-                        class="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded">
-                  ↔ Tipo
-                </button>
-              </form>
+              {% if not u.es_repartidor %}
+                <form method="post" action="/usuarios/{{ u.id }}/cambiar-tipo/" class="inline">
+                  {% csrf_token %}
+                  <button type="submit"
+                          title="{% if u.is_superuser %}Convertir a vendedor{% else %}Convertir a superusuario{% endif %}"
+                          class="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded">
+                    ↔ Tipo
+                  </button>
+                </form>
+              {% endif %}
               {# Resetear password #}
               <button @click="resetPasswordUsuario = {{ u.id }}; nuevaPassword = ''"
                       title="Resetear contraseña"
@@ -299,7 +315,7 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
   </div>
 
   <div class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900">
-    <strong>💡 Tip:</strong> Si un vendedor se olvida su contraseña, usá el botón
+    <strong>💡 Tip:</strong> Si un usuario se olvida su contraseña, usá el botón
     "🔑 Contraseña" para setearle una nueva y pasársela.
     Si alguien dejó la empresa, "🚫 Desactivar" lo bloquea sin perder su historial
     de ventas (queda en la DB para auditoría).

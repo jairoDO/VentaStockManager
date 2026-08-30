@@ -396,9 +396,10 @@ admin_site.register(ConfiguracionGeneral, ConfiguracionGeneralAdmin)
 # aparecía en /admin/ (el operador no podía ver/editar nombre+apellido
 # que ahora salen entre paréntesis en el PDF del pedido). Lo exponemos
 # en el admin custom.
-from vendedor.models import Vendedor
-from vendedor.admin import VendedorAdmin
+from vendedor.models import Repartidor, Vendedor
+from vendedor.admin import RepartidorAdmin, VendedorAdmin
 admin_site.register(Vendedor, VendedorAdmin)
+admin_site.register(Repartidor, RepartidorAdmin)
 
 # django-q2: registra Schedule (cron), Success (tasks OK) y Failure
 # (tasks fallidas) en el admin_site custom. Sin esto, las URLs

@@ -24,16 +24,22 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from articulo.models import Articulo
-from cliente.models import Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente
+from cliente.models import (
+    Cliente,
+    CuentaCliente,
+    DireccionCliente,
+    MovimientoCuenta,
+    PrecioCliente,
+)
 from vendedor.models import Vendedor
-from venta.models import AlertaStock, ArticuloVenta, Venta
+from venta.models import AlertaStock, ArticuloVenta, Pedido, Venta
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +60,33 @@ def _vendedor_for_user(user):
         return None
     vendedor = Vendedor.objects.filter(usuario=user).only('id').first()
     return vendedor.id if vendedor else None
+
+
+def _direccion_to_dict(direccion: DireccionCliente | None) -> dict | None:
+    if not direccion:
+        return None
+    return {
+        'id': direccion.id,
+        'etiqueta': direccion.etiqueta,
+        'direccion_texto': direccion.direccion_texto,
+        'localidad': direccion.localidad,
+        'provincia': direccion.provincia,
+        'referencia': direccion.referencia,
+        'latitud': str(direccion.latitud) if direccion.latitud is not None else '',
+        'longitud': str(direccion.longitud) if direccion.longitud is not None else '',
+        'precision_metros': direccion.precision_metros,
+        'fuente': direccion.fuente,
+        'confirmada': direccion.confirmada,
+        'es_principal': direccion.es_principal,
+        'tiene_coordenadas': direccion.tiene_coordenadas,
+    }
+
+
+def _direccion_principal(cliente: Cliente) -> DireccionCliente | None:
+    precargadas = getattr(cliente, '_direcciones_ordenadas', None)
+    if precargadas is not None:
+        return precargadas[0] if precargadas else None
+    return cliente.direcciones.order_by('-es_principal', '-actualizada_en').first()
 
 
 def _decimal_or_400(raw, *, field, errores, allow_negative=False):
@@ -374,6 +407,17 @@ def api_cliente_crear(request):
     )
     cliente.save()
 
+    direccion_obj = None
+    if direccion:
+        direccion_obj = DireccionCliente.objects.create(
+            cliente=cliente,
+            etiqueta='Principal',
+            direccion_texto=direccion,
+            fuente=DireccionCliente.FUENTE_MANUAL,
+            confirmada=False,
+            es_principal=True,
+        )
+
     return JsonResponse({
         'ok': True,
         'cliente': {
@@ -382,6 +426,7 @@ def api_cliente_crear(request):
             'direccion': cliente.direccion or '',
             'telefono': cliente.telefono or '',
             'saldo': '0',
+            'direccion_principal': _direccion_to_dict(direccion_obj),
         },
         'duplicado_warning': (
             f'Ya existía un cliente "{duplicado_existente.nombre_completo()}" '
@@ -408,6 +453,11 @@ def api_clientes_buscar(request):
     qs = (
         Cliente.objects
         .select_related('cuenta')
+        .prefetch_related(Prefetch(
+            'direcciones',
+            queryset=DireccionCliente.objects.order_by('-es_principal', '-actualizada_en'),
+            to_attr='_direcciones_ordenadas',
+        ))
         .filter(
             Q(nombre__icontains=q)
             | Q(apellido__icontains=q)
@@ -416,14 +466,18 @@ def api_clientes_buscar(request):
         .order_by('nombre', 'apellido')[:20]
     )
 
-    results = [{
-        'id': c.id,
-        'nombre': c.nombre_completo(),
-        'direccion': c.direccion or '',
-        'telefono': c.telefono or '',
-        'whatsapp_number': c.whatsapp_number or '',
-        'saldo': str(c.saldo),
-    } for c in qs]
+    results = []
+    for c in qs:
+        direccion_principal = _direccion_principal(c)
+        results.append({
+            'id': c.id,
+            'nombre': c.nombre_completo(),
+            'direccion': c.direccion or '',
+            'telefono': c.telefono or '',
+            'whatsapp_number': c.whatsapp_number or '',
+            'saldo': str(c.saldo),
+            'direccion_principal': _direccion_to_dict(direccion_principal),
+        })
     return JsonResponse({'results': results})
 
 
@@ -478,7 +532,11 @@ def api_cliente_saldo(request, cliente_id):
     explícita del operador, no automática).
     """
     cliente = get_object_or_404(
-        Cliente.objects.select_related('cuenta'),
+        Cliente.objects.select_related('cuenta').prefetch_related(Prefetch(
+            'direcciones',
+            queryset=DireccionCliente.objects.order_by('-es_principal', '-actualizada_en'),
+            to_attr='_direcciones_ordenadas',
+        )),
         pk=cliente_id,
     )
     return JsonResponse({
@@ -492,6 +550,127 @@ def api_cliente_saldo(request, cliente_id):
         'whatsapp_number': cliente.whatsapp_number or '',
         'telefono': cliente.telefono or '',
         'listas_activas': _listas_activas_de_cliente(cliente),
+        'direccion_principal': _direccion_to_dict(_direccion_principal(cliente)),
+        'direcciones': [
+            _direccion_to_dict(direccion)
+            for direccion in cliente._direcciones_ordenadas
+        ],
+    })
+
+
+@login_required
+@require_POST
+def api_cliente_direccion_guardar(request, cliente_id):
+    """Crea o actualiza una dirección confirmada desde la venta."""
+    try:
+        payload = json.loads(request.body or b'{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON inválido'}, status=400)
+
+    cliente = get_object_or_404(Cliente, pk=cliente_id)
+    direccion_id = payload.get('id')
+    direccion_texto = (payload.get('direccion_texto') or '').strip()
+    localidad = (payload.get('localidad') or '').strip()
+    provincia = (payload.get('provincia') or '').strip()
+    referencia = (payload.get('referencia') or '').strip()
+    etiqueta = (payload.get('etiqueta') or 'Principal').strip()
+    fuente = payload.get('fuente') or DireccionCliente.FUENTE_MANUAL
+    if fuente not in dict(DireccionCliente.FUENTE_CHOICES):
+        fuente = DireccionCliente.FUENTE_MANUAL
+
+    if not direccion_texto:
+        return JsonResponse(
+            {'ok': False, 'error': 'La dirección es obligatoria.'},
+            status=400,
+        )
+
+    def decimal_coordenada(nombre, minimo, maximo):
+        raw = payload.get(nombre)
+        if raw in (None, ''):
+            return None
+        try:
+            valor = Decimal(str(raw))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError(f'{nombre}: coordenada inválida')
+        if valor < minimo or valor > maximo:
+            raise ValueError(f'{nombre}: fuera de rango')
+        return valor
+
+    try:
+        latitud = decimal_coordenada('latitud', Decimal('-90'), Decimal('90'))
+        longitud = decimal_coordenada('longitud', Decimal('-180'), Decimal('180'))
+        precision_raw = payload.get('precision_metros')
+        precision = int(round(float(precision_raw))) if precision_raw not in (None, '') else None
+        if precision is not None and precision < 0:
+            raise ValueError('precision_metros: debe ser positiva')
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({'ok': False, 'error': str(exc)}, status=400)
+
+    if (latitud is None) != (longitud is None):
+        return JsonResponse(
+            {'ok': False, 'error': 'Latitud y longitud deben cargarse juntas.'},
+            status=400,
+        )
+
+    pedidos_actualizados = 0
+    with transaction.atomic():
+        if direccion_id:
+            direccion = get_object_or_404(
+                DireccionCliente.objects.select_for_update(),
+                pk=direccion_id,
+                cliente=cliente,
+            )
+        else:
+            direccion = DireccionCliente(cliente=cliente)
+        DireccionCliente.objects.filter(
+            cliente=cliente,
+            es_principal=True,
+        ).exclude(pk=direccion.pk).update(es_principal=False)
+        direccion.etiqueta = etiqueta
+        direccion.direccion_texto = direccion_texto
+        direccion.localidad = localidad
+        direccion.provincia = provincia
+        direccion.referencia = referencia
+        direccion.latitud = latitud
+        direccion.longitud = longitud
+        direccion.precision_metros = precision
+        direccion.fuente = fuente
+        direccion.es_principal = True
+        direccion.confirmar(usuario=request.user)
+        direccion.save()
+
+        # Compatibilidad con el resto de la aplicación mientras migra a
+        # DireccionCliente: el texto principal sigue disponible acá.
+        cliente.direccion = direccion_texto
+        cliente.save(update_fields=['direccion'])
+
+        # Los pedidos abiertos importados desde producción pueden haber
+        # quedado con la dirección legacy sin confirmar. Actualizamos solo
+        # esos snapshots pendientes; nunca pisamos una dirección ya
+        # confirmada ni un reparto finalizado/listo para retirar.
+        pedidos_actualizados = (
+            Pedido.objects
+            .filter(
+                venta__cliente=cliente,
+                direccion_confirmada=False,
+            )
+            .exclude(estado__in=[Pedido.ENTREGADO, Pedido.LISTO_PARA_RETIRAR])
+            .update(
+                direccion_entrega=direccion,
+                direccion_entrega_texto=direccion.direccion_texto,
+                localidad_entrega=direccion.localidad,
+                provincia_entrega=direccion.provincia,
+                referencia_entrega=direccion.referencia,
+                latitud_entrega=direccion.latitud,
+                longitud_entrega=direccion.longitud,
+                direccion_confirmada=True,
+            )
+        )
+
+    return JsonResponse({
+        'ok': True,
+        'direccion': _direccion_to_dict(direccion),
+        'pedidos_actualizados': pedidos_actualizados,
     })
 
 
@@ -565,6 +744,7 @@ def api_venta_guardar(request):
 
     venta_id = payload.get('id')
     cliente_id = payload.get('cliente_id')
+    direccion_id = payload.get('direccion_id')
     vendedor_id = payload.get('vendedor_id') or _vendedor_for_user(request.user)
     fecha_compra = payload.get('fecha_compra')
     fecha_entrega = payload.get('fecha_entrega')
@@ -622,6 +802,7 @@ def api_venta_guardar(request):
     # Validamos cliente/vendedor existen ANTES de entrar a la
     # transacción, para devolver el 400 más informativo posible.
     cliente = None
+    direccion = None
     vendedor = None
     if cliente_id:
         cliente = Cliente.objects.filter(pk=cliente_id).first()
@@ -642,6 +823,20 @@ def api_venta_guardar(request):
                     f'El cliente {cliente.nombre_completo()} no tiene WhatsApp cargado. '
                     f'Completá el campo antes de guardar la venta.'
                 )
+        if cliente:
+            if direccion_id:
+                direccion = DireccionCliente.objects.filter(
+                    pk=direccion_id,
+                    cliente=cliente,
+                ).first()
+                if not direccion:
+                    errores.append(
+                        'La dirección seleccionada no pertenece al cliente.'
+                    )
+            else:
+                direccion = cliente.direcciones.filter(
+                    es_principal=True,
+                ).first()
     if vendedor_id:
         vendedor = Vendedor.objects.filter(pk=vendedor_id).first()
         if not vendedor:
@@ -711,6 +906,7 @@ def api_venta_guardar(request):
                     .select_for_update()
                     .get(pk=venta_id)
                 )
+                cliente_anterior_id = venta.cliente_id
                 venta.cliente = cliente
                 venta.vendedor = vendedor
                 venta.fecha_compra = fecha_compra
@@ -727,6 +923,34 @@ def api_venta_guardar(request):
                     descuento_porcentaje=descuento_pct or Decimal('0'),
                     descuento_motivo=descuento_motivo,
                 )
+                cliente_anterior_id = cliente.id
+
+            pedido = venta.pedido
+            if direccion:
+                pedido.aplicar_direccion(direccion)
+                pedido.save(update_fields=[
+                    'direccion_entrega', 'direccion_entrega_texto',
+                    'localidad_entrega', 'provincia_entrega',
+                    'referencia_entrega', 'latitud_entrega',
+                    'longitud_entrega', 'direccion_confirmada',
+                ])
+            elif cliente_anterior_id != cliente.id:
+                # Al cambiar el cliente en un edit no dejamos pegada la
+                # dirección del cliente anterior.
+                pedido.direccion_entrega = None
+                pedido.direccion_entrega_texto = cliente.direccion or ''
+                pedido.localidad_entrega = ''
+                pedido.provincia_entrega = ''
+                pedido.referencia_entrega = ''
+                pedido.latitud_entrega = None
+                pedido.longitud_entrega = None
+                pedido.direccion_confirmada = False
+                pedido.save(update_fields=[
+                    'direccion_entrega', 'direccion_entrega_texto',
+                    'localidad_entrega', 'provincia_entrega',
+                    'referencia_entrega', 'latitud_entrega',
+                    'longitud_entrega', 'direccion_confirmada',
+                ])
 
             # Index de items existentes para resolver updates/deletes
             # con un solo query, en vez de uno por línea.
@@ -748,6 +972,11 @@ def api_venta_guardar(request):
             # la administración pueda investigar después en una
             # bandeja de entrada propia (`/admin/venta/alertastock/`).
             warnings_list: list[str] = []
+            if not pedido.direccion_confirmada:
+                warnings_list.append(
+                    'El pedido quedó con dirección pendiente de confirmar. '
+                    'Se puede asignar, pero no aparecerá correctamente en el mapa.'
+                )
             # Diferimos la creación de AlertaStock hasta tener el
             # `venta.pk`. Si es create, el venta ya tiene PK; si es
             # edit también. Pero algunos chequeos de stock se hacen

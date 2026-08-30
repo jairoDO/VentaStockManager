@@ -12,6 +12,8 @@
   {# que estar disponible antes del DOMContentLoaded para que `x-data` #}
   {# se inicialice. defer cumple eso. #}
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen">
 
@@ -163,6 +165,37 @@
     <div x-show="panelWhatsApp.error" x-cloak
          class="mt-2 text-sm text-red-800 bg-red-50 border border-red-200 rounded p-2"
          x-text="panelWhatsApp.error"></div>
+  </div>
+
+  {% comment %}
+  Estado de la dirección de entrega. No bloquea la venta: en datos
+  existentes puede faltar ubicación y el operador debe poder seguir
+  trabajando. Sí deja una advertencia clara y ofrece GPS/mapa inline.
+  {% endcomment %}
+  <div x-show="cliente.id" x-cloak
+       :class="cliente.direccion_principal && cliente.direccion_principal.confirmada
+               ? 'bg-emerald-50 border-emerald-300'
+               : 'bg-amber-50 border-amber-300'"
+       class="border-2 rounded-lg p-4 mb-4">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div>
+        <div class="font-semibold text-sm"
+             :class="cliente.direccion_principal && cliente.direccion_principal.confirmada
+                     ? 'text-emerald-900' : 'text-amber-900'">
+          <span x-show="cliente.direccion_principal && cliente.direccion_principal.confirmada">📍 Dirección confirmada</span>
+          <span x-show="!cliente.direccion_principal || !cliente.direccion_principal.confirmada">⚠ Dirección pendiente de confirmar</span>
+        </div>
+        <p class="text-sm mt-1 text-slate-700"
+           x-text="cliente.direccion_principal?.direccion_texto || 'Este cliente todavía no tiene domicilio cargado.'"></p>
+        <p x-show="cliente.direccion_principal?.localidad" class="text-xs text-slate-500 mt-1"
+           x-text="[cliente.direccion_principal?.localidad, cliente.direccion_principal?.provincia].filter(Boolean).join(', ')"></p>
+      </div>
+      <button type="button" @click="abrirModalDireccion()"
+              class="px-4 py-2 rounded font-medium text-sm bg-white border border-slate-300 hover:bg-slate-50 shadow-sm">
+        <span x-show="!cliente.direccion_principal">Detectar y cargar ubicación</span>
+        <span x-show="cliente.direccion_principal">Revisar ubicación</span>
+      </button>
+    </div>
   </div>
 
   {% comment %}
@@ -641,6 +674,83 @@
       </div>
     </div>
   </div>
+
+  {% comment %}
+  Modal para detectar, revisar y confirmar la dirección del cliente.
+  La ubicación actual solo se solicita cuando el operador pulsa el
+  botón; el navegador muestra su permiso estándar de privacidad.
+  {% endcomment %}
+  <div x-show="modalDireccion.abierto" x-cloak
+       class="fixed inset-0 z-50 flex items-center justify-center p-3">
+    <div class="absolute inset-0 bg-slate-900/60" @click="cerrarModalDireccion()"></div>
+    <div class="relative bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[95vh] overflow-y-auto"
+         @keydown.escape.window="if (modalDireccion.abierto) cerrarModalDireccion()">
+      <div class="px-5 py-4 border-b bg-blue-50 border-blue-200 flex items-start justify-between gap-3">
+        <div>
+          <h3 class="text-lg font-semibold text-blue-950">Confirmar dirección de entrega</h3>
+          <p class="text-xs text-blue-700 mt-1">
+            Detectá la ubicación, revisá el pin y confirmala con el cliente.
+          </p>
+        </div>
+        <button type="button" @click="cerrarModalDireccion()" class="text-slate-500 hover:text-slate-800 text-2xl leading-none">×</button>
+      </div>
+
+      <div class="p-5 space-y-4">
+        <button type="button" @click="usarUbicacionActual()"
+                :disabled="modalDireccion.detectando"
+                class="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium disabled:bg-slate-300">
+          <span x-show="!modalDireccion.detectando">◎ Usar mi ubicación actual</span>
+          <span x-show="modalDireccion.detectando" x-cloak>Detectando ubicación…</span>
+        </button>
+        <span x-show="modalDireccion.precision_metros" class="text-xs text-slate-500 ml-2">
+          Precisión aproximada: <span x-text="Math.round(modalDireccion.precision_metros)"></span> m
+        </span>
+
+        <div x-ref="mapaDireccion" class="w-full h-72 rounded-lg border border-slate-300 bg-slate-100"></div>
+        <p class="text-xs text-slate-500">Podés mover el marcador para corregir el punto exacto.</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-slate-700 mb-1">Dirección completa</label>
+            <input type="text" x-model="modalDireccion.direccion_texto"
+                   placeholder="Calle, número y barrio"
+                   class="w-full border border-slate-300 rounded px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Localidad</label>
+            <input type="text" x-model="modalDireccion.localidad"
+                   class="w-full border border-slate-300 rounded px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Provincia</label>
+            <input type="text" x-model="modalDireccion.provincia"
+                   class="w-full border border-slate-300 rounded px-3 py-2">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-slate-700 mb-1">Referencia para el repartidor</label>
+            <textarea x-model="modalDireccion.referencia" rows="2"
+                      placeholder="Ej. Portón azul, frente a la plaza"
+                      class="w-full border border-slate-300 rounded px-3 py-2"></textarea>
+          </div>
+        </div>
+
+        <div x-show="modalDireccion.error" x-cloak
+             class="text-sm text-red-800 bg-red-50 border border-red-200 rounded p-3"
+             x-text="modalDireccion.error"></div>
+      </div>
+
+      <div class="px-5 py-4 border-t bg-slate-50 flex justify-end gap-2">
+        <button type="button" @click="cerrarModalDireccion()"
+                class="px-4 py-2 text-slate-700 hover:text-slate-950">Cancelar</button>
+        <button type="button" @click="guardarDireccionCliente()"
+                :disabled="modalDireccion.guardando || !modalDireccion.direccion_texto.trim()"
+                class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium disabled:bg-slate-300">
+          <span x-show="!modalDireccion.guardando">Confirmar dirección</span>
+          <span x-show="modalDireccion.guardando" x-cloak>Guardando…</span>
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -678,6 +788,7 @@
         // y se refresca después de actualizar.
         whatsapp_number: '',
         telefono: '',
+        direccion_principal: null,
         // Listas de precios del cliente con descuento > 0. El banner
         // de "aplicar descuento de lista" las muestra como botones.
         // Se llena en `refrescarSaldoCliente`.
@@ -707,6 +818,23 @@
         telefono: '',
         direccion: '',
         error: '',
+      },
+      modalDireccion: {
+        abierto: false,
+        guardando: false,
+        detectando: false,
+        error: '',
+        id: null,
+        direccion_texto: '',
+        localidad: '',
+        provincia: '',
+        referencia: '',
+        latitud: null,
+        longitud: null,
+        precision_metros: null,
+        fuente: 'manual',
+        mapa: null,
+        marcador: null,
       },
       descuentoPorcentaje: 0,
       descuentoMotivo: '',
@@ -829,6 +957,7 @@
         // entre el click y el fetch del endpoint /saldo/.
         this.cliente.whatsapp_number = c.whatsapp_number || '';
         this.cliente.telefono = c.telefono || '';
+        this.cliente.direccion_principal = c.direccion_principal || null;
         this.cliente.listas_activas = [];  // se completa en refrescarSaldoCliente
         this.cliente.dropdownAbierto = false;
         this.cliente.results = [];
@@ -846,6 +975,7 @@
         this.cliente.label = '';
         this.cliente.query = '';
         this.cliente.saldo = '0';
+        this.cliente.direccion_principal = null;
         this.cliente.results = [];
         this.aplicarSaldo = false;
         this.saldoAAplicar = 0;
@@ -907,6 +1037,167 @@
         }
       },
 
+      // ---- Dirección y ubicación del cliente ----
+      abrirModalDireccion() {
+        const actual = this.cliente.direccion_principal || {};
+        this.modalDireccion.abierto = true;
+        this.modalDireccion.guardando = false;
+        this.modalDireccion.detectando = false;
+        this.modalDireccion.error = '';
+        this.modalDireccion.id = actual.id || null;
+        this.modalDireccion.direccion_texto = actual.direccion_texto || '';
+        this.modalDireccion.localidad = actual.localidad || '';
+        this.modalDireccion.provincia = actual.provincia || '';
+        this.modalDireccion.referencia = actual.referencia || '';
+        this.modalDireccion.latitud = actual.latitud ? Number(actual.latitud) : null;
+        this.modalDireccion.longitud = actual.longitud ? Number(actual.longitud) : null;
+        this.modalDireccion.precision_metros = actual.precision_metros || null;
+        this.modalDireccion.fuente = actual.fuente || 'manual';
+        this.$nextTick(() => this.inicializarMapaDireccion());
+      },
+      cerrarModalDireccion() {
+        this.modalDireccion.abierto = false;
+        if (this.modalDireccion.mapa) {
+          this.modalDireccion.mapa.remove();
+          this.modalDireccion.mapa = null;
+          this.modalDireccion.marcador = null;
+        }
+      },
+      inicializarMapaDireccion() {
+        if (!window.L || !this.$refs.mapaDireccion) {
+          this.modalDireccion.error = 'No se pudo cargar el mapa. Revisá la conexión.';
+          return;
+        }
+        if (this.modalDireccion.mapa) this.modalDireccion.mapa.remove();
+        const tienePunto = this.modalDireccion.latitud !== null && this.modalDireccion.longitud !== null;
+        const centro = tienePunto
+          ? [this.modalDireccion.latitud, this.modalDireccion.longitud]
+          : [-31.4201, -64.1888];
+        const mapa = L.map(this.$refs.mapaDireccion).setView(centro, tienePunto ? 17 : 11);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; OpenStreetMap contributors',
+        }).addTo(mapa);
+        this.modalDireccion.mapa = mapa;
+        if (tienePunto) this.colocarMarcadorDireccion(centro[0], centro[1]);
+        mapa.on('click', (event) => {
+          this.modalDireccion.fuente = 'manual';
+          this.modalDireccion.precision_metros = null;
+          this.colocarMarcadorDireccion(event.latlng.lat, event.latlng.lng);
+        });
+        setTimeout(() => mapa.invalidateSize(), 50);
+      },
+      colocarMarcadorDireccion(latitud, longitud) {
+        const m = this.modalDireccion;
+        m.latitud = Number(latitud);
+        m.longitud = Number(longitud);
+        if (!m.mapa) return;
+        if (!m.marcador) {
+          m.marcador = L.marker([m.latitud, m.longitud], {draggable: true}).addTo(m.mapa);
+          m.marcador.on('dragend', (event) => {
+            const punto = event.target.getLatLng();
+            m.latitud = punto.lat;
+            m.longitud = punto.lng;
+            m.fuente = 'manual';
+            m.precision_metros = null;
+          });
+        } else {
+          m.marcador.setLatLng([m.latitud, m.longitud]);
+        }
+        m.mapa.setView([m.latitud, m.longitud], Math.max(m.mapa.getZoom(), 17));
+      },
+      usarUbicacionActual() {
+        const m = this.modalDireccion;
+        m.error = '';
+        if (!navigator.geolocation) {
+          m.error = 'Este dispositivo no permite detectar ubicación. Marcala manualmente en el mapa.';
+          return;
+        }
+        m.detectando = true;
+        navigator.geolocation.getCurrentPosition(
+          async (posicion) => {
+            m.detectando = false;
+            m.precision_metros = posicion.coords.accuracy || null;
+            m.fuente = 'gps';
+            this.colocarMarcadorDireccion(posicion.coords.latitude, posicion.coords.longitude);
+            await this.detectarDireccionDesdeCoordenadas();
+          },
+          (error) => {
+            m.detectando = false;
+            const mensajes = {
+              1: 'No se autorizó la ubicación. Podés buscarla o marcarla manualmente.',
+              2: 'El teléfono no pudo determinar la ubicación.',
+              3: 'La detección tardó demasiado. Intentá nuevamente.',
+            };
+            m.error = mensajes[error.code] || 'No se pudo obtener la ubicación.';
+          },
+          {enableHighAccuracy: true, timeout: 12000, maximumAge: 0},
+        );
+      },
+      async detectarDireccionDesdeCoordenadas() {
+        const m = this.modalDireccion;
+        if (m.latitud === null || m.longitud === null) return;
+        try {
+          const url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2'
+            + `&lat=${encodeURIComponent(m.latitud)}&lon=${encodeURIComponent(m.longitud)}`
+            + '&addressdetails=1&accept-language=es';
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = await r.json();
+          const a = data.address || {};
+          const calle = a.road || a.pedestrian || a.residential || '';
+          const numero = a.house_number || '';
+          m.direccion_texto = [calle, numero].filter(Boolean).join(' ') || data.display_name || '';
+          m.localidad = a.city || a.town || a.village || a.municipality || a.county || '';
+          m.provincia = a.state || '';
+        } catch (e) {
+          m.error = 'Detectamos el punto, pero no pudimos obtener la calle. Completala manualmente.';
+        }
+      },
+      async guardarDireccionCliente() {
+        const m = this.modalDireccion;
+        m.error = '';
+        if (!this.cliente.id) {
+          m.error = 'Seleccioná un cliente primero.';
+          return;
+        }
+        if (!m.direccion_texto.trim()) {
+          m.error = 'Completá la dirección antes de confirmar.';
+          return;
+        }
+        m.guardando = true;
+        try {
+          const r = await fetch(`/venta/api/clientes/${this.cliente.id}/direccion/`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+            body: JSON.stringify({
+              id: m.id,
+              etiqueta: 'Principal',
+              direccion_texto: m.direccion_texto,
+              localidad: m.localidad,
+              provincia: m.provincia,
+              referencia: m.referencia,
+              latitud: m.latitud,
+              longitud: m.longitud,
+              precision_metros: m.precision_metros,
+              fuente: m.fuente,
+            }),
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            m.error = data.error || `Error del servidor (HTTP ${r.status})`;
+            return;
+          }
+          this.cliente.direccion_principal = data.direccion;
+          this.cerrarModalDireccion();
+        } catch (e) {
+          m.error = 'Error de red: ' + (e.message || e);
+        } finally {
+          m.guardando = false;
+        }
+      },
+
       // ---- Cargar WhatsApp del cliente seleccionado ----
       // Política: no se puede crear venta sin WhatsApp. Si el cliente
       // no lo tiene, mostramos un panel inline encima del form para
@@ -963,6 +1254,7 @@
           this.cliente.listas_activas = data.listas_activas || [];
           this.cliente.whatsapp_number = data.whatsapp_number || '';
           this.cliente.telefono = data.telefono || '';
+          this.cliente.direccion_principal = data.direccion_principal || null;
           // Resetear el panel inline cada vez que cambia de cliente,
           // así no aparece pre-llenado con el número del cliente anterior.
           this.panelWhatsApp.nuevoNumero = '';
@@ -1376,6 +1668,7 @@
           const payload = {
             id: this.ventaId || null,
             cliente_id: this.cliente.id,
+            direccion_id: this.cliente.direccion_principal?.id || null,
             vendedor_id: this.vendedorId ? Number(this.vendedorId) : null,
             fecha_compra: this.fechaCompra,
             fecha_entrega: this.fechaEntrega,

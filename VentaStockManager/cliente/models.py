@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from decimal import Decimal
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Sum
@@ -167,6 +168,102 @@ class Cliente(models.Model):
         except CuentaCliente.DoesNotExist:
             return Decimal('0')
         return cuenta.saldo
+
+
+class DireccionCliente(models.Model):
+    """
+    Domicilio reutilizable y geolocalizable de un cliente.
+
+    `Cliente.direccion` se conserva por compatibilidad con pantallas
+    legacy. Las funciones nuevas deben usar este modelo y el Pedido
+    guarda además una copia de la dirección elegida para preservar el
+    historial aunque el cliente cambie de domicilio más adelante.
+    """
+
+    FUENTE_LEGACY = 'legacy'
+    FUENTE_GPS = 'gps'
+    FUENTE_MANUAL = 'manual'
+    FUENTE_GEOCODIFICADA = 'geocodificada'
+    FUENTE_CHOICES = [
+        (FUENTE_LEGACY, 'Importada del campo anterior'),
+        (FUENTE_GPS, 'Ubicación GPS'),
+        (FUENTE_MANUAL, 'Carga manual'),
+        (FUENTE_GEOCODIFICADA, 'Dirección geocodificada'),
+    ]
+
+    cliente = models.ForeignKey(
+        Cliente,
+        related_name='direcciones',
+        on_delete=models.CASCADE,
+    )
+    etiqueta = models.CharField(max_length=60, default='Principal')
+    direccion_texto = models.CharField(max_length=255, blank=True, default='')
+    localidad = models.CharField(max_length=120, blank=True, default='')
+    provincia = models.CharField(max_length=120, blank=True, default='')
+    referencia = models.TextField(blank=True, default='')
+    latitud = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+    )
+    longitud = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+    )
+    precision_metros = models.PositiveIntegerField(null=True, blank=True)
+    fuente = models.CharField(
+        max_length=20,
+        choices=FUENTE_CHOICES,
+        default=FUENTE_MANUAL,
+    )
+    confirmada = models.BooleanField(default=False)
+    es_principal = models.BooleanField(default=False)
+    confirmada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='direcciones_cliente_confirmadas',
+    )
+    confirmada_en = models.DateTimeField(null=True, blank=True)
+    creada_en = models.DateTimeField(auto_now_add=True)
+    actualizada_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('-es_principal', '-actualizada_en')
+        verbose_name = 'dirección de cliente'
+        verbose_name_plural = 'direcciones de clientes'
+        constraints = [
+            models.UniqueConstraint(
+                fields=('cliente',),
+                condition=models.Q(es_principal=True),
+                name='una_direccion_principal_por_cliente',
+            ),
+        ]
+
+    def __str__(self):
+        return self.direccion_texto or f'Dirección de {self.cliente}'
+
+    @property
+    def tiene_coordenadas(self):
+        return self.latitud is not None and self.longitud is not None
+
+    def confirmar(self, *, usuario=None):
+        from django.utils import timezone
+
+        self.confirmada = True
+        self.confirmada_en = timezone.now()
+        self.confirmada_por = usuario if getattr(usuario, 'is_authenticated', False) else None
+
+    def establecer_como_principal(self):
+        DireccionCliente.objects.filter(
+            cliente=self.cliente,
+            es_principal=True,
+        ).exclude(pk=self.pk).update(es_principal=False)
+        self.es_principal = True
 
 
 # ---------------------------------------------------------------------------

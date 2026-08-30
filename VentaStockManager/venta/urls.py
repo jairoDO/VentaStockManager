@@ -21,6 +21,7 @@ from venta.views_nueva import (
     api_clientes_buscar,
     api_cliente_saldo,
     api_cliente_crear,
+    api_cliente_direccion_guardar,
     api_cliente_actualizar_whatsapp,
     api_venta_guardar,
 )
@@ -38,6 +39,11 @@ from venta.views_cobrar import registrar_pago_pedidos
 # Informe diario por vendedor — PDF consolidado disparado por bulk
 # action del PedidoAdmin con ?pedidos_ids=... & tamano=a4|config.
 from venta.views_informe import generar_informe_diario_vendedor
+from venta.views_reparto import (
+    asignar_pedidos_repartidor,
+    reparto_actualizar_estado,
+    reparto_panel,
+)
 
 urlpatterns = [
     # Pantalla nueva de venta (Alpine + Tailwind). Estas rutas tienen
@@ -51,6 +57,7 @@ urlpatterns = [
     path('venta/api/clientes/buscar/', api_clientes_buscar, name='venta_api_clientes_buscar'),
     path('venta/api/clientes/crear/', api_cliente_crear, name='venta_api_cliente_crear'),
     path('venta/api/clientes/<int:cliente_id>/saldo/', api_cliente_saldo, name='venta_api_cliente_saldo'),
+    path('venta/api/clientes/<int:cliente_id>/direccion/', api_cliente_direccion_guardar, name='venta_api_cliente_direccion'),
     path('venta/api/clientes/<int:cliente_id>/whatsapp/', api_cliente_actualizar_whatsapp, name='venta_api_cliente_whatsapp'),
     path('venta/api/guardar/', api_venta_guardar, name='venta_api_guardar'),
 
@@ -91,7 +98,10 @@ urlpatterns = [
     # del PedidoAdmin (A4 y tamaño según FacturaConfiguration).
     path('venta/pedido/informe-diario/', generar_informe_diario_vendedor,
          name='informe_diario_vendedor'),
+    path('venta/pedido/asignar-repartidor/', asignar_pedidos_repartidor,
+         name='asignar_pedidos_repartidor'),
+    path('reparto/', reparto_panel, name='reparto_panel'),
+    path('reparto/pedido/<int:pedido_id>/estado/', reparto_actualizar_estado,
+         name='reparto_actualizar_estado'),
 ]
 # url(r'^/(?P<venta_id>\d+)/detalle/$', views.venta_detalle, name='category-detail'),
-
-  

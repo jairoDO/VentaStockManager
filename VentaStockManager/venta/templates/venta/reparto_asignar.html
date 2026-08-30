@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asignar pedidos a repartidor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <main class="max-w-5xl mx-auto p-4 md:p-8">
+    <header class="flex items-center justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-2xl font-bold">Asignar pedidos a repartidor</h1>
+        <p class="text-sm text-slate-500 mt-1">{{ pedidos|length }} pedido(s) seleccionados.</p>
+      </div>
+      <a href="/admin/venta/pedido/" class="text-sm text-slate-600 underline">Volver a pedidos</a>
+    </header>
+
+    {% if sin_ubicacion %}
+      <div class="mb-5 rounded-lg border-2 border-amber-300 bg-amber-50 p-4 text-amber-900">
+        <strong>⚠ {{ sin_ubicacion }} pedido(s) sin coordenadas confirmadas.</strong>
+        Se pueden asignar, pero no aparecerán correctamente en el mapa del repartidor.
+      </div>
+    {% endif %}
+
+    <form method="post" class="bg-white rounded-xl shadow p-5 mb-6">
+      {% csrf_token %}
+      <input type="hidden" name="pedidos_ids" value="{{ pedidos_ids }}">
+      <label for="repartidor_id" class="block text-sm font-medium text-slate-700 mb-2">Repartidor</label>
+      <div class="flex flex-col sm:flex-row gap-3">
+        <select id="repartidor_id" name="repartidor_id" required
+                class="flex-1 border border-slate-300 rounded px-3 py-2 bg-white">
+          <option value="">Seleccionar repartidor…</option>
+          {% for repartidor in repartidores %}
+            <option value="{{ repartidor.id }}">{{ repartidor }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit"
+                class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded shadow-sm">
+          Asignar {{ pedidos|length }} pedido(s)
+        </button>
+      </div>
+      {% if not repartidores %}
+        <p class="text-sm text-red-700 mt-3">
+          No hay repartidores activos. Creá uno desde el administrador de Repartidores.
+        </p>
+      {% endif %}
+    </form>
+
+    <section class="bg-white rounded-xl shadow overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-100 text-slate-600 text-left">
+            <tr>
+              <th class="px-4 py-3">Pedido</th>
+              <th class="px-4 py-3">Cliente</th>
+              <th class="px-4 py-3">Vendedor</th>
+              <th class="px-4 py-3">Entrega</th>
+              <th class="px-4 py-3">Dirección</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for pedido in pedidos %}
+              <tr class="border-t border-slate-100">
+                <td class="px-4 py-3 font-mono">#{{ pedido.id }}</td>
+                <td class="px-4 py-3 font-medium">{{ pedido.venta.cliente.nombre_completo }}</td>
+                <td class="px-4 py-3">{{ pedido.venta.vendedor.display_name }}</td>
+                <td class="px-4 py-3">{{ pedido.venta.fecha_entrega|date:"d/m/Y" }}</td>
+                <td class="px-4 py-3">
+                  {{ pedido.direccion_entrega_texto|default:"Sin dirección" }}
+                  {% if not pedido.tiene_coordenadas_entrega %}
+                    <span class="block text-xs text-amber-700">Sin coordenadas</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

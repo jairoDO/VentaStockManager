@@ -26,11 +26,12 @@ from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods, require_POST
 
-from vendedor.models import Vendedor
+from vendedor.models import Repartidor, Vendedor
 
 
 def _solo_superuser(u) -> bool:
@@ -41,20 +42,17 @@ def _solo_superuser(u) -> bool:
 @user_passes_test(_solo_superuser, login_url='/admin/login/')
 def lista_usuarios(request: HttpRequest) -> HttpResponse:
     """
-    Pantalla principal: lista todos los usuarios staff + form para
-    crear uno nuevo.
-
-    "Staff" porque a los usuarios sin staff no nos importa mostrarlos
-    acá (típicamente serían usuarios de algún flujo público que no
-    existe en este proyecto, pero por las dudas).
+    Lista usuarios administrativos y repartidores. Los repartidores no
+    son staff porque solo deben entrar al panel móvil de entregas.
     """
     usuarios_qs = (
         User.objects
-        .filter(is_staff=True)
+        .filter(Q(is_staff=True) | Q(repartidor__isnull=False))
+        .distinct()
         .order_by('-is_superuser', 'username')  # superusers primero
         # Vendedor.usuario es OneToOneField → reverse usable con select_related.
         # El accessor en el User es `user.vendedor` (singular, no _set).
-        .select_related('vendedor')
+        .select_related('vendedor', 'repartidor')
     )
     usuarios = []
     for u in usuarios_qs:
@@ -65,6 +63,10 @@ def lista_usuarios(request: HttpRequest) -> HttpResponse:
             vendedor_asociado = u.vendedor
         except Vendedor.DoesNotExist:
             vendedor_asociado = None
+        try:
+            repartidor_asociado = u.repartidor
+        except Repartidor.DoesNotExist:
+            repartidor_asociado = None
         usuarios.append({
             'id': u.id,
             'username': u.username,
@@ -79,7 +81,13 @@ def lista_usuarios(request: HttpRequest) -> HttpResponse:
                 f'{vendedor_asociado.nombre} {vendedor_asociado.apellido}'
                 if vendedor_asociado else ''
             ),
-            'telefono': vendedor_asociado.telefono if vendedor_asociado else '',
+            'repartidor_nombre': str(repartidor_asociado) if repartidor_asociado else '',
+            'es_repartidor': repartidor_asociado is not None,
+            'telefono': (
+                vendedor_asociado.telefono if vendedor_asociado
+                else repartidor_asociado.telefono if repartidor_asociado
+                else ''
+            ),
             'es_yo_mismo': u.id == request.user.id,
         })
 
@@ -102,6 +110,9 @@ def crear_usuario(request: HttpRequest) -> HttpResponse:
       + NO crea Vendedor (los admins no cargan ventas normalmente,
         pero si hace falta lo crean a mano después)
 
+    - tipo=repartidor: User(is_staff=False, is_superuser=False)
+      + crea Repartidor asociado. Solo puede entrar a /reparto/.
+
     Validaciones:
       - username único (Django lo enforce con UniqueConstraint)
       - password mínimo 8 chars
@@ -118,7 +129,7 @@ def crear_usuario(request: HttpRequest) -> HttpResponse:
     telefono = (request.POST.get('telefono') or '').strip()
     tipo = (request.POST.get('tipo') or 'vendedor').lower()
 
-    if tipo not in ('vendedor', 'superuser'):
+    if tipo not in ('vendedor', 'repartidor', 'superuser'):
         tipo = 'vendedor'
 
     # Validaciones simples.
@@ -146,7 +157,7 @@ def crear_usuario(request: HttpRequest) -> HttpResponse:
             first_name=nombre,
             last_name=apellido,
             email=email,
-            is_staff=True,
+            is_staff=(tipo != 'repartidor'),
             is_superuser=(tipo == 'superuser'),
         )
 
@@ -159,8 +170,18 @@ def crear_usuario(request: HttpRequest) -> HttpResponse:
                 telefono=telefono or None,
                 usuario=user,
             )
+        elif tipo == 'repartidor':
+            Repartidor.objects.create(
+                usuario=user,
+                nombre=' '.join(filter(None, (nombre, apellido))),
+                telefono=telefono,
+            )
 
-    tipo_legible = 'Superusuario' if tipo == 'superuser' else 'Vendedor'
+    tipo_legible = {
+        'superuser': 'Superusuario',
+        'repartidor': 'Repartidor',
+        'vendedor': 'Vendedor',
+    }[tipo]
     messages.success(
         request,
         f'✓ {tipo_legible} "{username}" creado. '

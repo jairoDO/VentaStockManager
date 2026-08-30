@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Repartos de {{ repartidor }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>[x-cloak] { display: none !important; }</style>
+</head>
+<body class="bg-slate-100 text-slate-900 min-h-screen">
+  {{ mapa|json_script:"pedidos-mapa" }}
+  <form style="display:none">{% csrf_token %}</form>
+
+  <main x-data="repartoPanel()" x-init="init()" class="max-w-6xl mx-auto p-3 md:p-6">
+    <header class="bg-white rounded-xl shadow-sm p-4 mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div>
+        <p class="text-xs uppercase tracking-wide text-slate-500">Repartidor</p>
+        <h1 class="text-xl font-bold">{{ repartidor }}</h1>
+        <p class="text-sm text-slate-500">{{ pedidos|length }} entrega(s) para {{ fecha|date:"d/m/Y" }}</p>
+      </div>
+      {% if es_vista_admin %}
+        <a href="/admin/venta/pedido/" class="text-sm text-blue-700 underline">Volver al administrador</a>
+      {% else %}
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button type="submit" class="text-sm text-slate-600 underline">Cerrar sesión</button>
+        </form>
+      {% endif %}
+    </header>
+
+    <form method="get" class="bg-white rounded-xl shadow-sm p-4 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {% if es_vista_admin %}<input type="hidden" name="repartidor_id" value="{{ repartidor.id }}">{% endif %}
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">Fecha de entrega</label>
+        <input type="date" name="fecha" value="{{ fecha|date:'Y-m-d' }}"
+               class="w-full border border-slate-300 rounded px-3 py-2">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">Localidad</label>
+        <select name="localidad" class="w-full border border-slate-300 rounded px-3 py-2 bg-white">
+          <option value="">Todas</option>
+          {% for localidad in localidades %}
+            <option value="{{ localidad }}" {% if localidad == localidad_actual %}selected{% endif %}>{{ localidad }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="self-end px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded font-medium">Filtrar</button>
+    </form>
+
+    <div x-show="mensaje" x-cloak
+         :class="mensajeError ? 'bg-red-50 border-red-300 text-red-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'"
+         class="border rounded-lg p-3 mb-4 text-sm" x-text="mensaje"></div>
+
+    <section class="bg-white rounded-xl shadow-sm overflow-hidden mb-4">
+      <div id="mapa-repartos" class="h-72 md:h-96 bg-slate-200"></div>
+    </section>
+
+    <section class="space-y-3">
+      {% for pedido in pedidos %}
+        <article id="pedido-{{ pedido.id }}" class="bg-white rounded-xl shadow-sm p-4 border-l-4
+          {% if pedido.estado == 'Entregado' %}border-emerald-500
+          {% elif pedido.estado == 'No entregado' %}border-red-500
+          {% elif pedido.estado == 'En reparto' %}border-orange-500
+          {% else %}border-blue-500{% endif %}">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="flex flex-wrap items-center gap-2">
+                <h2 class="font-bold text-lg">{{ pedido.venta.cliente.nombre_completo }}</h2>
+                <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-700">{{ pedido.estado }}</span>
+                <span class="text-xs font-mono text-slate-400">#{{ pedido.id }}</span>
+              </div>
+              <p class="text-sm text-slate-700 mt-1">{{ pedido.direccion_entrega_texto|default:"Sin dirección cargada" }}</p>
+              {% if pedido.localidad_entrega %}<p class="text-xs text-slate-500">{{ pedido.localidad_entrega }}, {{ pedido.provincia_entrega }}</p>{% endif %}
+              {% if pedido.referencia_entrega %}<p class="text-xs text-blue-700 mt-1">Referencia: {{ pedido.referencia_entrega }}</p>{% endif %}
+            </div>
+            <span class="text-sm font-semibold">{{ pedido.venta.ventas.count }} renglón(es)</span>
+          </div>
+
+          <div class="mt-4 flex flex-wrap gap-2">
+            {% if pedido.tiene_coordenadas_entrega %}
+              <a href="https://www.google.com/maps/dir/?api=1&destination={{ pedido.latitud_entrega }},{{ pedido.longitud_entrega }}"
+                 target="_blank" rel="noopener"
+                 class="px-3 py-2 bg-blue-50 border border-blue-200 text-blue-800 rounded text-sm font-medium">📍 Navegar</a>
+            {% else %}
+              <span class="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded text-sm">⚠ Sin coordenadas</span>
+            {% endif %}
+            {% if pedido.venta.cliente.telefono %}
+              <a href="tel:{{ pedido.venta.cliente.telefono }}"
+                 class="px-3 py-2 bg-slate-50 border border-slate-200 text-slate-800 rounded text-sm font-medium">☎ Llamar</a>
+            {% endif %}
+            {% if pedido.estado != 'Entregado' %}
+              <button type="button" @click="actualizarEstado({{ pedido.id }}, 'En reparto')"
+                      class="px-3 py-2 bg-orange-100 border border-orange-200 text-orange-900 rounded text-sm font-medium">En reparto</button>
+              <button type="button" @click="actualizarEstado({{ pedido.id }}, 'Entregado')"
+                      class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-sm font-semibold">✓ Entregado</button>
+              <button type="button" @click="abrirNoEntregado({{ pedido.id }})"
+                      class="px-3 py-2 bg-red-50 border border-red-200 text-red-800 rounded text-sm font-medium">No entregado</button>
+            {% endif %}
+          </div>
+        </article>
+      {% empty %}
+        <div class="bg-white rounded-xl shadow-sm p-8 text-center text-slate-500">
+          No hay pedidos asignados para esta fecha y localidad.
+        </div>
+      {% endfor %}
+    </section>
+
+    <div x-show="noEntregado.abierto" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-slate-900/60" @click="cerrarNoEntregado()"></div>
+      <div class="relative bg-white rounded-xl shadow-2xl w-full max-w-md p-5">
+        <h3 class="text-lg font-bold mb-4">Pedido no entregado</h3>
+        <label class="block text-sm font-medium mb-1">Motivo</label>
+        <select x-model="noEntregado.motivo" class="w-full border border-slate-300 rounded px-3 py-2 mb-3">
+          <option value="">Seleccionar…</option>
+          {% for value, label in motivos_no_entrega %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
+        <label class="block text-sm font-medium mb-1">Observación</label>
+        <textarea x-model="noEntregado.observacion" rows="3"
+                  class="w-full border border-slate-300 rounded px-3 py-2"
+                  placeholder="Detalle útil para administración"></textarea>
+        <p x-show="noEntregado.error" x-cloak class="text-sm text-red-700 mt-2" x-text="noEntregado.error"></p>
+        <div class="flex justify-end gap-2 mt-4">
+          <button type="button" @click="cerrarNoEntregado()" class="px-4 py-2 text-slate-700">Cancelar</button>
+          <button type="button" @click="confirmarNoEntregado()"
+                  class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium">Guardar estado</button>
+        </div>
+      </div>
+    </div>
+
+    {% include "partials/_modal_alpine.html" %}
+  </main>
+
+  <script>
+    function cookie(name) {
+      const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+      return match ? decodeURIComponent(match[2]) : '';
+    }
+
+    function repartoPanel() {
+      return {
+        ...modalState(),
+        mapaDatos: [],
+        mapa: null,
+        mensaje: '',
+        mensajeError: false,
+        noEntregado: {abierto: false, pedidoId: null, motivo: '', observacion: '', error: ''},
+        init() {
+          this.mapaDatos = JSON.parse(document.getElementById('pedidos-mapa').textContent || '[]');
+          this.$nextTick(() => this.inicializarMapa());
+        },
+        colorEstado(estado) {
+          if (estado === 'Entregado') return '#059669';
+          if (estado === 'No entregado') return '#dc2626';
+          if (estado === 'En reparto') return '#ea580c';
+          return '#2563eb';
+        },
+        inicializarMapa() {
+          if (!window.L) return;
+          this.mapa = L.map('mapa-repartos').setView([-31.4201, -64.1888], 10);
+          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors',
+          }).addTo(this.mapa);
+          const puntos = [];
+          for (const pedido of this.mapaDatos) {
+            if (pedido.latitud === null || pedido.longitud === null) continue;
+            const color = this.colorEstado(pedido.estado);
+            const icono = L.divIcon({
+              className: '',
+              html: `<div style="width:18px;height:18px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 1px 5px #334155"></div>`,
+              iconSize: [18, 18], iconAnchor: [9, 9],
+            });
+            const contenido = document.createElement('div');
+            const nombre = document.createElement('strong');
+            nombre.textContent = pedido.cliente;
+            contenido.append(nombre, document.createElement('br'));
+            contenido.append(document.createTextNode(pedido.direccion || 'Sin dirección'));
+            contenido.append(document.createElement('br'));
+            contenido.append(document.createTextNode(pedido.estado));
+            L.marker([pedido.latitud, pedido.longitud], {icon: icono})
+              .addTo(this.mapa)
+              .bindPopup(contenido);
+            puntos.push([pedido.latitud, pedido.longitud]);
+          }
+          if (puntos.length) this.mapa.fitBounds(puntos, {padding: [30, 30], maxZoom: 16});
+        },
+        async actualizarEstado(pedidoId, estado, motivo = '', observacion = '') {
+          this.mensaje = '';
+          try {
+            const r = await fetch(`/reparto/pedido/${pedidoId}/estado/`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: {'Content-Type': 'application/json', 'X-CSRFToken': cookie('csrftoken')},
+              body: JSON.stringify({estado, motivo, observacion}),
+            });
+            const data = await r.json();
+            if (!r.ok || !data.ok) {
+              this.mensajeError = true;
+              this.mensaje = data.error || `Error HTTP ${r.status}`;
+              return false;
+            }
+            this.mensajeError = false;
+            this.mensaje = `Pedido #${pedidoId}: ${data.estado_display}`;
+            setTimeout(() => window.location.reload(), 500);
+            return true;
+          } catch (e) {
+            this.mensajeError = true;
+            this.mensaje = 'Error de red: ' + (e.message || e);
+            return false;
+          }
+        },
+        abrirNoEntregado(pedidoId) {
+          this.noEntregado = {abierto: true, pedidoId, motivo: '', observacion: '', error: ''};
+        },
+        cerrarNoEntregado() { this.noEntregado.abierto = false; },
+        async confirmarNoEntregado() {
+          if (!this.noEntregado.motivo) {
+            this.noEntregado.error = 'Seleccioná un motivo.';
+            return;
+          }
+          const ok = await this.actualizarEstado(
+            this.noEntregado.pedidoId,
+            'No entregado',
+            this.noEntregado.motivo,
+            this.noEntregado.observacion,
+          );
+          if (ok) this.cerrarNoEntregado();
+        },
+      };
+    }
+  </script>
+</body>
+</html>

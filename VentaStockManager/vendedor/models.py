@@ -86,3 +86,28 @@ class Vendedor(models.Model):
         verbose_name = "Vendedor"
         verbose_name_plural = "Vendedores"# Create your models here.
 
+
+class Repartidor(models.Model):
+    """
+    Perfil operativo de un usuario que realiza entregas.
+
+    Es independiente de Vendedor a propósito: el mismo User puede tener
+    ambos perfiles cuando una persona vende y también reparte.
+    """
+
+    usuario = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='repartidor',
+    )
+    nombre = models.CharField(max_length=150, blank=True, default='')
+    telefono = models.CharField(max_length=50, blank=True, default='')
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ('nombre', 'usuario__username')
+        verbose_name = 'Repartidor'
+        verbose_name_plural = 'Repartidores'
+
+    def __str__(self):
+        return self.nombre.strip() or self.usuario.get_full_name() or self.usuario.username

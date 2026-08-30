@@ -11,7 +11,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 
 from cliente.models import (
-    Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente,
+    Cliente, CuentaCliente, DireccionCliente, MovimientoCuenta, PrecioCliente,
     AlertaClienteInactivo,
 )
 from cliente.admin_permissions import SuperuserOnlyAdminMixin, StaffFullAccessAdminMixin
@@ -159,6 +159,20 @@ class WhatsappConfiguradoFilter(admin.SimpleListFilter):
         return qs
 
 
+class DireccionClienteInline(admin.StackedInline):
+    model = DireccionCliente
+    extra = 0
+    fields = (
+        ('etiqueta', 'es_principal', 'confirmada'),
+        'direccion_texto',
+        ('localidad', 'provincia'),
+        ('latitud', 'longitud', 'precision_metros'),
+        'referencia',
+        'fuente',
+    )
+    readonly_fields = ('fuente',)
+
+
 class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     icon_name = "account_circle"
     model = Cliente
@@ -179,6 +193,7 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     )
     list_filter = ('puede_recibir_whatsapp', WhatsappConfiguradoFilter)
     actions = ['accion_habilitar_whatsapp', 'accion_deshabilitar_whatsapp']
+    inlines = (DireccionClienteInline,)
 
     def get_queryset(self, request):
         """

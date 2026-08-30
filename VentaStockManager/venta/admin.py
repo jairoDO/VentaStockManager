@@ -272,10 +272,14 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     readonly_fields = ('venta','mostrar_articulos')
     ordering = ('-venta__fecha_compra',)
+    list_select_related = (
+        'venta__cliente', 'venta__vendedor__usuario', 'repartidor__usuario',
+    )
     list_display = [
         'id', 'venta_fecha_compra', 'venta_fecha_entrega', 'venta_cliente',
         'venta_vendedor', 'total_venta_por_articulo',
         'cantidad_articulos_vendidos',
+        'estado', 'direccion_reparto_badge', 'repartidor',
         'pagado_badge', 'cobrado_display',
         'descargar_pdf',
     ]
@@ -286,7 +290,8 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     # el informe consolidado.
     list_filter = [
         'pagado', 'estado',
-        'venta__vendedor',
+        'venta__vendedor', 'repartidor',
+        'direccion_confirmada', 'localidad_entrega',
         'venta__fecha_compra', 'venta__fecha_entrega',
     ]
     # Buscador pedido por nombre de cliente y por vendedor
@@ -304,7 +309,14 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'informe_diario_vendedor_configurado',
         'marcar_como_saldada',
         'registrar_pago',
+        'asignar_repartidor',
     ]
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if not request.user.is_superuser:
+            actions.pop('asignar_repartidor', None)
+        return actions
 
     # Define constants
     ARTICULO_LABEL = 'Artículo'
@@ -340,6 +352,20 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         )
     cobrado_display.short_description = 'Cobrado'
     cobrado_display.admin_order_field = 'monto_pagado'
+
+    def direccion_reparto_badge(self, obj):
+        if obj.direccion_confirmada and obj.tiene_coordenadas_entrega:
+            return format_html(
+                '<span style="color:#047857;font-weight:600;">✓ Ubicada</span>'
+            )
+        if obj.direccion_entrega_texto:
+            return format_html(
+                '<span style="color:#b45309;font-weight:600;">⚠ Sin confirmar</span>'
+            )
+        return format_html(
+            '<span style="color:#b91c1c;font-weight:600;">✗ Sin dirección</span>'
+        )
+    direccion_reparto_badge.short_description = 'Dirección reparto'
 
     def changelist_view(self, request, extra_context=None):
         """
@@ -416,6 +442,16 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         return HttpResponseRedirect(reverse('generar_pdf_pedidos') + f"?pedidos_ids={','.join(map(str, pedido_ids))}")
 
     generar_pdfs.short_description = "Generar PDFs para pedidos seleccionados"
+
+    @admin.action(description='🚚 Asignar pedidos a repartidor')
+    def asignar_repartidor(self, request, queryset):
+        ids = ','.join(map(str, queryset.values_list('id', flat=True)))
+        if not ids:
+            self.message_user(request, 'Seleccioná al menos un pedido.', level=messages.WARNING)
+            return None
+        return HttpResponseRedirect(
+            reverse('asignar_pedidos_repartidor') + f'?pedidos_ids={ids}'
+        )
 
     @admin.action(description='📄 Informe diario por vendedor (A4)')
     def informe_diario_vendedor_a4(self, request, queryset):
@@ -675,11 +711,27 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     # individuales con un label flotante que se solapa con el contenido
     # HTML. Al meterlo todo dentro de UN solo field readonly, el
     # markup queda controlado por nosotros y no hay solapamiento.
-    readonly_fields = ('venta', 'mostrar_articulos')
+    readonly_fields = (
+        'venta', 'mostrar_articulos', 'repartidor', 'asignado_en',
+        'direccion_confirmada', 'direccion_entrega_texto',
+        'localidad_entrega', 'provincia_entrega', 'referencia_entrega',
+        'latitud_entrega', 'longitud_entrega', 'entregado_en',
+        'motivo_no_entrega', 'observacion_entrega',
+    )
 
     fieldsets = (
         (None, {
             'fields': ('venta', 'estado', 'pagado', 'mostrar_articulos')
+        }),
+        ('Reparto', {
+            'fields': (
+                ('repartidor', 'asignado_en', 'entregado_en'),
+                ('direccion_confirmada', 'direccion_entrega_texto'),
+                ('localidad_entrega', 'provincia_entrega'),
+                ('latitud_entrega', 'longitud_entrega'),
+                'referencia_entrega',
+                ('motivo_no_entrega', 'observacion_entrega'),
+            ),
         }),
     )
 
