@@ -241,10 +241,24 @@ class RepartoFlujoTests(TestCase):
         self.assertEqual(pedido.estado, Pedido.ENTREGADO)
         self.assertIsNotNone(pedido.entregado_en)
 
-        pedido.estado = Pedido.ASIGNADO
-        pedido.entregado_en = None
-        pedido.repartidor = self.repartidor
-        pedido.save(update_fields=['estado', 'entregado_en', 'repartidor'])
+        correccion = self.client.post(
+            reverse('reparto_actualizar_estado', args=[pedido.pk]),
+            data=json.dumps({'estado': Pedido.EN_REPARTO}),
+            content_type='application/json',
+        )
+        self.assertEqual(correccion.status_code, 200)
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.estado, Pedido.EN_REPARTO)
+        self.assertIsNone(pedido.entregado_en)
+        self.assertTrue(
+            PedidoEstadoHistorial.objects.filter(
+                pedido=pedido,
+                estado_anterior=Pedido.ENTREGADO,
+                estado_nuevo=Pedido.EN_REPARTO,
+                usuario=self.usuario_repartidor,
+            ).exists()
+        )
+
         self.client.force_login(self.usuario_otro)
         prohibido = self.client.post(
             reverse('reparto_actualizar_estado', args=[pedido.pk]),
@@ -272,7 +286,7 @@ class RepartoFlujoTests(TestCase):
     def test_repartidor_puede_iniciar_y_cerrar_sesion(self):
         login = self.client.get(reverse('login'))
         self.assertEqual(login.status_code, 200)
-        self.assertContains(login, 'Acceso al sistema')
+        self.assertTemplateUsed(login, 'registration/login_admin.html')
 
         acceso = self.client.post(reverse('login'), {
             'username': self.usuario_repartidor.username,

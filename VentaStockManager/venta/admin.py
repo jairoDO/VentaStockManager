@@ -1,5 +1,5 @@
 # from django.contrib import admin
-from venta.models import Venta, ArticuloVenta, Pedido
+from venta.models import Venta, ArticuloVenta, Pedido, PedidoEstadoHistorial
 from articulo.models import Articulo
 from vendedor.models import Vendedor
 from django.utils.html import format_html
@@ -268,6 +268,21 @@ class VentaAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
 # admin_site.site.register(Venta, VentaAdmin)
 
+
+class PedidoEstadoHistorialInline(admin.TabularInline):
+    model = PedidoEstadoHistorial
+    extra = 0
+    can_delete = False
+    fields = (
+        'creado_en', 'estado_anterior', 'estado_nuevo',
+        'motivo', 'observacion', 'usuario',
+    )
+    readonly_fields = fields
+    ordering = ('-creado_en',)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
 class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     readonly_fields = ('venta','mostrar_articulos')
@@ -279,7 +294,7 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'id', 'venta_fecha_compra', 'venta_fecha_entrega', 'venta_cliente',
         'venta_vendedor', 'total_venta_por_articulo',
         'cantidad_articulos_vendidos',
-        'estado', 'direccion_reparto_badge', 'repartidor',
+        'estado', 'entregado_en', 'direccion_reparto_badge', 'repartidor',
         'pagado_badge', 'cobrado_display',
         'descargar_pdf',
     ]
@@ -311,6 +326,7 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'registrar_pago',
         'asignar_repartidor',
     ]
+    inlines = (PedidoEstadoHistorialInline,)
 
     def get_actions(self, request):
         actions = super().get_actions(request)

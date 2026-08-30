@@ -102,7 +102,12 @@
               <a href="tel:{{ pedido.venta.cliente.telefono }}"
                  class="px-3 py-2 bg-slate-50 border border-slate-200 text-slate-800 rounded text-sm font-medium">☎ Llamar</a>
             {% endif %}
-            {% if pedido.estado != 'Entregado' %}
+            {% if pedido.estado == 'Entregado' %}
+              <button type="button" @click="actualizarEstado({{ pedido.id }}, 'En reparto')"
+                      class="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-900 rounded text-sm font-medium">↶ Corregir: volver a reparto</button>
+              <button type="button" @click="abrirNoEntregado({{ pedido.id }})"
+                      class="px-3 py-2 bg-red-50 border border-red-200 text-red-800 rounded text-sm font-medium">Corregir: no entregado</button>
+            {% else %}
               <button type="button" @click="actualizarEstado({{ pedido.id }}, 'En reparto')"
                       class="px-3 py-2 bg-orange-100 border border-orange-200 text-orange-900 rounded text-sm font-medium">En reparto</button>
               <button type="button" @click="actualizarEstado({{ pedido.id }}, 'Entregado')"

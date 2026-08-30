@@ -30,7 +30,21 @@ def _fecha_hoy_operativa():
 class AccesoSistemaView(LoginView):
     """Login único: redirige según el rol del usuario autenticado."""
 
-    template_name = 'registration/login.html'
+    # Misma estructura visual que el login histórico del admin, pero en
+    # una plantilla independiente para aceptar también repartidores.
+    template_name = 'registration/login_admin.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Import local para evitar el ciclo urls -> admin -> venta.admin.
+        from VentaStockManager.admin import admin_site
+
+        context.update(admin_site.each_context(self.request))
+        context.update({
+            'title': 'Iniciar sesión',
+            'app_path': self.request.get_full_path(),
+        })
+        return context
 
     def get_success_url(self):
         destino_solicitado = self.get_redirect_url()
@@ -216,9 +230,6 @@ def reparto_actualizar_estado(request, pedido_id):
     es_duenio = pedido.repartidor_id and pedido.repartidor.usuario_id == request.user.id
     if not es_admin and not es_duenio:
         return JsonResponse({'ok': False, 'error': 'Pedido no asignado a este repartidor.'}, status=403)
-    if pedido.estado == Pedido.ENTREGADO and not es_admin:
-        return JsonResponse({'ok': False, 'error': 'El pedido ya fue entregado.'}, status=409)
-
     nuevo_estado = payload.get('estado')
     permitidos = {
         Pedido.EN_REPARTO,
