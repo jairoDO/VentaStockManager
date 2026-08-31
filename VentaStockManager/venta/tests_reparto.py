@@ -1,5 +1,6 @@
 import json
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
@@ -104,6 +105,59 @@ class RepartoFlujoTests(TestCase):
         self.assertTrue(pedido.direccion_confirmada)
         self.assertTrue(pedido.tiene_coordenadas_entrega)
 
+    def test_confirmar_direccion_rechaza_texto_sin_punto_en_el_mapa(self):
+        self.client.force_login(self.usuario_vendedor)
+        response = self.client.post(
+            reverse('venta_api_cliente_direccion', args=[self.cliente.pk]),
+            data=json.dumps({
+                'direccion_texto': 'Av. Colón 1234',
+                'localidad': 'Córdoba',
+                'provincia': 'Córdoba',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Ubicá la dirección en el mapa', response.json()['error'])
+        self.assertFalse(DireccionCliente.objects.filter(cliente=self.cliente).exists())
+
+    @patch('venta.views_nueva._consultar_nominatim')
+    def test_buscar_direccion_devuelve_opciones_para_el_mapa(self, consultar):
+        consultar.return_value = [
+            {
+                'display_name': 'Avenida Colón 1234, Villa Allende, Argentina',
+                'direccion_texto': 'Avenida Colón 1234',
+                'localidad': 'Villa Allende',
+                'provincia': 'Córdoba',
+                'latitud': '-31.300000',
+                'longitud': '-64.300000',
+            },
+            {
+                'display_name': 'Avenida Colón 1234, Córdoba, Argentina',
+                'direccion_texto': 'Avenida Colón 1234',
+                'localidad': 'Córdoba',
+                'provincia': 'Córdoba',
+                'latitud': '-31.410000',
+                'longitud': '-64.210000',
+            },
+        ]
+        self.client.force_login(self.usuario_vendedor)
+        response = self.client.get(
+            reverse('venta_api_direccion_geocodificar'),
+            {
+                'direccion': 'Av. Colón 1234',
+                'localidad': 'Córdoba',
+                'provincia': 'Córdoba',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        consultar.assert_called_once_with('Av. Colón 1234', 'Córdoba', 'Córdoba')
+        resultado = response.json()['resultados'][0]
+        self.assertEqual(resultado['localidad'], 'Córdoba')
+        self.assertEqual(resultado['latitud'], '-31.410000')
+        self.assertEqual(resultado['longitud'], '-64.210000')
+
     def test_guardar_venta_usa_la_direccion_seleccionada(self):
         direccion = DireccionCliente.objects.create(
             cliente=self.cliente,
@@ -179,6 +233,9 @@ class RepartoFlujoTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Dirección pendiente de confirmar')
         self.assertContains(response, 'Usar mi ubicación actual')
+        self.assertContains(response, 'Buscar dirección en el mapa')
+        self.assertContains(response, '/venta/api/direcciones/geocodificar/')
+        self.assertContains(response, 'Ubicá un punto en el mapa antes de confirmar')
         self.assertContains(response, 'La fecha de entrega es obligatoria')
         self.assertContains(response, "fechaEntrega: ''")
         self.assertNotContains(response, 'Fecha de compra')

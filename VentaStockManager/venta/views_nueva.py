@@ -19,12 +19,18 @@ el cálculo CANÓNICO sigue siendo el del backend al guardar.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.http import JsonResponse
@@ -96,6 +102,71 @@ def _direccion_principal(cliente: Cliente) -> DireccionCliente | None:
     if precargadas is not None:
         return precargadas[0] if precargadas else None
     return cliente.direcciones.order_by('-es_principal', '-actualizada_en').first()
+
+
+def _consultar_nominatim(direccion: str, localidad: str, provincia: str) -> list[dict]:
+    """Busca una dirección argentina mediante una consulta explícita."""
+    partes = [direccion, localidad, provincia, 'Argentina']
+    consulta = ', '.join(parte for parte in partes if parte)
+    params = urlencode({
+        'q': consulta,
+        'format': 'jsonv2',
+        'addressdetails': 1,
+        'limit': 5,
+        'countrycodes': 'ar',
+        'accept-language': 'es',
+    })
+    request = Request(
+        f'{settings.NOMINATIM_BASE_URL}/search?{params}',
+        headers={
+            'Accept': 'application/json',
+            'User-Agent': settings.NOMINATIM_USER_AGENT,
+        },
+    )
+    with urlopen(request, timeout=8) as response:
+        datos = json.loads(response.read().decode('utf-8'))
+    if not isinstance(datos, list):
+        return []
+
+    resultados = []
+    for item in datos[:5]:
+        try:
+            latitud = Decimal(str(item['lat']))
+            longitud = Decimal(str(item['lon']))
+        except (InvalidOperation, KeyError, TypeError, ValueError):
+            continue
+        if not (Decimal('-90') <= latitud <= Decimal('90')):
+            continue
+        if not (Decimal('-180') <= longitud <= Decimal('180')):
+            continue
+        address = item.get('address') or {}
+        calle = (
+            address.get('road')
+            or address.get('pedestrian')
+            or address.get('residential')
+            or address.get('neighbourhood')
+            or ''
+        )
+        numero = address.get('house_number') or ''
+        direccion_normalizada = ' '.join(
+            parte for parte in (calle, numero) if parte
+        ) or direccion
+        resultados.append({
+            'display_name': item.get('display_name') or consulta,
+            'direccion_texto': direccion_normalizada,
+            'localidad': (
+                address.get('city')
+                or address.get('town')
+                or address.get('village')
+                or address.get('municipality')
+                or address.get('county')
+                or localidad
+            ),
+            'provincia': address.get('state') or provincia,
+            'latitud': str(latitud),
+            'longitud': str(longitud),
+        })
+    return resultados
 
 
 def _decimal_or_400(raw, *, field, errores, allow_negative=False):
@@ -568,6 +639,58 @@ def api_cliente_saldo(request, cliente_id):
 
 
 @login_required
+@require_GET
+def api_direccion_geocodificar(request):
+    """Convierte una dirección escrita en opciones ubicables en el mapa."""
+    direccion = (request.GET.get('direccion') or '').strip()
+    localidad = (request.GET.get('localidad') or '').strip()
+    provincia = (request.GET.get('provincia') or '').strip()
+    if len(direccion) < 5:
+        return JsonResponse(
+            {'ok': False, 'error': 'Escribí una dirección más completa.'},
+            status=400,
+        )
+
+    clave_texto = '|'.join((direccion, localidad, provincia)).casefold()
+    clave_cache = 'geocodificacion:' + hashlib.sha256(
+        clave_texto.encode('utf-8')
+    ).hexdigest()
+    resultados = cache.get(clave_cache)
+    if resultados is None:
+        try:
+            resultados = _consultar_nominatim(direccion, localidad, provincia)
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+            return JsonResponse(
+                {
+                    'ok': False,
+                    'error': (
+                        'El servicio de mapas no respondió. '
+                        'Intentá nuevamente o marcá el punto manualmente.'
+                    ),
+                },
+                status=502,
+            )
+        # Evita repetir búsquedas idénticas y reduce el uso del servicio
+        # público. No es autocompletado: solo consulta al pulsar el botón.
+        cache.set(clave_cache, resultados, timeout=60 * 60 * 24 * 30)
+
+    # Una misma calle y altura puede existir en varias localidades de la
+    # provincia. Priorizamos la coincidencia exacta, pero conservamos el
+    # resto para que el operador pueda elegir otra opción en pantalla.
+    if localidad:
+        localidad_normalizada = localidad.casefold()
+        resultados = sorted(
+            resultados,
+            key=lambda resultado: (
+                (resultado.get('localidad') or '').casefold()
+                != localidad_normalizada
+            ),
+        )
+
+    return JsonResponse({'ok': True, 'resultados': resultados})
+
+
+@login_required
 @require_POST
 def api_cliente_direccion_guardar(request, cliente_id):
     """Crea o actualiza una dirección confirmada desde la venta."""
@@ -618,6 +741,17 @@ def api_cliente_direccion_guardar(request, cliente_id):
     if (latitud is None) != (longitud is None):
         return JsonResponse(
             {'ok': False, 'error': 'Latitud y longitud deben cargarse juntas.'},
+            status=400,
+        )
+    if latitud is None:
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': (
+                    'Ubicá la dirección en el mapa antes de confirmarla. '
+                    'Podés buscarla, usar tu ubicación o marcar el punto.'
+                ),
+            },
             status=400,
         )
 

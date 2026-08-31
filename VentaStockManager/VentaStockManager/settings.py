@@ -13,6 +13,8 @@ Variables clave:
     DATABASE_URL            Postgres/MySQL/sqlite URL. Default: sqlite local.
     GOOGLE_CREDENTIALS_PATH Ruta al JSON del service account de Google.
     GOOGLE_SHEET_ID         ID de la planilla de artículos.
+    NOMINATIM_BASE_URL      Servicio de geocodificación de direcciones.
+    NOMINATIM_USER_AGENT    Identificación enviada al servicio de mapas.
 """
 
 import mimetypes
@@ -336,6 +338,18 @@ VENTAS_RETENCION_MESES = env.int("VENTAS_RETENCION_MESES", default=18)
 #
 # En dev local queda como localhost:8000 (default), suficiente para tests.
 PUBLIC_SITE_URL = env.str("PUBLIC_SITE_URL", default="http://localhost:8000")
+
+# Geocodificación explícita de direcciones desde la pantalla de venta.
+# La URL es configurable para poder cambiar de proveedor sin desplegar
+# código, tal como recomienda la política de uso de Nominatim.
+NOMINATIM_BASE_URL = env.str(
+    "NOMINATIM_BASE_URL",
+    default="https://nominatim.openstreetmap.org",
+).rstrip("/")
+NOMINATIM_USER_AGENT = env.str(
+    "NOMINATIM_USER_AGENT",
+    default=f"VentaStockManager/1.0 ({PUBLIC_SITE_URL})",
+)
 
 
 # ---------------------------------------------------------------------------

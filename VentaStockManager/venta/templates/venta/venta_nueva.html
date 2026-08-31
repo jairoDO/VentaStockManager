@@ -700,7 +700,7 @@
         <div>
           <h3 class="text-lg font-semibold text-blue-950">Confirmar dirección de entrega</h3>
           <p class="text-xs text-blue-700 mt-1">
-            Detectá la ubicación, revisá el pin y confirmala con el cliente.
+            Usá la ubicación actual o buscá la dirección escrita, revisá el pin y confirmala con el cliente.
           </p>
         </div>
         <button type="button" @click="cerrarModalDireccion()" class="text-slate-500 hover:text-slate-800 text-2xl leading-none">×</button>
@@ -724,17 +724,23 @@
           <div class="md:col-span-2">
             <label class="block text-sm font-medium text-slate-700 mb-1">Dirección completa</label>
             <input type="text" x-model="modalDireccion.direccion_texto"
+                   @input="direccionMapaEditada()"
+                   @keydown.enter.prevent="buscarDireccionEnMapa()"
                    placeholder="Calle, número y barrio"
                    class="w-full border border-slate-300 rounded px-3 py-2">
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1">Localidad</label>
             <input type="text" x-model="modalDireccion.localidad"
+                   @input="direccionMapaEditada()"
+                   @keydown.enter.prevent="buscarDireccionEnMapa()"
                    class="w-full border border-slate-300 rounded px-3 py-2">
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1">Provincia</label>
             <input type="text" x-model="modalDireccion.provincia"
+                   @input="direccionMapaEditada()"
+                   @keydown.enter.prevent="buscarDireccionEnMapa()"
                    class="w-full border border-slate-300 rounded px-3 py-2">
           </div>
           <div class="md:col-span-2">
@@ -745,20 +751,53 @@
           </div>
         </div>
 
+        <button type="button" @click="buscarDireccionEnMapa()"
+                :disabled="modalDireccion.buscando || modalDireccion.direccion_texto.trim().length < 5"
+                class="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium disabled:bg-slate-300 disabled:cursor-not-allowed">
+          <span x-show="!modalDireccion.buscando">⌕ Buscar dirección en el mapa</span>
+          <span x-show="modalDireccion.buscando" x-cloak>Buscando dirección…</span>
+        </button>
+
+        <div x-show="modalDireccion.resultado_nombre" x-cloak
+             class="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded p-3">
+          <strong>Punto encontrado:</strong>
+          <span x-text="modalDireccion.resultado_nombre"></span>
+        </div>
+
+        <div x-show="modalDireccion.resultados.length > 1" x-cloak
+             class="border border-slate-200 rounded-lg overflow-hidden">
+          <p class="px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-50">
+            ¿No es el lugar correcto? Elegí otro resultado:
+          </p>
+          <template x-for="(resultado, indice) in modalDireccion.resultados" :key="`${resultado.latitud}-${resultado.longitud}`">
+            <button type="button" @click="aplicarResultadoDireccion(resultado)"
+                    class="block w-full text-left px-3 py-2 text-sm border-t border-slate-100 hover:bg-blue-50">
+              <span class="font-medium" x-text="`${indice + 1}. ${resultado.display_name}`"></span>
+            </button>
+          </template>
+        </div>
+
         <div x-show="modalDireccion.error" x-cloak
              class="text-sm text-red-800 bg-red-50 border border-red-200 rounded p-3"
              x-text="modalDireccion.error"></div>
       </div>
 
-      <div class="px-5 py-4 border-t bg-slate-50 flex justify-end gap-2">
+      <div class="px-5 py-4 border-t bg-slate-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <p x-show="modalDireccion.latitud === null || modalDireccion.longitud === null"
+           class="text-xs font-medium text-amber-700">
+          Ubicá un punto en el mapa antes de confirmar.
+        </p>
+        <div class="flex justify-end gap-2 sm:ml-auto">
         <button type="button" @click="cerrarModalDireccion()"
                 class="px-4 py-2 text-slate-700 hover:text-slate-950">Cancelar</button>
         <button type="button" @click="guardarDireccionCliente()"
-                :disabled="modalDireccion.guardando || !modalDireccion.direccion_texto.trim()"
+                :disabled="modalDireccion.guardando || !modalDireccion.direccion_texto.trim()
+                  || modalDireccion.latitud === null || modalDireccion.longitud === null"
                 class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium disabled:bg-slate-300">
           <span x-show="!modalDireccion.guardando">Confirmar dirección</span>
           <span x-show="modalDireccion.guardando" x-cloak>Guardando…</span>
         </button>
+        </div>
       </div>
     </div>
   </div>
@@ -836,6 +875,7 @@
         abierto: false,
         guardando: false,
         detectando: false,
+        buscando: false,
         error: '',
         id: null,
         direccion_texto: '',
@@ -846,6 +886,8 @@
         longitud: null,
         precision_metros: null,
         fuente: 'manual',
+        resultados: [],
+        resultado_nombre: '',
         mapa: null,
         marcador: null,
       },
@@ -1055,6 +1097,7 @@
         this.modalDireccion.abierto = true;
         this.modalDireccion.guardando = false;
         this.modalDireccion.detectando = false;
+        this.modalDireccion.buscando = false;
         this.modalDireccion.error = '';
         this.modalDireccion.id = actual.id || null;
         this.modalDireccion.direccion_texto = actual.direccion_texto || '';
@@ -1065,6 +1108,8 @@
         this.modalDireccion.longitud = actual.longitud ? Number(actual.longitud) : null;
         this.modalDireccion.precision_metros = actual.precision_metros || null;
         this.modalDireccion.fuente = actual.fuente || 'manual';
+        this.modalDireccion.resultados = [];
+        this.modalDireccion.resultado_nombre = '';
         this.$nextTick(() => this.inicializarMapaDireccion());
       },
       cerrarModalDireccion() {
@@ -1095,6 +1140,8 @@
         mapa.on('click', (event) => {
           this.modalDireccion.fuente = 'manual';
           this.modalDireccion.precision_metros = null;
+          this.modalDireccion.resultados = [];
+          this.modalDireccion.resultado_nombre = '';
           this.colocarMarcadorDireccion(event.latlng.lat, event.latlng.lng);
         });
         setTimeout(() => mapa.invalidateSize(), 50);
@@ -1112,6 +1159,8 @@
             m.longitud = punto.lng;
             m.fuente = 'manual';
             m.precision_metros = null;
+            m.resultados = [];
+            m.resultado_nombre = '';
           });
         } else {
           m.marcador.setLatLng([m.latitud, m.longitud]);
@@ -1131,6 +1180,8 @@
             m.detectando = false;
             m.precision_metros = posicion.coords.accuracy || null;
             m.fuente = 'gps';
+            m.resultados = [];
+            m.resultado_nombre = '';
             this.colocarMarcadorDireccion(posicion.coords.latitude, posicion.coords.longitude);
             await this.detectarDireccionDesdeCoordenadas();
           },
@@ -1145,6 +1196,81 @@
           },
           {enableHighAccuracy: true, timeout: 12000, maximumAge: 0},
         );
+      },
+      direccionMapaEditada() {
+        const m = this.modalDireccion;
+        m.error = '';
+        m.resultados = [];
+        m.resultado_nombre = '';
+        // Si el pin provenía del texto anterior, deja de ser confiable
+        // al modificar la dirección. GPS y puntos manuales se conservan.
+        if (m.fuente !== 'geocodificada') return;
+        m.latitud = null;
+        m.longitud = null;
+        m.fuente = 'manual';
+        if (m.mapa && m.marcador) {
+          m.mapa.removeLayer(m.marcador);
+          m.marcador = null;
+        }
+      },
+      async buscarDireccionEnMapa() {
+        const m = this.modalDireccion;
+        m.error = '';
+        if (m.direccion_texto.trim().length < 5) {
+          m.error = 'Escribí una dirección más completa antes de buscar.';
+          return;
+        }
+        m.buscando = true;
+        m.resultados = [];
+        m.resultado_nombre = '';
+        try {
+          const params = new URLSearchParams({
+            direccion: m.direccion_texto.trim(),
+            localidad: m.localidad.trim(),
+            provincia: m.provincia.trim(),
+          });
+          const r = await fetch(`/venta/api/direcciones/geocodificar/?${params}`, {
+            credentials: 'same-origin',
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) {
+            m.error = data.error || `Error del servidor (HTTP ${r.status})`;
+            return;
+          }
+          m.resultados = data.resultados || [];
+          if (!m.resultados.length) {
+            m.error = 'No encontramos esa dirección. Agregá localidad y provincia, o marcá el punto manualmente.';
+            return;
+          }
+          const localidadBuscada = m.localidad.trim().toLocaleLowerCase('es');
+          const coincidenciaExacta = localidadBuscada
+            ? m.resultados.find(resultado =>
+                (resultado.localidad || '').trim().toLocaleLowerCase('es') === localidadBuscada)
+            : null;
+          if (coincidenciaExacta || m.resultados.length === 1) {
+            this.aplicarResultadoDireccion(coincidenciaExacta || m.resultados[0]);
+          } else {
+            m.error = 'Encontramos varias ubicaciones posibles. Elegí la correcta de la lista para colocar el pin.';
+          }
+        } catch (e) {
+          m.error = 'No se pudo buscar la dirección. Revisá la conexión e intentá nuevamente.';
+        } finally {
+          m.buscando = false;
+        }
+      },
+      aplicarResultadoDireccion(resultado) {
+        const m = this.modalDireccion;
+        m.direccion_texto = resultado.direccion_texto || m.direccion_texto;
+        m.localidad = resultado.localidad || m.localidad;
+        m.provincia = resultado.provincia || m.provincia;
+        m.fuente = 'geocodificada';
+        m.precision_metros = null;
+        m.resultado_nombre = resultado.display_name || m.direccion_texto;
+        this.colocarMarcadorDireccion(resultado.latitud, resultado.longitud);
+        this.$nextTick(() => this.$refs.mapaDireccion?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        }));
       },
       async detectarDireccionDesdeCoordenadas() {
         const m = this.modalDireccion;
@@ -1175,6 +1301,10 @@
         }
         if (!m.direccion_texto.trim()) {
           m.error = 'Completá la dirección antes de confirmar.';
+          return;
+        }
+        if (m.latitud === null || m.longitud === null) {
+          m.error = 'Ubicá la dirección en el mapa antes de confirmarla.';
           return;
         }
         m.guardando = true;

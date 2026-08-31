@@ -49,6 +49,8 @@ services:
         value: golosinas-insa-staging.onrender.com
       - key: CSRF_TRUSTED_ORIGINS
         value: https://golosinas-insa-staging.onrender.com
+      - key: PUBLIC_SITE_URL
+        value: https://golosinas-insa-staging.onrender.com
       - key: GOOGLE_CREDENTIALS_PATH
         value: /etc/secrets/google-credentials.json
       # Sheet de staging (copia del de prod, para no tocar datos reales)
