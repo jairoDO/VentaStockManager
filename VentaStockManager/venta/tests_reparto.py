@@ -189,7 +189,10 @@ class RepartoFlujoTests(TestCase):
             ).exists()
         )
 
-        mapa_admin = self.client.get(reverse('reparto_panel'))
+        mapa_admin = self.client.get(
+            reverse('reparto_panel'),
+            {'fecha': str(date.today())},
+        )
         self.assertEqual(mapa_admin.status_code, 200)
         self.assertContains(mapa_admin, 'Mapa general de repartos')
         self.assertContains(mapa_admin, 'Cliente Con dirección')
@@ -227,9 +230,15 @@ class RepartoFlujoTests(TestCase):
         pedido.save(update_fields=['repartidor', 'estado'])
 
         self.client.force_login(self.usuario_repartidor)
-        panel = self.client.get(reverse('reparto_panel'))
+        panel = self.client.get(
+            reverse('reparto_panel'),
+            {'fecha': str(date.today())},
+        )
         self.assertEqual(panel.status_code, 200)
         self.assertContains(panel, 'Cliente Con dirección')
+        self.assertContains(panel, 'Ver pedido completo')
+        self.assertContains(panel, self.articulo.nombre)
+        self.assertContains(panel, 'Pendiente de cobro')
 
         response = self.client.post(
             reverse('reparto_actualizar_estado', args=[pedido.pk]),

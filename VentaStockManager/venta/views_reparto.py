@@ -18,6 +18,7 @@ from django.views.decorators.http import require_POST
 
 from vendedor.models import Repartidor
 from venta.models import Pedido, PedidoEstadoHistorial
+from venta.utils import subtotal_linea, total_venta
 
 
 ZONA_HORARIA_OPERATIVA = ZoneInfo('America/Argentina/Cordoba')
@@ -181,6 +182,10 @@ def reparto_panel(request):
     if localidad:
         qs = qs.filter(localidad_entrega=localidad)
     pedidos = list(qs)
+    for pedido in pedidos:
+        pedido.total_reparto = total_venta(pedido.venta)
+        for item in pedido.venta.ventas.all():
+            item.subtotal_reparto = subtotal_linea(item)
 
     localidades = list(
         qs_base
