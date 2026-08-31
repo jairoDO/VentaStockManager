@@ -48,16 +48,21 @@ class AccesoSistemaView(LoginView):
         return context
 
     def get_success_url(self):
+        # Un repartidor puede llegar desde /admin/ y traer next=/admin/.
+        # Si respetamos ese destino, el admin lo rechaza (no es staff) y lo
+        # devuelve al login, dando la impresión de que la clave era inválida.
+        if not (self.request.user.is_superuser or self.request.user.is_staff):
+            try:
+                if self.request.user.repartidor.activo:
+                    return reverse('reparto_panel')
+            except Repartidor.DoesNotExist:
+                pass
+
         destino_solicitado = self.get_redirect_url()
         if destino_solicitado:
             return destino_solicitado
         if self.request.user.is_superuser or self.request.user.is_staff:
             return reverse('admin:index')
-        try:
-            if self.request.user.repartidor.activo:
-                return reverse('reparto_panel')
-        except Repartidor.DoesNotExist:
-            pass
         return reverse('reparto_panel')
 
 

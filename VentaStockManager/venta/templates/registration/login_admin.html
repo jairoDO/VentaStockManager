@@ -1,89 +1,99 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="NONE,NOARCHIVE">
   <title>Iniciar sesión | Golosinas Insa</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  {% comment %}
+  Conservamos la apariencia histórica del administrador. Las rutas directas
+  evitan depender del manifest de Whitenoise en tests y desarrollo local.
+  {% endcomment %}
+  <link rel="stylesheet" href="/static/admin/css/base.css">
+  <link rel="stylesheet" href="/static/material/admin/css/materialize.min.css">
+  <link rel="stylesheet" href="/static/material/admin/css/material_icons.min.css">
+  <link rel="stylesheet" href="/static/material/admin/css/base_site.min.css">
+  <link rel="stylesheet" href="/static/material/admin/css/base_site-responsive.min.css">
+  <link rel="stylesheet" href="/static/admin/css/login.css">
+  <link rel="stylesheet" href="/static/admin/css/responsive.css">
+  <link rel="stylesheet" href="/static/admin/css/refresh.css">
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-  <style>[x-cloak] { display: none !important; }</style>
+  <style>
+    [x-cloak] { display: none !important; }
+    body.login { background: #f5f5f5; }
+    body.login #container { min-width: 0; }
+    body.login #header { padding: 0; }
+    body.login #header,
+    body.login #branding,
+    body.login #header nav,
+    body.login #header .nav-wrapper { background: #ef6f73 !important; }
+    body.login #site-name { margin: 0; padding: 0 24px; font-size: 20px; }
+    body.login #site-name a { color: #fff !important; }
+    body.login #content { max-width: 460px; margin: 56px auto 0; padding: 0 16px; }
+    body.login #content-main { background: #fff; padding: 28px; border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, .16); }
+    body.login .form-row { padding: 8px 0 16px; }
+    body.login .form-row label { display: block; margin-bottom: 6px; font-weight: 600; }
+    body.login .form-row input { box-sizing: border-box; width: 100%; }
+    body.login .password-field { position: relative; }
+    body.login .password-field input { padding-right: 84px; }
+    body.login .password-toggle { position: absolute; right: 0; top: 0; bottom: 0;
+      border: 0; background: transparent; color: #2c6f97; padding: 0 12px;
+      font-weight: 600; cursor: pointer; width: auto; }
+    body.login .submit-row { padding: 14px 0 0; text-align: right; }
+    body.login .submit-row input { cursor: pointer; }
+    body.login .errornote { margin: 0 0 16px; }
+  </style>
 </head>
-<body class="min-h-screen bg-slate-100 text-slate-900">
-  <main class="min-h-screen flex items-center justify-center px-4 py-10">
-    <section class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl border border-slate-200">
-      <header class="bg-gradient-to-br from-blue-700 to-blue-900 px-7 py-8 text-center text-white">
-        <div class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white/15 text-2xl font-black ring-1 ring-white/30">
-          GI
-        </div>
-        <h1 class="text-2xl font-bold tracking-tight">Golosinas Insa</h1>
-        <p class="mt-2 text-base text-blue-100">Acceso al sistema</p>
-      </header>
-
-      <div class="px-6 py-7 sm:px-8">
-        {% if form.non_field_errors %}
-          <div role="alert" class="mb-5 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-base font-medium text-red-800">
-            El usuario o la contraseña no son correctos. Intentá nuevamente.
+<body class="login">
+  <div id="container">
+    <div id="header">
+      <div id="branding">
+        <nav class="nav-extended">
+          <div class="nav-wrapper">
+            <h1 id="site-name"><a href="/">Golosinas Insa</a></h1>
           </div>
-        {% endif %}
+        </nav>
+      </div>
+    </div>
 
-        <form action="{{ app_path }}" method="post" id="login-form" class="space-y-5">
+    <div id="content" class="colM">
+      {% if form.non_field_errors %}
+        <p class="errornote" role="alert">
+          El usuario o la contraseña no son correctos. Intentá nuevamente.
+        </p>
+      {% endif %}
+      <div id="content-main">
+        <form action="{{ app_path }}" method="post" id="login-form">
           {% csrf_token %}
-
-          <div>
-            <label for="id_username" class="mb-2 block text-base font-bold text-slate-800">
-              Usuario
-            </label>
-            <input type="text"
-                   name="username"
-                   id="id_username"
+          <div class="form-row">
+            {{ form.username.errors }}
+            <label for="id_username">Usuario:</label>
+            <input type="text" name="username" id="id_username"
                    value="{{ form.username.value|default_if_none:'' }}"
-                   autocomplete="username"
-                   autocapitalize="none"
-                   required
-                   autofocus
-                   class="w-full rounded-lg border-2 border-slate-300 px-4 py-3 text-lg outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
-            {% if form.username.errors %}
-              <p class="mt-2 text-sm font-medium text-red-700">{{ form.username.errors|striptags }}</p>
-            {% endif %}
+                   autocomplete="username" autocapitalize="none" required autofocus>
           </div>
-
-          <div x-data="{ mostrar: false }">
-            <label for="id_password" class="mb-2 block text-base font-bold text-slate-800">
-              Contraseña
-            </label>
-            <div class="relative">
-              <input :type="mostrar ? 'text' : 'password'"
-                     name="password"
-                     id="id_password"
-                     autocomplete="current-password"
-                     required
-                     class="w-full rounded-lg border-2 border-slate-300 px-4 py-3 pr-24 text-lg outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
-              <button type="button"
+          <div class="form-row" x-data="{ mostrar: false }">
+            {{ form.password.errors }}
+            <label for="id_password">Contraseña:</label>
+            <div class="password-field">
+              <input type="password" :type="mostrar ? 'text' : 'password'"
+                     name="password" id="id_password"
+                     autocomplete="current-password" required>
+              <button type="button" class="password-toggle"
                       @click="mostrar = !mostrar"
-                      class="absolute inset-y-0 right-0 px-4 text-sm font-bold text-blue-700 hover:text-blue-900"
                       x-text="mostrar ? 'Ocultar' : 'Mostrar'">
                 Mostrar
               </button>
             </div>
-            {% if form.password.errors %}
-              <p class="mt-2 text-sm font-medium text-red-700">{{ form.password.errors|striptags }}</p>
-            {% endif %}
+            <input type="hidden" name="next" value="{{ next }}">
           </div>
-
-          <input type="hidden" name="next" value="{{ next }}">
-
-          <button type="submit"
-                  class="w-full rounded-lg bg-blue-700 px-5 py-3.5 text-lg font-bold text-white shadow-sm transition hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-200">
-            Iniciar sesión
-          </button>
+          <div class="submit-row">
+            <input type="submit" value="Iniciar sesión">
+          </div>
         </form>
-
-        <p class="mt-6 text-center text-sm text-slate-500">
-          Ingresá con el usuario y la contraseña que te dio el administrador.
-        </p>
       </div>
-    </section>
-  </main>
+    </div>
+  </div>
 </body>
 </html>

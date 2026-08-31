@@ -446,11 +446,20 @@ class RepartoFlujoTests(TestCase):
         self.assertEqual(login.status_code, 200)
         self.assertTemplateUsed(login, 'registration/login_admin.html')
         self.assertContains(login, 'Golosinas Insa')
-        self.assertContains(login, 'Acceso al sistema')
         self.assertContains(login, 'Mostrar')
         self.assertNotContains(login, 'arrow_forward')
         self.assertNotContains(login, 'content_copy')
         self.assertNotContains(login, 'Osvaldo Administrator - Precios')
+
+        acceso_invalido = self.client.post(reverse('login'), {
+            'username': self.usuario_repartidor.username,
+            'password': 'incorrecta',
+        })
+        self.assertEqual(acceso_invalido.status_code, 200)
+        self.assertContains(
+            acceso_invalido,
+            'El usuario o la contraseña no son correctos.',
+        )
 
         acceso = self.client.post(reverse('login'), {
             'username': self.usuario_repartidor.username,
@@ -458,6 +467,21 @@ class RepartoFlujoTests(TestCase):
         })
         self.assertRedirects(
             acceso,
+            reverse('reparto_panel'),
+            fetch_redirect_response=False,
+        )
+
+        self.client.logout()
+        acceso_desde_admin = self.client.post(
+            f"{reverse('login')}?next=/admin/",
+            {
+                'username': self.usuario_repartidor.username,
+                'password': 'x',
+                'next': '/admin/',
+            },
+        )
+        self.assertRedirects(
+            acceso_desde_admin,
             reverse('reparto_panel'),
             fetch_redirect_response=False,
         )
@@ -527,6 +551,14 @@ class RepartoFlujoTests(TestCase):
         self.assertContains(response, 'formAbierto: true')
         self.assertContains(response, "tipo: 'repartidor'")
         self.assertNotContains(response, 'type="radio" name="tipo"')
+        self.assertContains(
+            response,
+            ":type=\"mostrarPasswordCreacion ? 'text' : 'password'\"",
+        )
+        self.assertContains(
+            response,
+            ":type=\"mostrarPasswordReset ? 'text' : 'password'\"",
+        )
 
     def test_panel_admin_reemplaza_user_clasico_por_accesos_de_rol(self):
         from VentaStockManager.admin import admin_site
