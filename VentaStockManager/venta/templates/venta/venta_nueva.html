@@ -113,11 +113,6 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Fecha de compra</label>
-        <input type="date" x-model="fechaCompra" class="w-full border border-slate-300 rounded px-3 py-2">
-      </div>
-
-      <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">
           Fecha de entrega <span class="text-red-600">*</span>
         </label>
@@ -821,7 +816,6 @@
         error: '',
       },
       vendedorId: '{{ vendedor_default_id|default_if_none:"" }}',
-      fechaCompra: '{{ fecha_hoy }}',
       // En una venta nueva queda vacía para que el vendedor elija la
       // fecha de entrega de forma explícita antes de guardar.
       fechaEntrega: '',
@@ -881,7 +875,6 @@
           this.cliente.label = data.cliente_label;
           this.cliente.query = data.cliente_label;
           this.vendedorId = String(data.vendedor_id || '');
-          this.fechaCompra = data.fecha_compra;
           this.fechaEntrega = data.fecha_entrega;
           this.descuentoPorcentaje = Number(data.descuento_porcentaje || 0);
           this.descuentoMotivo = data.descuento_motivo || '';
@@ -1703,7 +1696,6 @@
             cliente_id: this.cliente.id,
             direccion_id: this.cliente.direccion_principal?.id || null,
             vendedor_id: this.vendedorId ? Number(this.vendedorId) : null,
-            fecha_compra: this.fechaCompra,
             fecha_entrega: this.fechaEntrega,
             descuento_porcentaje: String(this.descuentoPorcentaje || 0),
             descuento_motivo: this.descuentoMotivo || '',

@@ -123,7 +123,9 @@ class RepartoFlujoTests(TestCase):
                 'cliente_id': self.cliente.pk,
                 'direccion_id': direccion.pk,
                 'vendedor_id': self.vendedor.pk,
-                'fecha_compra': str(date.today()),
+                # Aunque un cliente viejo intente enviar otra fecha, el
+                # backend debe usar automáticamente la fecha operativa.
+                'fecha_compra': '2000-01-01',
                 'fecha_entrega': str(date.today()),
                 'items': [{
                     'articulo_id': self.articulo.pk,
@@ -137,6 +139,8 @@ class RepartoFlujoTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.content)
         venta = Venta.objects.get(pk=response.json()['venta_id'])
+        from venta.views_nueva import _fecha_hoy_operativa
+        self.assertEqual(venta.fecha_compra, _fecha_hoy_operativa())
         self.assertEqual(venta.pedido.direccion_entrega, direccion)
         self.assertEqual(venta.pedido.direccion_entrega_texto, 'Circunvalación 2500')
         self.assertTrue(venta.pedido.direccion_confirmada)
@@ -177,6 +181,8 @@ class RepartoFlujoTests(TestCase):
         self.assertContains(response, 'Usar mi ubicación actual')
         self.assertContains(response, 'La fecha de entrega es obligatoria')
         self.assertContains(response, "fechaEntrega: ''")
+        self.assertNotContains(response, 'Fecha de compra')
+        self.assertNotContains(response, 'fechaCompra')
 
     def test_admin_muestra_repartos_como_aplicacion_con_acceso_al_mapa(self):
         from VentaStockManager.admin import admin_site

@@ -20,15 +20,15 @@ el cálculo CANÓNICO sigue siendo el del backend al guardar.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
-from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from articulo.models import Articulo
@@ -41,6 +41,14 @@ from cliente.models import (
 )
 from vendedor.models import Vendedor
 from venta.models import AlertaStock, ArticuloVenta, Pedido, Venta
+
+
+ZONA_HORARIA_OPERATIVA = ZoneInfo('America/Argentina/Cordoba')
+
+
+def _fecha_hoy_operativa():
+    """Fecha comercial actual, independiente de que el servidor use UTC."""
+    return datetime.now(ZONA_HORARIA_OPERATIVA).date()
 
 
 # ---------------------------------------------------------------------------
@@ -747,7 +755,6 @@ def api_venta_guardar(request):
     cliente_id = payload.get('cliente_id')
     direccion_id = payload.get('direccion_id')
     vendedor_id = payload.get('vendedor_id') or _vendedor_for_user(request.user)
-    fecha_compra = payload.get('fecha_compra')
     fecha_entrega = payload.get('fecha_entrega')
     items = payload.get('items') or []
 
@@ -793,8 +800,6 @@ def api_venta_guardar(request):
         errores.append('cliente_id es requerido')
     if not vendedor_id:
         errores.append('vendedor_id es requerido (y el usuario no tiene Vendedor asociado)')
-    if not fecha_compra:
-        errores.append('fecha_compra es requerida')
     if not fecha_entrega:
         errores.append(
             'La fecha de entrega es obligatoria. Completala antes de guardar la venta.'
@@ -802,13 +807,7 @@ def api_venta_guardar(request):
     if not items:
         errores.append('La venta debe tener al menos un ítem')
 
-    fecha_compra_validada = None
     fecha_entrega_validada = None
-    if fecha_compra:
-        try:
-            fecha_compra_validada = date.fromisoformat(str(fecha_compra))
-        except (TypeError, ValueError):
-            errores.append('La fecha de compra no es válida.')
     if fecha_entrega:
         try:
             fecha_entrega_validada = date.fromisoformat(str(fecha_entrega))
@@ -925,7 +924,8 @@ def api_venta_guardar(request):
                 cliente_anterior_id = venta.cliente_id
                 venta.cliente = cliente
                 venta.vendedor = vendedor
-                venta.fecha_compra = fecha_compra_validada
+                # La fecha de compra es automática. En una edición se
+                # conserva la fecha original en lugar de recalcularla.
                 venta.fecha_entrega = fecha_entrega_validada
                 venta.descuento_porcentaje = descuento_pct or Decimal('0')
                 venta.descuento_motivo = descuento_motivo
@@ -934,7 +934,7 @@ def api_venta_guardar(request):
                 venta = Venta.objects.create(
                     cliente=cliente,
                     vendedor=vendedor,
-                    fecha_compra=fecha_compra_validada,
+                    fecha_compra=_fecha_hoy_operativa(),
                     fecha_entrega=fecha_entrega_validada,
                     descuento_porcentaje=descuento_pct or Decimal('0'),
                     descuento_motivo=descuento_motivo,
@@ -1323,7 +1323,6 @@ def venta_nueva(request):
         'venta_id': None,
         'vendedores': _vendedores_para_contexto(),
         'vendedor_default_id': _vendedor_for_user(request.user),
-        'fecha_hoy': str(timezone.now().date()),
         'venta_inicial': None,
     }
     return render(request, 'venta/venta_nueva.html', contexto)
@@ -1374,7 +1373,6 @@ def venta_editar(request, id):
         'cliente_id': venta.cliente_id,
         'cliente_label': venta.cliente.nombre_completo() if venta.cliente else '',
         'vendedor_id': venta.vendedor_id,
-        'fecha_compra': str(venta.fecha_compra),
         'fecha_entrega': str(venta.fecha_entrega),
         'descuento_porcentaje': str(getattr(venta, 'descuento_porcentaje', 0) or 0),
         'descuento_motivo': getattr(venta, 'descuento_motivo', '') or '',
@@ -1386,7 +1384,6 @@ def venta_editar(request, id):
         'venta_id': venta.id,
         'vendedores': _vendedores_para_contexto(),
         'vendedor_default_id': venta.vendedor_id,
-        'fecha_hoy': str(timezone.now().date()),
         'venta_inicial': venta_inicial,
     }
     return render(request, 'venta/venta_nueva.html', contexto)
