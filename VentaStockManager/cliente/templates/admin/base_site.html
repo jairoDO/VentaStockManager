@@ -1,5 +1,4 @@
 {% extends "admin/base_site.html" %}
-{% load static %}
 {% comment %}
 Override del base_site.html de django-material-admin. Solo agregamos
 un CSS extra (refresh.css) al final del block `extrastyle` para
@@ -20,7 +19,11 @@ el link al final.
 {% endcomment %}
 {% block extrastyle %}
     {{ block.super }}
-    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/refresh.css' %}">
+    {% comment %}
+    Ruta directa a propósito: en tests/local el manifest de Whitenoise puede
+    no haberse regenerado todavía, pero Django igualmente sirve este estático.
+    {% endcomment %}
+    <link rel="stylesheet" type="text/css" href="/static/admin/css/refresh.css">
 {% endblock %}
 
 {% block usertools %}

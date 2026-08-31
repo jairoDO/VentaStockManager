@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.views import LoginView
 from django.db import transaction
 from django.http import HttpResponseForbidden, JsonResponse
@@ -28,12 +29,22 @@ def _fecha_hoy_operativa():
     return datetime.now(ZONA_HORARIA_OPERATIVA).date()
 
 
+class FormularioAcceso(AuthenticationForm):
+    """Mensajes claros sin alterar la pantalla histórica de django-material."""
+
+    error_messages = {
+        'invalid_login': 'El usuario o la contraseña no son correctos. Intentá nuevamente.',
+        'inactive': 'Este usuario está desactivado. Consultá al administrador.',
+    }
+
+
 class AccesoSistemaView(LoginView):
     """Login único: redirige según el rol del usuario autenticado."""
 
     # Misma estructura visual que el login histórico del admin, pero en
     # una plantilla independiente para aceptar también repartidores.
     template_name = 'registration/login_admin.html'
+    authentication_form = FormularioAcceso
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
