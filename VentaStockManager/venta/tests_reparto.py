@@ -445,6 +445,12 @@ class RepartoFlujoTests(TestCase):
         login = self.client.get(reverse('login'))
         self.assertEqual(login.status_code, 200)
         self.assertTemplateUsed(login, 'registration/login_admin.html')
+        self.assertContains(login, 'Golosinas Insa')
+        self.assertContains(login, 'Acceso al sistema')
+        self.assertContains(login, 'Mostrar')
+        self.assertNotContains(login, 'arrow_forward')
+        self.assertNotContains(login, 'content_copy')
+        self.assertNotContains(login, 'Osvaldo Administrator - Precios')
 
         acceso = self.client.post(reverse('login'), {
             'username': self.usuario_repartidor.username,
