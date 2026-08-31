@@ -20,6 +20,7 @@ el cálculo CANÓNICO sigue siendo el del backend al guardar.
 from __future__ import annotations
 
 import json
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
@@ -795,9 +796,24 @@ def api_venta_guardar(request):
     if not fecha_compra:
         errores.append('fecha_compra es requerida')
     if not fecha_entrega:
-        errores.append('fecha_entrega es requerida')
+        errores.append(
+            'La fecha de entrega es obligatoria. Completala antes de guardar la venta.'
+        )
     if not items:
         errores.append('La venta debe tener al menos un ítem')
+
+    fecha_compra_validada = None
+    fecha_entrega_validada = None
+    if fecha_compra:
+        try:
+            fecha_compra_validada = date.fromisoformat(str(fecha_compra))
+        except (TypeError, ValueError):
+            errores.append('La fecha de compra no es válida.')
+    if fecha_entrega:
+        try:
+            fecha_entrega_validada = date.fromisoformat(str(fecha_entrega))
+        except (TypeError, ValueError):
+            errores.append('La fecha de entrega no es válida.')
 
     # Validamos cliente/vendedor existen ANTES de entrar a la
     # transacción, para devolver el 400 más informativo posible.
@@ -909,8 +925,8 @@ def api_venta_guardar(request):
                 cliente_anterior_id = venta.cliente_id
                 venta.cliente = cliente
                 venta.vendedor = vendedor
-                venta.fecha_compra = fecha_compra
-                venta.fecha_entrega = fecha_entrega
+                venta.fecha_compra = fecha_compra_validada
+                venta.fecha_entrega = fecha_entrega_validada
                 venta.descuento_porcentaje = descuento_pct or Decimal('0')
                 venta.descuento_motivo = descuento_motivo
                 venta.save()
@@ -918,8 +934,8 @@ def api_venta_guardar(request):
                 venta = Venta.objects.create(
                     cliente=cliente,
                     vendedor=vendedor,
-                    fecha_compra=fecha_compra,
-                    fecha_entrega=fecha_entrega,
+                    fecha_compra=fecha_compra_validada,
+                    fecha_entrega=fecha_entrega_validada,
                     descuento_porcentaje=descuento_pct or Decimal('0'),
                     descuento_motivo=descuento_motivo,
                 )

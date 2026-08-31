@@ -118,8 +118,24 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Fecha de entrega</label>
-        <input type="date" x-model="fechaEntrega" class="w-full border border-slate-300 rounded px-3 py-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">
+          Fecha de entrega <span class="text-red-600">*</span>
+        </label>
+        <input type="date"
+               x-ref="fechaEntregaInput"
+               x-model="fechaEntrega"
+               @change="intentoGuardar = false"
+               required
+               :aria-invalid="intentoGuardar && !fechaEntrega"
+               :class="intentoGuardar && !fechaEntrega
+                 ? 'border-red-500 ring-2 ring-red-200'
+                 : 'border-slate-300 focus:ring-2 focus:ring-blue-400'"
+               class="w-full border rounded px-3 py-2">
+        <p x-show="intentoGuardar && !fechaEntrega"
+           x-cloak
+           class="mt-1 text-sm font-medium text-red-700">
+          La fecha de entrega es obligatoria. No se puede guardar la venta sin completarla.
+        </p>
       </div>
     </div>
   </div>
@@ -806,7 +822,10 @@
       },
       vendedorId: '{{ vendedor_default_id|default_if_none:"" }}',
       fechaCompra: '{{ fecha_hoy }}',
-      fechaEntrega: '{{ fecha_hoy }}',
+      // En una venta nueva queda vacía para que el vendedor elija la
+      // fecha de entrega de forma explícita antes de guardar.
+      fechaEntrega: '',
+      intentoGuardar: false,
 
       // Modal "Nuevo cliente" — para crear un cliente sin salir de la
       // pantalla de venta. Se selecciona automáticamente al crearlo.
@@ -1648,6 +1667,20 @@
       // ---------------- Guardar ----------------
       async guardar() {
         this.errores = [];
+        this.intentoGuardar = true;
+        if (!this.fechaEntrega) {
+          this.errores = [
+            'La fecha de entrega es obligatoria. Completala antes de guardar la venta.',
+          ];
+          this.$nextTick(() => {
+            this.$refs.fechaEntregaInput?.scrollIntoView({
+              behavior: 'smooth',
+              block: 'center',
+            });
+            this.$refs.fechaEntregaInput?.focus();
+          });
+          return;
+        }
         this.guardando = true;
         try {
           const items = this.items

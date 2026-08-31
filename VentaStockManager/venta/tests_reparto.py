@@ -141,6 +141,32 @@ class RepartoFlujoTests(TestCase):
         self.assertEqual(venta.pedido.direccion_entrega_texto, 'Circunvalación 2500')
         self.assertTrue(venta.pedido.direccion_confirmada)
 
+    def test_guardar_venta_rechaza_fecha_entrega_vacia(self):
+        self.client.force_login(self.usuario_vendedor)
+        response = self.client.post(
+            reverse('venta_api_guardar'),
+            data=json.dumps({
+                'cliente_id': self.cliente.pk,
+                'vendedor_id': self.vendedor.pk,
+                'fecha_compra': str(date.today()),
+                'fecha_entrega': '',
+                'items': [{
+                    'articulo_id': self.articulo.pk,
+                    'cantidad': 1,
+                    'precio': '1500.00',
+                    'descuento_porcentaje': 0,
+                }],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            'La fecha de entrega es obligatoria',
+            ' '.join(response.json()['errores']),
+        )
+        self.assertEqual(Venta.objects.count(), 0)
+
     def test_pantalla_venta_renderiza_control_de_direccion(self):
         # El administrador omite la restricción horaria de los vendedores,
         # así la prueba valida siempre el template real de carga de venta.
@@ -149,6 +175,8 @@ class RepartoFlujoTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Dirección pendiente de confirmar')
         self.assertContains(response, 'Usar mi ubicación actual')
+        self.assertContains(response, 'La fecha de entrega es obligatoria')
+        self.assertContains(response, "fechaEntrega: ''")
 
     def test_admin_asigna_solo_pedidos_seleccionados(self):
         direccion = DireccionCliente.objects.create(
