@@ -225,6 +225,41 @@ class RepartoFlujoTests(TestCase):
         )
         self.assertEqual(Venta.objects.count(), 0)
 
+    def test_guardar_venta_rechaza_direccion_sin_confirmar(self):
+        DireccionCliente.objects.create(
+            cliente=self.cliente,
+            direccion_texto='Av. Colón 1234',
+            localidad='Córdoba',
+            provincia='Córdoba',
+            latitud='-31.410000',
+            longitud='-64.210000',
+            confirmada=False,
+            es_principal=True,
+        )
+        self.client.force_login(self.usuario_vendedor)
+        response = self.client.post(
+            reverse('venta_api_guardar'),
+            data=json.dumps({
+                'cliente_id': self.cliente.pk,
+                'vendedor_id': self.vendedor.pk,
+                'fecha_entrega': str(date.today()),
+                'items': [{
+                    'articulo_id': self.articulo.pk,
+                    'cantidad': 1,
+                    'precio': '1500.00',
+                    'descuento_porcentaje': 0,
+                }],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            'Confirmá la dirección para poder guardar la venta.',
+            response.json()['errores'],
+        )
+        self.assertEqual(Venta.objects.count(), 0)
+
     def test_pantalla_venta_renderiza_control_de_direccion(self):
         # El administrador omite la restricción horaria de los vendedores,
         # así la prueba valida siempre el template real de carga de venta.
@@ -236,6 +271,7 @@ class RepartoFlujoTests(TestCase):
         self.assertContains(response, 'Buscar dirección en el mapa')
         self.assertContains(response, '/venta/api/direcciones/geocodificar/')
         self.assertContains(response, 'Ubicá un punto en el mapa antes de confirmar')
+        self.assertContains(response, 'Confirmá la dirección para poder guardar la venta')
         self.assertContains(response, 'La fecha de entrega es obligatoria')
         self.assertContains(response, "fechaEntrega: ''")
         self.assertNotContains(response, 'Fecha de compra')

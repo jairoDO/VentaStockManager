@@ -179,32 +179,35 @@
   </div>
 
   {% comment %}
-  Estado de la dirección de entrega. No bloquea la venta: en datos
-  existentes puede faltar ubicación y el operador debe poder seguir
-  trabajando. Sí deja una advertencia clara y ofrece GPS/mapa inline.
+  Estado de la dirección de entrega. La venta solo puede guardarse
+  cuando el cliente tiene una dirección confirmada y ubicada en el mapa.
   {% endcomment %}
-  <div x-show="cliente.id" x-cloak
-       :class="cliente.direccion_principal && cliente.direccion_principal.confirmada
+  <div x-show="cliente.id" x-cloak x-ref="direccionEntregaPanel"
+       :class="direccionEntregaConfirmada()
                ? 'bg-emerald-50 border-emerald-300'
-               : 'bg-amber-50 border-amber-300'"
+               : (intentoGuardar ? 'bg-red-50 border-red-400' : 'bg-amber-50 border-amber-300')"
        class="border-2 rounded-lg p-4 mb-4">
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <div>
         <div class="font-semibold text-sm"
-             :class="cliente.direccion_principal && cliente.direccion_principal.confirmada
-                     ? 'text-emerald-900' : 'text-amber-900'">
-          <span x-show="cliente.direccion_principal && cliente.direccion_principal.confirmada">📍 Dirección confirmada</span>
-          <span x-show="!cliente.direccion_principal || !cliente.direccion_principal.confirmada">⚠ Dirección pendiente de confirmar</span>
+             :class="direccionEntregaConfirmada()
+                     ? 'text-emerald-900' : (intentoGuardar ? 'text-red-900' : 'text-amber-900')">
+          <span x-show="direccionEntregaConfirmada()">📍 Dirección confirmada</span>
+          <span x-show="!direccionEntregaConfirmada()">⚠ Dirección pendiente de confirmar</span>
         </div>
         <p class="text-sm mt-1 text-slate-700"
            x-text="cliente.direccion_principal?.direccion_texto || 'Este cliente todavía no tiene domicilio cargado.'"></p>
         <p x-show="cliente.direccion_principal?.localidad" class="text-xs text-slate-500 mt-1"
            x-text="[cliente.direccion_principal?.localidad, cliente.direccion_principal?.provincia].filter(Boolean).join(', ')"></p>
+        <p x-show="intentoGuardar && !direccionEntregaConfirmada()"
+           x-cloak class="text-sm font-semibold text-red-800 mt-2">
+          Confirmá la dirección para poder guardar la venta.
+        </p>
       </div>
       <button type="button" @click="abrirModalDireccion()"
               class="px-4 py-2 rounded font-medium text-sm bg-white border border-slate-300 hover:bg-slate-50 shadow-sm">
-        <span x-show="!cliente.direccion_principal">Detectar y cargar ubicación</span>
-        <span x-show="cliente.direccion_principal">Revisar ubicación</span>
+        <span x-show="!direccionEntregaConfirmada()">Confirmar dirección</span>
+        <span x-show="direccionEntregaConfirmada()">Revisar ubicación</span>
       </button>
     </div>
   </div>
@@ -980,6 +983,15 @@
         this.montoPagado = 0;
         this.aplicarSaldo = false;
         this.saldoAAplicar = 0;
+      },
+
+      direccionEntregaConfirmada() {
+        const direccion = this.cliente.direccion_principal;
+        return Boolean(
+          direccion?.confirmada
+          && direccion?.latitud
+          && direccion?.longitud
+        );
       },
 
       // Las funciones del modal (abrirModal, confirmarModal,
@@ -1791,16 +1803,25 @@
       async guardar() {
         this.errores = [];
         this.intentoGuardar = true;
+        const direccionConfirmada = this.direccionEntregaConfirmada();
         if (!this.fechaEntrega) {
-          this.errores = [
-            'La fecha de entrega es obligatoria. Completala antes de guardar la venta.',
-          ];
+          this.errores.push(
+            'La fecha de entrega es obligatoria. Completala antes de guardar la venta.'
+          );
+        }
+        if (this.cliente.id && !direccionConfirmada) {
+          this.errores.push('Confirmá la dirección para poder guardar la venta.');
+        }
+        if (this.errores.length) {
           this.$nextTick(() => {
-            this.$refs.fechaEntregaInput?.scrollIntoView({
+            const destino = !direccionConfirmada && this.cliente.id
+              ? this.$refs.direccionEntregaPanel
+              : this.$refs.fechaEntregaInput;
+            destino?.scrollIntoView({
               behavior: 'smooth',
               block: 'center',
             });
-            this.$refs.fechaEntregaInput?.focus();
+            if (!this.fechaEntrega) this.$refs.fechaEntregaInput?.focus();
           });
           return;
         }

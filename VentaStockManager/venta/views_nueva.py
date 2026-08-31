@@ -986,6 +986,14 @@ def api_venta_guardar(request):
                 direccion = cliente.direcciones.filter(
                     es_principal=True,
                 ).first()
+            if (
+                not direccion
+                or not direccion.confirmada
+                or not direccion.tiene_coordenadas
+            ):
+                errores.append(
+                    'Confirmá la dirección para poder guardar la venta.'
+                )
     if vendedor_id:
         vendedor = Vendedor.objects.filter(pk=vendedor_id).first()
         if not vendedor:
@@ -1122,11 +1130,6 @@ def api_venta_guardar(request):
             # la administración pueda investigar después en una
             # bandeja de entrada propia (`/admin/venta/alertastock/`).
             warnings_list: list[str] = []
-            if not pedido.direccion_confirmada:
-                warnings_list.append(
-                    'El pedido quedó con dirección pendiente de confirmar. '
-                    'Se puede asignar, pero no aparecerá correctamente en el mapa.'
-                )
             # Diferimos la creación de AlertaStock hasta tener el
             # `venta.pk`. Si es create, el venta ya tiene PK; si es
             # edit también. Pero algunos chequeos de stock se hacen
