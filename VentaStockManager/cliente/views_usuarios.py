@@ -91,8 +91,14 @@ def lista_usuarios(request: HttpRequest) -> HttpResponse:
             'es_yo_mismo': u.id == request.user.id,
         })
 
+    tipo_inicial = (request.GET.get('crear') or 'vendedor').lower()
+    if tipo_inicial not in ('vendedor', 'repartidor', 'superuser'):
+        tipo_inicial = 'vendedor'
+
     return render(request, 'cliente/gestion_usuarios.html', {
         'usuarios': usuarios,
+        'tipo_inicial': tipo_inicial,
+        'form_abierto': 'crear' in request.GET,
     })
 
 
@@ -146,7 +152,7 @@ def crear_usuario(request: HttpRequest) -> HttpResponse:
     if errors:
         for e in errors:
             messages.error(request, e)
-        return HttpResponseRedirect('/usuarios/')
+        return HttpResponseRedirect(f'/usuarios/?crear={tipo}#crear')
 
     # Crear todo en una transacción: si falla la creación del Vendedor
     # asociado, no queda un User huérfano.
@@ -178,7 +184,7 @@ def crear_usuario(request: HttpRequest) -> HttpResponse:
             )
 
     tipo_legible = {
-        'superuser': 'Superusuario',
+        'superuser': 'Administrador',
         'repartidor': 'Repartidor',
         'vendedor': 'Vendedor',
     }[tipo]

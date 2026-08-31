@@ -274,31 +274,53 @@ class MyAdminSite(MaterialAdminSite):
                     })
                     break
 
-            # Atajo "Gestión de Usuarios" dentro del app `auth`. Apunta
-            # a la pantalla custom Alpine en /usuarios/ que reemplaza
-            # el admin clásico de auth.User (demasiado complejo: tiene
-            # 20+ campos, permisos granulares, grupos). La pantalla
-            # custom expone solo lo necesario: crear vendedor/superuser
-            # con flags correctos, resetear password, activar/desactivar.
-            #
-            # Lo metemos como primer item de `auth` para que sea lo
-            # primero que ve el operador (antes que "Users" clásico).
+            # Reemplazamos por completo la card clásica de auth.User: su
+            # alta obliga a guardar el usuario y recién en una segunda
+            # pantalla elegir permisos, un flujo demasiado confuso para
+            # el operador. Cada acceso abre el formulario custom con el
+            # rol ya elegido y crea también Vendedor/Repartidor cuando
+            # corresponde.
             for app in app_list:
                 if app.get('app_label') == 'auth':
-                    app['models'].insert(0, {
-                        'name': 'Gestión de Usuarios',
-                        'object_name': 'GestionUsuarios',
-                        'admin_url': '/usuarios/',
-                        'add_url': '/usuarios/#crear',
-                        'perms': {
-                            'add': True, 'change': True,
-                            'delete': False, 'view': True,
+                    app['name'] = 'Usuarios'
+                    app['models'] = [
+                        {
+                            'name': 'Crear vendedor',
+                            'object_name': 'CrearVendedor',
+                            'admin_url': '/usuarios/?crear=vendedor#crear',
+                            'add_url': '/usuarios/?crear=vendedor#crear',
+                            'perms': {'add': True, 'change': False, 'delete': False, 'view': True},
+                            'icon': 'person_add',
+                            'view_only': True,
                         },
-                        # Material Icon: "group" para que se vea con un
-                        # icono de gente y no la rueda dentada genérica.
-                        'icon': 'group',
-                        'view_only': True,
-                    })
+                        {
+                            'name': 'Crear repartidor',
+                            'object_name': 'CrearRepartidor',
+                            'admin_url': '/usuarios/?crear=repartidor#crear',
+                            'add_url': '/usuarios/?crear=repartidor#crear',
+                            'perms': {'add': True, 'change': False, 'delete': False, 'view': True},
+                            'icon': 'local_shipping',
+                            'view_only': True,
+                        },
+                        {
+                            'name': 'Crear administrador',
+                            'object_name': 'CrearAdministrador',
+                            'admin_url': '/usuarios/?crear=superuser#crear',
+                            'add_url': '/usuarios/?crear=superuser#crear',
+                            'perms': {'add': True, 'change': False, 'delete': False, 'view': True},
+                            'icon': 'verified_user',
+                            'view_only': True,
+                        },
+                        {
+                            'name': 'Gestionar usuarios existentes',
+                            'object_name': 'GestionUsuarios',
+                            'admin_url': '/usuarios/',
+                            'add_url': None,
+                            'perms': {'add': False, 'change': True, 'delete': False, 'view': True},
+                            'icon': 'group',
+                            'view_only': True,
+                        },
+                    ]
                     break
 
             # Rubros (solo superuser): redirigimos la card del admin clásico

@@ -3,9 +3,10 @@ Gestión de usuarios — pantalla Alpine + Tailwind para que el
 superusuario cree/desactive vendedores, repartidores y otros admins.
 
 Por qué no usamos el admin clásico de auth.User: tiene 20+ campos
-y permisos granulares que confunden. Acá hay 3 campos + 1 toggle.
+y permisos granulares que confunden. Acá el administrador elige el
+rol con un botón y el sistema configura todos los permisos y perfiles.
 
-UX: form de crear arriba (siempre visible), lista de usuarios abajo
+UX: tres botones de creación arriba, un único formulario simple y la lista abajo
 con acciones inline (cambiar tipo, resetear password, desactivar).
 {% endcomment %}
 <!doctype html>
@@ -22,13 +23,22 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
 
 <div class="max-w-4xl mx-auto p-4 sm:p-6"
      x-data="{
-       formAbierto: false,
-       tipo: 'vendedor',
+       formAbierto: {{ form_abierto|yesno:'true,false' }},
+       tipo: '{{ tipo_inicial }}',
        confirmandoBorrar: null,
        confirmandoTipo: null,
        resetPasswordUsuario: null,
        nuevaPassword: '',
-     }">
+       abrirFormulario(nuevoTipo) {
+         this.tipo = nuevoTipo;
+         this.formAbierto = true;
+         this.$nextTick(() => {
+           this.$refs.formCrear?.scrollIntoView({behavior: 'smooth', block: 'start'});
+           this.$refs.username?.focus();
+         });
+       },
+     }"
+     x-init="if (formAbierto) $nextTick(() => $refs.username?.focus())">
 
   <div class="mb-6">
     <a href="/admin/" class="text-sm text-blue-600 hover:underline">← Volver al admin</a>
@@ -55,61 +65,45 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
     </div>
   {% endif %}
 
-  {# ---- Botón abrir form ---- #}
-  <div x-show="!formAbierto" class="mb-6">
-    <button @click="formAbierto = true"
-            class="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-sm transition">
-      ➕ Crear nuevo usuario
+  {# ---- Accesos directos: el rol queda elegido antes de abrir el form ---- #}
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+    <button type="button" @click="abrirFormulario('vendedor')"
+            class="p-5 rounded-xl border-2 border-blue-200 bg-blue-50 hover:bg-blue-100 hover:border-blue-400 text-left transition shadow-sm">
+      <span class="text-3xl block mb-2">👔</span>
+      <span class="font-bold text-blue-950 block">Crear vendedor</span>
+      <span class="text-sm text-blue-700 block mt-1">Podrá cargar ventas y clientes.</span>
+    </button>
+    <button type="button" @click="abrirFormulario('repartidor')"
+            class="p-5 rounded-xl border-2 border-emerald-200 bg-emerald-50 hover:bg-emerald-100 hover:border-emerald-400 text-left transition shadow-sm">
+      <span class="text-3xl block mb-2">🚚</span>
+      <span class="font-bold text-emerald-950 block">Crear repartidor</span>
+      <span class="text-sm text-emerald-700 block mt-1">Verá únicamente sus entregas.</span>
+    </button>
+    <button type="button" @click="abrirFormulario('superuser')"
+            class="p-5 rounded-xl border-2 border-purple-200 bg-purple-50 hover:bg-purple-100 hover:border-purple-400 text-left transition shadow-sm">
+      <span class="text-3xl block mb-2">👑</span>
+      <span class="font-bold text-purple-950 block">Crear administrador</span>
+      <span class="text-sm text-purple-700 block mt-1">Tendrá acceso completo al sistema.</span>
     </button>
   </div>
 
   {# ---- Form crear ---- #}
-  <form x-show="formAbierto" x-cloak
+  <form x-show="formAbierto" x-cloak x-ref="formCrear" id="crear"
         method="post" action="/usuarios/crear/"
         class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm mb-6">
     {% csrf_token %}
+    <input type="hidden" name="tipo" :value="tipo">
 
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-bold">Nuevo usuario</h2>
+      <h2 class="text-lg font-bold"
+          x-text="tipo === 'superuser' ? 'Nuevo administrador' : (tipo === 'repartidor' ? 'Nuevo repartidor' : 'Nuevo vendedor')"></h2>
       <button type="button" @click="formAbierto = false"
               class="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
     </div>
 
-    {# Selector de tipo #}
-    <div class="mb-5">
-      <label class="block font-semibold text-slate-800 mb-2">Tipo de usuario</label>
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <label class="cursor-pointer">
-          <input type="radio" name="tipo" value="vendedor"
-                 x-model="tipo" class="sr-only">
-          <div :class="tipo === 'vendedor' ? 'bg-blue-600 text-white border-blue-700' : 'bg-white border-slate-200 text-slate-700 hover:border-blue-300'"
-               class="border-2 rounded-lg p-3 text-center transition">
-            <div class="text-2xl mb-1">👔</div>
-            <div class="font-semibold text-sm">Vendedor</div>
-            <div class="text-xs opacity-80 mt-1">Carga ventas, gestiona clientes</div>
-          </div>
-        </label>
-        <label class="cursor-pointer">
-          <input type="radio" name="tipo" value="repartidor"
-                 x-model="tipo" class="sr-only">
-          <div :class="tipo === 'repartidor' ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-300'"
-               class="border-2 rounded-lg p-3 text-center transition">
-            <div class="text-2xl mb-1">🚚</div>
-            <div class="font-semibold text-sm">Repartidor</div>
-            <div class="text-xs opacity-80 mt-1">Ve y actualiza sus entregas</div>
-          </div>
-        </label>
-        <label class="cursor-pointer">
-          <input type="radio" name="tipo" value="superuser"
-                 x-model="tipo" class="sr-only">
-          <div :class="tipo === 'superuser' ? 'bg-purple-600 text-white border-purple-700' : 'bg-white border-slate-200 text-slate-700 hover:border-purple-300'"
-               class="border-2 rounded-lg p-3 text-center transition">
-            <div class="text-2xl mb-1">👑</div>
-            <div class="font-semibold text-sm">Superusuario</div>
-            <div class="text-xs opacity-80 mt-1">Acceso total al sistema</div>
-          </div>
-        </label>
-      </div>
+    <div class="mb-5 rounded-lg p-3 text-sm font-medium"
+         :class="tipo === 'superuser' ? 'bg-purple-50 text-purple-900 border border-purple-200' : (tipo === 'repartidor' ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-blue-50 text-blue-900 border border-blue-200')">
+      <span x-text="tipo === 'superuser' ? '👑 Se creará un administrador con acceso completo.' : (tipo === 'repartidor' ? '🚚 Se creará un repartidor con acceso a sus entregas.' : '👔 Se creará un vendedor listo para cargar ventas.')"></span>
     </div>
 
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
@@ -118,7 +112,7 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
           Usuario <span class="text-red-500">*</span>
         </label>
         <p class="text-xs text-slate-500 mb-1">Sin espacios. Ej. "juan" o "vendedor1"</p>
-        <input type="text" name="username" id="id_username" required autofocus
+        <input type="text" name="username" id="id_username" required x-ref="username"
                pattern="[a-zA-Z0-9_.\-]+"
                class="w-full px-3 py-2 border-2 border-slate-300 rounded-lg
                       focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none">
@@ -181,7 +175,7 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
       <button type="submit"
               class="flex-1 sm:flex-initial sm:ml-auto px-6 py-3 rounded-lg text-white font-semibold shadow-sm transition"
               :class="tipo === 'superuser' ? 'bg-purple-600 hover:bg-purple-700' : (tipo === 'repartidor' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700')">
-        <span x-text="tipo === 'superuser' ? 'Crear superusuario' : (tipo === 'repartidor' ? 'Crear repartidor' : 'Crear vendedor')"></span>
+        <span x-text="tipo === 'superuser' ? 'Crear administrador' : (tipo === 'repartidor' ? 'Crear repartidor' : 'Crear vendedor')"></span>
       </button>
     </div>
   </form>

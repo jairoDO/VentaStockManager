@@ -506,3 +506,64 @@ class RepartoFlujoTests(TestCase):
         listado = self.client.get(reverse('gestion_usuarios'))
         self.assertContains(listado, 'repartidor_nuevo')
         self.assertContains(listado, 'Repartidor')
+
+    def test_gestion_usuarios_ofrece_un_boton_directo_por_rol(self):
+        self.client.force_login(self.admin)
+        response = self.client.get(
+            reverse('gestion_usuarios'),
+            {'crear': 'repartidor'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Crear vendedor')
+        self.assertContains(response, 'Crear repartidor')
+        self.assertContains(response, 'Crear administrador')
+        self.assertContains(response, 'formAbierto: true')
+        self.assertContains(response, "tipo: 'repartidor'")
+        self.assertNotContains(response, 'type="radio" name="tipo"')
+
+    def test_panel_admin_reemplaza_user_clasico_por_accesos_de_rol(self):
+        from VentaStockManager.admin import admin_site
+
+        request = RequestFactory().get('/admin/')
+        request.user = self.admin
+        apps = admin_site.get_app_list(request)
+        app_usuarios = next(app for app in apps if app['app_label'] == 'auth')
+        nombres = [modelo['name'] for modelo in app_usuarios['models']]
+
+        self.assertEqual(app_usuarios['name'], 'Usuarios')
+        self.assertEqual(nombres, [
+            'Crear vendedor',
+            'Crear repartidor',
+            'Crear administrador',
+            'Gestionar usuarios existentes',
+        ])
+        self.assertNotIn('Users', nombres)
+
+    def test_crear_usuario_configura_vendedor_y_administrador_en_un_paso(self):
+        self.client.force_login(self.admin)
+        response_vendedor = self.client.post(reverse('crear_usuario'), {
+            'username': 'vendedor_directo',
+            'password': 'clave-segura-123',
+            'nombre': 'Venta',
+            'apellido': 'Directa',
+            'tipo': 'vendedor',
+        })
+        response_admin = self.client.post(reverse('crear_usuario'), {
+            'username': 'admin_directo',
+            'password': 'clave-segura-123',
+            'nombre': 'Admin',
+            'apellido': 'Directo',
+            'tipo': 'superuser',
+        })
+
+        self.assertEqual(response_vendedor.status_code, 302)
+        self.assertEqual(response_admin.status_code, 302)
+        vendedor = get_user_model().objects.get(username='vendedor_directo')
+        administrador = get_user_model().objects.get(username='admin_directo')
+        self.assertTrue(vendedor.is_staff)
+        self.assertFalse(vendedor.is_superuser)
+        self.assertEqual(vendedor.vendedor.nombre, 'Venta')
+        self.assertTrue(administrador.is_staff)
+        self.assertTrue(administrador.is_superuser)
+        self.assertFalse(Vendedor.objects.filter(usuario=administrador).exists())
