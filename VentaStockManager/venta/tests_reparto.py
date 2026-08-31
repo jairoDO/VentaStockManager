@@ -2,7 +2,7 @@ import json
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
 from articulo.models import Articulo
@@ -177,6 +177,28 @@ class RepartoFlujoTests(TestCase):
         self.assertContains(response, 'Usar mi ubicación actual')
         self.assertContains(response, 'La fecha de entrega es obligatoria')
         self.assertContains(response, "fechaEntrega: ''")
+
+    def test_admin_muestra_repartos_como_aplicacion_con_acceso_al_mapa(self):
+        from VentaStockManager.admin import admin_site
+
+        request = RequestFactory().get('/admin/')
+        request.user = self.admin
+        apps = admin_site.get_app_list(request)
+        reparto = next(app for app in apps if app['app_label'] == 'reparto')
+
+        self.assertEqual(reparto['name'], 'Repartos')
+        self.assertEqual(reparto['app_url'], '/reparto/')
+        self.assertEqual(reparto['models'][0]['name'], 'Ver mapa')
+        self.assertEqual(reparto['models'][0]['admin_url'], '/reparto/')
+
+    def test_vendedor_no_ve_aplicacion_general_de_repartos(self):
+        from VentaStockManager.admin import admin_site
+
+        request = RequestFactory().get('/admin/')
+        request.user = self.usuario_vendedor
+        apps = admin_site.get_app_list(request)
+
+        self.assertNotIn('reparto', {app['app_label'] for app in apps})
 
     def test_admin_asigna_solo_pedidos_seleccionados(self):
         direccion = DireccionCliente.objects.create(

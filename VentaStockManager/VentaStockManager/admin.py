@@ -142,6 +142,39 @@ class MyAdminSite(MaterialAdminSite):
                 continue
             valid_apps.append(app)
 
+        # Repartos es una pantalla operativa y no un ModelAdmin, por eso
+        # Django no la incluye por sí solo en el índice. La presentamos
+        # como una aplicación virtual para que el administrador llegue al
+        # mapa con la misma navegación que usa para Ventas o Clientes.
+        # Solo se inyecta en el índice general: /admin/reparto/ no existe
+        # y el app_url lleva directamente al panel real.
+        if (
+            app_label is None
+            and request.user.is_authenticated
+            and request.user.is_superuser
+        ):
+            valid_apps.append({
+                'name': 'Repartos',
+                'app_label': 'reparto',
+                'app_url': '/reparto/',
+                'has_module_perms': True,
+                'icon': 'local_shipping',
+                'models': [{
+                    'name': 'Ver mapa',
+                    'object_name': 'MapaRepartos',
+                    'admin_url': '/reparto/',
+                    'add_url': None,
+                    'perms': {
+                        'add': False,
+                        'change': False,
+                        'delete': False,
+                        'view': True,
+                    },
+                    'icon': 'map',
+                    'view_only': True,
+                }],
+            })
+
         # Orden CUSTOM del dashboard pensado para el flow del operador.
         # No alfabético — el alfabético deja "Auditoría" arriba y "Venta"
         # abajo, que es lo contrario a lo que el operador necesita.
@@ -151,16 +184,17 @@ class MyAdminSite(MaterialAdminSite):
         # que más usa (Venta, Cliente, Articulo).
         APP_ORDER = {
             'venta': 1,        # más usado: cargar ventas todos los días
-            'cliente': 2,       # asociado a ventas
-            'articulo': 3,      # consulta de precios/stock
-            'compra': 4,        # menos frecuente: cargar facturas de proveedores
-            'vendedor': 5,
-            'factura_config': 6,
-            'wa_campania': 7,   # solo superuser
-            'configuracion': 8, # solo superuser
-            'auth': 9,          # User admin — superuser only en la práctica
-            'auditlog': 10,
-            'django_q': 11,     # tareas internas, último
+            'reparto': 2,       # operación diaria: mapa y entregas
+            'cliente': 3,       # asociado a ventas
+            'articulo': 4,      # consulta de precios/stock
+            'compra': 5,        # menos frecuente: cargar facturas de proveedores
+            'vendedor': 6,
+            'factura_config': 7,
+            'wa_campania': 8,   # solo superuser
+            'configuracion': 9, # solo superuser
+            'auth': 10,         # User admin — superuser only en la práctica
+            'auditlog': 11,
+            'django_q': 12,     # tareas internas, último
         }
         app_list = sorted(
             valid_apps,
@@ -170,6 +204,8 @@ class MyAdminSite(MaterialAdminSite):
 
         # Add icons to the app list
         for app in app_list:
+            if app.get('icon'):
+                continue
             app_config = apps.get_app_config(app['app_label'])
             app['icon'] = getattr(app_config, 'icon_name', 'default_icon')
 
