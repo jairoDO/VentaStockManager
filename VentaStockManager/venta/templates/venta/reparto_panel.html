@@ -14,7 +14,7 @@
   {{ mapa|json_script:"pedidos-mapa" }}
   <form style="display:none">{% csrf_token %}</form>
 
-  <main x-data="repartoPanel()" x-init="init()" class="max-w-6xl mx-auto p-3 md:p-6">
+  <main x-data="repartoPanel()" x-init="inicializarPanel()" class="max-w-6xl mx-auto p-3 md:p-6">
     <header class="bg-white rounded-xl shadow-sm p-4 mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <div>
         <p class="text-xs uppercase tracking-wide text-slate-500">{% if es_vista_general %}Administración{% else %}Repartidor{% endif %}</p>
@@ -64,13 +64,27 @@
          :class="mensajeError ? 'bg-red-50 border-red-300 text-red-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'"
          class="border rounded-lg p-3 mb-4 text-sm" x-text="mensaje"></div>
 
+    {% if pedidos %}
+      <section class="bg-white rounded-xl shadow-sm p-4 mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h2 class="font-bold text-slate-800">Orden de entrega</h2>
+          <p class="text-sm text-slate-500">Usá la ubicación actual del teléfono para empezar por el pedido más cercano.</p>
+        </div>
+        <button type="button" @click="ordenarPorCercania()" :disabled="ubicando"
+                class="shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg font-semibold">
+          <span x-show="!ubicando">📍 Ordenar por cercanía</span>
+          <span x-show="ubicando" x-cloak>Buscando ubicación…</span>
+        </button>
+      </section>
+    {% endif %}
+
     <section class="bg-white rounded-xl shadow-sm overflow-hidden mb-4">
       <div id="mapa-repartos" class="h-72 md:h-96 bg-slate-200"></div>
     </section>
 
-    <section class="space-y-3">
+    <section class="space-y-3" x-ref="listaPedidos">
       {% for pedido in pedidos %}
-        <article id="pedido-{{ pedido.id }}" class="bg-white rounded-xl shadow-sm p-4 border-l-4
+        <article id="pedido-{{ pedido.id }}" data-pedido-id="{{ pedido.id }}" class="bg-white rounded-xl shadow-sm p-4 border-l-4
           {% if pedido.estado == 'Entregado' %}border-emerald-500
           {% elif pedido.estado == 'No entregado' %}border-red-500
           {% elif pedido.estado == 'En reparto' %}border-orange-500
@@ -81,6 +95,11 @@
                 <h2 class="font-bold text-lg">{{ pedido.venta.cliente.nombre_completo }}</h2>
                 <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-700">{{ pedido.estado }}</span>
                 <span class="text-xs font-mono text-slate-400">#{{ pedido.id }}</span>
+                <span x-show="pedidoMasCercano === {{ pedido.id }}" x-cloak
+                      class="text-xs px-2 py-1 rounded-full bg-blue-600 text-white font-bold">📍 Más cercano</span>
+                <span x-show="distancias[{{ pedido.id }}] !== undefined" x-cloak
+                      class="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-800 font-semibold"
+                      x-text="formatearDistancia(distancias[{{ pedido.id }}])"></span>
               </div>
               <p class="text-sm text-slate-700 mt-1">{{ pedido.direccion_entrega_texto|default:"Sin dirección cargada" }}</p>
               {% if pedido.localidad_entrega %}<p class="text-xs text-slate-500">{{ pedido.localidad_entrega }}, {{ pedido.provincia_entrega }}</p>{% endif %}
@@ -203,10 +222,14 @@
         ...modalState(),
         mapaDatos: [],
         mapa: null,
+        marcadorUbicacion: null,
         mensaje: '',
         mensajeError: false,
+        ubicando: false,
+        pedidoMasCercano: null,
+        distancias: {},
         noEntregado: {abierto: false, pedidoId: null, motivo: '', observacion: '', error: ''},
-        init() {
+        inicializarPanel() {
           this.mapaDatos = JSON.parse(document.getElementById('pedidos-mapa').textContent || '[]');
           this.$nextTick(() => this.inicializarMapa());
         },
@@ -247,6 +270,125 @@
             puntos.push([pedido.latitud, pedido.longitud]);
           }
           if (puntos.length) this.mapa.fitBounds(puntos, {padding: [30, 30], maxZoom: 16});
+        },
+        distanciaKm(latitudOrigen, longitudOrigen, latitudDestino, longitudDestino) {
+          const aRadianes = grados => grados * Math.PI / 180;
+          const radioTierraKm = 6371;
+          const diferenciaLatitud = aRadianes(latitudDestino - latitudOrigen);
+          const diferenciaLongitud = aRadianes(longitudDestino - longitudOrigen);
+          const latitudOrigenRad = aRadianes(latitudOrigen);
+          const latitudDestinoRad = aRadianes(latitudDestino);
+          const haversine = Math.sin(diferenciaLatitud / 2) ** 2
+            + Math.cos(latitudOrigenRad) * Math.cos(latitudDestinoRad)
+            * Math.sin(diferenciaLongitud / 2) ** 2;
+          return radioTierraKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+        },
+        formatearDistancia(distanciaKm) {
+          if (!Number.isFinite(distanciaKm)) return '';
+          if (distanciaKm < 1) return `${Math.max(1, Math.round(distanciaKm * 1000))} m`;
+          return `${distanciaKm.toFixed(1).replace('.', ',')} km`;
+        },
+        ordenarTarjetas(pedidosOrdenados) {
+          if (!this.$refs.listaPedidos) return;
+          const posiciones = new Map(
+            pedidosOrdenados.map((pedido, posicion) => [String(pedido.id), posicion]),
+          );
+          const tarjetas = Array.from(
+            this.$refs.listaPedidos.querySelectorAll('[data-pedido-id]'),
+          );
+          tarjetas.sort((primera, segunda) => {
+            const posicionPrimera = posiciones.get(primera.dataset.pedidoId) ?? Number.MAX_SAFE_INTEGER;
+            const posicionSegunda = posiciones.get(segunda.dataset.pedidoId) ?? Number.MAX_SAFE_INTEGER;
+            return posicionPrimera - posicionSegunda;
+          });
+          for (const tarjeta of tarjetas) this.$refs.listaPedidos.appendChild(tarjeta);
+        },
+        mostrarUbicacionEnMapa(latitud, longitud) {
+          if (!this.mapa || !window.L) return;
+          if (this.marcadorUbicacion) this.mapa.removeLayer(this.marcadorUbicacion);
+          this.marcadorUbicacion = L.circleMarker([latitud, longitud], {
+            radius: 9,
+            color: '#ffffff',
+            weight: 3,
+            fillColor: '#0f172a',
+            fillOpacity: 1,
+          }).addTo(this.mapa).bindPopup('Tu ubicación actual');
+          this.mapa.setView([latitud, longitud], Math.max(this.mapa.getZoom(), 14));
+        },
+        ordenarPorCercania() {
+          this.mensaje = '';
+          this.mensajeError = false;
+          if (!navigator.geolocation) {
+            this.mensajeError = true;
+            this.mensaje = 'Este dispositivo no permite obtener la ubicación.';
+            return;
+          }
+
+          this.ubicando = true;
+          navigator.geolocation.getCurrentPosition(
+            posicion => {
+              const latitudActual = posicion.coords.latitude;
+              const longitudActual = posicion.coords.longitude;
+              const pedidosCalculados = this.mapaDatos.map((pedido, indiceOriginal) => {
+                const latitud = Number(pedido.latitud);
+                const longitud = Number(pedido.longitud);
+                const tieneCoordenadas = pedido.latitud !== null
+                  && pedido.longitud !== null
+                  && Number.isFinite(latitud)
+                  && Number.isFinite(longitud);
+                const estaEntregado = pedido.estado === 'Entregado';
+                return {
+                  ...pedido,
+                  indiceOriginal,
+                  distancia: tieneCoordenadas && !estaEntregado
+                    ? this.distanciaKm(latitudActual, longitudActual, latitud, longitud)
+                    : null,
+                  grupoOrden: estaEntregado ? 2 : (tieneCoordenadas ? 0 : 1),
+                };
+              });
+
+              pedidosCalculados.sort((primero, segundo) => {
+                if (primero.grupoOrden !== segundo.grupoOrden) {
+                  return primero.grupoOrden - segundo.grupoOrden;
+                }
+                if (primero.distancia !== null && segundo.distancia !== null) {
+                  return primero.distancia - segundo.distancia;
+                }
+                return primero.indiceOriginal - segundo.indiceOriginal;
+              });
+
+              const cercanos = pedidosCalculados.filter(pedido => pedido.distancia !== null);
+              if (!cercanos.length) {
+                this.mensajeError = true;
+                this.mensaje = 'No hay pedidos pendientes con coordenadas para ordenar.';
+                this.pedidoMasCercano = null;
+                this.distancias = {};
+                this.ubicando = false;
+                return;
+              }
+
+              this.distancias = Object.fromEntries(
+                cercanos.map(pedido => [pedido.id, pedido.distancia]),
+              );
+              this.pedidoMasCercano = cercanos[0].id;
+              this.ordenarTarjetas(pedidosCalculados);
+              this.mostrarUbicacionEnMapa(latitudActual, longitudActual);
+              this.mensajeError = false;
+              this.mensaje = `Pedidos ordenados por cercanía. El pedido #${this.pedidoMasCercano} es el más próximo.`;
+              this.ubicando = false;
+            },
+            error => {
+              const mensajes = {
+                1: 'Para ordenar por cercanía, permití el acceso a la ubicación del teléfono.',
+                2: 'No pudimos determinar tu ubicación. Revisá que el GPS esté activado.',
+                3: 'La ubicación demoró demasiado. Volvé a intentarlo.',
+              };
+              this.mensajeError = true;
+              this.mensaje = mensajes[error.code] || 'No pudimos obtener tu ubicación.';
+              this.ubicando = false;
+            },
+            {enableHighAccuracy: true, timeout: 15000, maximumAge: 60000},
+          );
         },
         async actualizarEstado(pedidoId, estado, motivo = '', observacion = '') {
           this.mensaje = '';

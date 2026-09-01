@@ -482,6 +482,10 @@ class RepartoFlujoTests(TestCase):
         self.assertContains(panel, 'Ver pedido completo')
         self.assertContains(panel, self.articulo.nombre)
         self.assertContains(panel, 'Pendiente de cobro')
+        self.assertContains(panel, 'Ordenar por cercanía')
+        self.assertContains(panel, 'Más cercano')
+        self.assertContains(panel, 'navigator.geolocation')
+        self.assertContains(panel, 'data-pedido-id')
 
         response = self.client.post(
             reverse('reparto_actualizar_estado', args=[pedido.pk]),
