@@ -1,0 +1,252 @@
+{% comment %}
+Planificación de reparto para administradores. La lista se pagina en el
+servidor, pero "seleccionar todos" envía el filtro completo: la vista vuelve
+a calcular el queryset y asigna también los pedidos de las páginas no visibles.
+{% endcomment %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planificar reparto</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>[x-cloak] { display: none !important; }</style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+  <main class="mx-auto max-w-7xl p-4 md:p-7">
+    <header class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <a href="/admin/" class="text-sm font-medium text-blue-700 hover:underline">← Volver al administrador</a>
+        <h1 class="mt-2 text-2xl font-bold md:text-3xl">Planificar reparto</h1>
+        <p class="mt-1 text-sm text-slate-500">
+          Elegí la fecha y uno o más vendedores; después asigná la tanda completa a un repartidor.
+        </p>
+      </div>
+      <a href="{% url 'reparto_panel' %}"
+         class="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100">
+        🗺 Ver mapa
+      </a>
+    </header>
+
+    {% if messages %}
+      <div class="mb-5 space-y-2">
+        {% for message in messages %}
+          <div class="rounded-lg border px-4 py-3 text-sm font-medium
+                      {% if message.tags == 'error' %}border-red-300 bg-red-50 text-red-800
+                      {% elif message.tags == 'success' %}border-emerald-300 bg-emerald-50 text-emerald-800
+                      {% else %}border-blue-300 bg-blue-50 text-blue-800{% endif %}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <section class="mb-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <h2 class="text-lg font-bold">1. Buscar pedidos</h2>
+        <a href="{% url 'reparto_planificar' %}"
+           class="text-sm text-blue-700 hover:underline">Limpiar filtros</a>
+      </div>
+
+      <form method="get" class="space-y-5">
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div>
+            <label for="fecha" class="mb-1 block text-sm font-semibold text-slate-700">Fecha de entrega</label>
+            <input id="fecha" name="fecha" type="date" required
+                   value="{{ fecha|date:'Y-m-d' }}"
+                   class="w-full rounded-lg border-2 border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+            <p class="mt-1 text-xs text-slate-500">Al abrir la pantalla se usa la fecha de hoy.</p>
+          </div>
+          <div>
+            <label for="asignacion" class="mb-1 block text-sm font-semibold text-slate-700">Asignación actual</label>
+            <select id="asignacion" name="asignacion"
+                    class="w-full rounded-lg border-2 border-slate-300 bg-white px-3 py-2 focus:border-blue-500 focus:outline-none">
+              <option value="sin_asignar" {% if asignacion == 'sin_asignar' %}selected{% endif %}>Sin repartidor</option>
+              <option value="asignados" {% if asignacion == 'asignados' %}selected{% endif %}>Ya asignados</option>
+              <option value="todos" {% if asignacion == 'todos' %}selected{% endif %}>Todos</option>
+            </select>
+          </div>
+          <div>
+            <label for="localidad" class="mb-1 block text-sm font-semibold text-slate-700">Localidad</label>
+            <select id="localidad" name="localidad"
+                    class="w-full rounded-lg border-2 border-slate-300 bg-white px-3 py-2 focus:border-blue-500 focus:outline-none">
+              <option value="">Todas las localidades</option>
+              {% for localidad in localidades %}
+                <option value="{{ localidad }}" {% if localidad == localidad_actual %}selected{% endif %}>{{ localidad }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <fieldset>
+          <legend class="mb-2 text-sm font-semibold text-slate-700">Vendedores</legend>
+          <div class="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-3">
+            {% for vendedor in vendedores %}
+              <label class="flex cursor-pointer items-center gap-2 rounded-md bg-white px-3 py-2 text-sm hover:bg-blue-50">
+                <input type="checkbox" name="vendedor" value="{{ vendedor.pk }}"
+                       {% if vendedor.seleccionado_planificacion %}checked{% endif %}
+                       class="h-4 w-4 rounded border-slate-300 text-blue-600">
+                <span>{{ vendedor.display_name }}</span>
+              </label>
+            {% empty %}
+              <p class="text-sm text-slate-500">No hay vendedores creados.</p>
+            {% endfor %}
+          </div>
+          <p class="mt-2 text-xs text-slate-500">Si no marcás ninguno, se incluyen todos los vendedores.</p>
+        </fieldset>
+
+        <div class="flex justify-end">
+          <button type="submit"
+                  class="rounded-lg bg-blue-700 px-6 py-2.5 font-semibold text-white shadow-sm hover:bg-blue-800">
+            Buscar pedidos
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <form method="post"
+          x-data="{ seleccionarTodos: false, seleccionados: [] }"
+          class="space-y-5">
+      {% csrf_token %}
+      <input type="hidden" name="fecha" value="{{ fecha|date:'Y-m-d' }}">
+      <input type="hidden" name="asignacion" value="{{ asignacion }}">
+      <input type="hidden" name="localidad" value="{{ localidad_actual }}">
+      {% for vendedor_id in vendedores_ids %}
+        <input type="hidden" name="vendedor" value="{{ vendedor_id }}">
+      {% endfor %}
+
+      <section class="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div class="border-b border-slate-200 p-4 md:p-5">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 class="text-lg font-bold">2. Seleccionar pedidos</h2>
+              <p class="mt-1 text-sm text-slate-500">
+                {{ total_resultados }} pedido{{ total_resultados|pluralize }} encontrado{{ total_resultados|pluralize }}.
+                No se muestran pedidos entregados.
+              </p>
+            </div>
+            {% if total_resultados %}
+              <label class="flex cursor-pointer items-start gap-3 rounded-lg border-2 border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950">
+                <input type="checkbox" name="seleccionar_todos" value="1"
+                       x-model="seleccionarTodos"
+                       @change="if (seleccionarTodos) seleccionados = []"
+                       class="mt-0.5 h-5 w-5 rounded border-blue-400 text-blue-700">
+                <span>
+                  <strong class="block">Seleccionar los {{ total_resultados }} pedidos</strong>
+                  <span class="text-xs text-blue-700">
+                    Incluye todas las páginas, no solamente la página {{ pagina.number }}.
+                  </span>
+                </span>
+              </label>
+            {% endif %}
+          </div>
+        </div>
+
+        {% if sin_ubicacion %}
+          <div class="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:px-5">
+            ⚠ <strong>{{ sin_ubicacion }} pedido{{ sin_ubicacion|pluralize }} sin ubicación confirmada.</strong>
+            Se pueden asignar, pero no aparecerán correctamente en el mapa.
+          </div>
+        {% endif %}
+
+        {% if pagina.object_list %}
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[900px] text-left text-sm">
+              <thead class="bg-slate-100 text-xs uppercase tracking-wide text-slate-600">
+                <tr>
+                  <th class="w-12 px-4 py-3"></th>
+                  <th class="px-4 py-3">Pedido</th>
+                  <th class="px-4 py-3">Cliente</th>
+                  <th class="px-4 py-3">Vendedor</th>
+                  <th class="px-4 py-3">Localidad y dirección</th>
+                  <th class="px-4 py-3">Estado</th>
+                  <th class="px-4 py-3">Repartidor actual</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                {% for pedido in pagina.object_list %}
+                  <tr class="hover:bg-slate-50" :class="seleccionarTodos ? 'bg-blue-50' : ''">
+                    <td class="px-4 py-3">
+                      <input type="checkbox" name="pedido" value="{{ pedido.pk }}"
+                             x-model="seleccionados" :disabled="seleccionarTodos"
+                             class="h-5 w-5 rounded border-slate-300 text-blue-700">
+                    </td>
+                    <td class="px-4 py-3 font-mono font-semibold">#{{ pedido.pk }}</td>
+                    <td class="px-4 py-3 font-medium">{{ pedido.venta.cliente.nombre_completo }}</td>
+                    <td class="px-4 py-3">{{ pedido.venta.vendedor.display_name }}</td>
+                    <td class="px-4 py-3">
+                      <span class="block font-medium">{{ pedido.localidad_entrega|default:"Sin localidad" }}</span>
+                      <span class="block text-xs text-slate-500">{{ pedido.direccion_entrega_texto|default:"Sin dirección" }}</span>
+                      {% if not pedido.tiene_coordenadas_entrega or not pedido.direccion_confirmada %}
+                        <span class="mt-1 block text-xs font-medium text-amber-700">⚠ Ubicación sin confirmar</span>
+                      {% endif %}
+                    </td>
+                    <td class="px-4 py-3">{{ pedido.get_estado_display }}</td>
+                    <td class="px-4 py-3">{{ pedido.repartidor|default:"Sin asignar" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          {% if pagina.paginator.num_pages > 1 %}
+            <nav class="flex flex-col gap-3 border-t border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+                 aria-label="Paginación de pedidos">
+              <p class="text-sm text-slate-500">
+                Página {{ pagina.number }} de {{ pagina.paginator.num_pages }} ·
+                pedidos {{ pagina.start_index }}–{{ pagina.end_index }} de {{ total_resultados }}
+              </p>
+              <div class="flex flex-wrap gap-2">
+                {% if pagina.has_previous %}
+                  <a href="?{% if filtros_query %}{{ filtros_query }}&{% endif %}page={{ pagina.previous_page_number }}"
+                     class="rounded border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-100">← Anterior</a>
+                {% endif %}
+                {% if pagina.has_next %}
+                  <a href="?{% if filtros_query %}{{ filtros_query }}&{% endif %}page={{ pagina.next_page_number }}"
+                     class="rounded border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-100">Siguiente →</a>
+                {% endif %}
+              </div>
+            </nav>
+          {% endif %}
+        {% else %}
+          <div class="p-10 text-center">
+            <p class="text-lg font-semibold text-slate-700">No hay pedidos para estos filtros.</p>
+            <p class="mt-1 text-sm text-slate-500">Probá otra fecha, vendedor o estado de asignación.</p>
+          </div>
+        {% endif %}
+      </section>
+
+      {% if total_resultados %}
+        <section class="sticky bottom-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-xl backdrop-blur md:p-5">
+          <div class="flex flex-col gap-4 md:flex-row md:items-end">
+            <div class="flex-1">
+              <label for="repartidor_id" class="mb-1 block text-sm font-bold text-slate-800">3. Repartidor</label>
+              <select id="repartidor_id" name="repartidor_id" required
+                      class="w-full rounded-lg border-2 border-slate-300 bg-white px-3 py-2.5 focus:border-blue-500 focus:outline-none">
+                <option value="">Elegir repartidor…</option>
+                {% for repartidor in repartidores %}
+                  <option value="{{ repartidor.pk }}">{{ repartidor }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button type="submit"
+                    :disabled="!seleccionarTodos && seleccionados.length === 0"
+                    :class="(!seleccionarTodos && seleccionados.length === 0) ? 'cursor-not-allowed bg-slate-300' : 'bg-emerald-700 hover:bg-emerald-800'"
+                    class="rounded-lg px-6 py-3 font-bold text-white shadow-sm"
+                    x-text="seleccionarTodos ? 'Asignar los {{ total_resultados }} pedidos' : (seleccionados.length ? 'Asignar ' + seleccionados.length + ' pedido(s)' : 'Seleccioná pedidos')">
+              Seleccioná pedidos
+            </button>
+          </div>
+          {% if not repartidores %}
+            <p class="mt-2 text-sm font-medium text-red-700">No hay repartidores activos. Creá uno antes de asignar.</p>
+          {% endif %}
+          <p class="mt-2 text-xs text-slate-500" x-show="!seleccionarTodos" x-cloak>
+            La selección manual corresponde a esta página. Para abarcar todas las páginas usá “Seleccionar los {{ total_resultados }} pedidos”.
+          </p>
+        </section>
+      {% endif %}
+    </form>
+  </main>
+</body>
+</html>

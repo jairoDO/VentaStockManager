@@ -159,20 +159,36 @@ class MyAdminSite(MaterialAdminSite):
                 'app_url': '/reparto/',
                 'has_module_perms': True,
                 'icon': 'local_shipping',
-                'models': [{
-                    'name': 'Ver mapa',
-                    'object_name': 'MapaRepartos',
-                    'admin_url': '/reparto/',
-                    'add_url': None,
-                    'perms': {
-                        'add': False,
-                        'change': False,
-                        'delete': False,
-                        'view': True,
+                'models': [
+                    {
+                        'name': 'Planificar reparto',
+                        'object_name': 'PlanificarReparto',
+                        'admin_url': '/reparto/planificar/',
+                        'add_url': None,
+                        'perms': {
+                            'add': False,
+                            'change': False,
+                            'delete': False,
+                            'view': True,
+                        },
+                        'icon': 'playlist_add_check',
+                        'view_only': True,
                     },
-                    'icon': 'map',
-                    'view_only': True,
-                }],
+                    {
+                        'name': 'Ver mapa',
+                        'object_name': 'MapaRepartos',
+                        'admin_url': '/reparto/',
+                        'add_url': None,
+                        'perms': {
+                            'add': False,
+                            'change': False,
+                            'delete': False,
+                            'view': True,
+                        },
+                        'icon': 'map',
+                        'view_only': True,
+                    },
+                ],
             })
 
         # Orden CUSTOM del dashboard pensado para el flow del operador.

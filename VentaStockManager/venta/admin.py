@@ -324,15 +324,8 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'informe_diario_vendedor_configurado',
         'marcar_como_saldada',
         'registrar_pago',
-        'asignar_repartidor',
     ]
     inlines = (PedidoEstadoHistorialInline,)
-
-    def get_actions(self, request):
-        actions = super().get_actions(request)
-        if not request.user.is_superuser:
-            actions.pop('asignar_repartidor', None)
-        return actions
 
     # Define constants
     ARTICULO_LABEL = 'Artículo'
@@ -458,16 +451,6 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         return HttpResponseRedirect(reverse('generar_pdf_pedidos') + f"?pedidos_ids={','.join(map(str, pedido_ids))}")
 
     generar_pdfs.short_description = "Generar PDFs para pedidos seleccionados"
-
-    @admin.action(description='🚚 Asignar pedidos a repartidor')
-    def asignar_repartidor(self, request, queryset):
-        ids = ','.join(map(str, queryset.values_list('id', flat=True)))
-        if not ids:
-            self.message_user(request, 'Seleccioná al menos un pedido.', level=messages.WARNING)
-            return None
-        return HttpResponseRedirect(
-            reverse('asignar_pedidos_repartidor') + f'?pedidos_ids={ids}'
-        )
 
     @admin.action(description='📄 Informe diario por vendedor (A4)')
     def informe_diario_vendedor_a4(self, request, queryset):

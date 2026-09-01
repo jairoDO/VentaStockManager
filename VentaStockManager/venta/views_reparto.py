@@ -4,25 +4,29 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.views import LoginView
+from django.core.paginator import Paginator
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from vendedor.models import Repartidor
+from vendedor.models import Repartidor, Vendedor
 from venta.models import Pedido, PedidoEstadoHistorial
 from venta.utils import subtotal_linea, total_venta
 
 
 ZONA_HORARIA_OPERATIVA = ZoneInfo('America/Argentina/Cordoba')
+PEDIDOS_POR_PAGINA = 20
 
 
 def _fecha_hoy_operativa():
@@ -93,31 +97,95 @@ def _es_admin(user):
     return user.is_authenticated and user.is_superuser
 
 
-@user_passes_test(_es_admin, login_url='/admin/login/')
-def asignar_pedidos_repartidor(request):
-    """Pantalla intermedia de la acción masiva del PedidoAdmin."""
-    ids = _parse_ids(request.POST.get('pedidos_ids') or request.GET.get('pedidos_ids'))
-    pedidos = list(
-        Pedido.objects.filter(pk__in=ids)
-        .select_related('venta__cliente', 'venta__vendedor', 'repartidor')
-        .order_by('venta__fecha_entrega', 'venta__cliente__nombre')
-    )
-    if not pedidos:
-        messages.error(request, 'No se encontraron pedidos para asignar.')
-        return redirect('/admin/venta/pedido/')
+def _filtros_planificacion(request):
+    """Normaliza los filtros GET/POST usados para listar y asignar pedidos."""
+    datos = request.POST if request.method == 'POST' else request.GET
+    fecha_raw = datos.get('fecha') or str(_fecha_hoy_operativa())
+    try:
+        fecha = date.fromisoformat(fecha_raw)
+    except ValueError:
+        fecha = _fecha_hoy_operativa()
 
+    vendedores_ids = _parse_ids(','.join(datos.getlist('vendedor')))
+    asignacion = datos.get('asignacion') or 'sin_asignar'
+    if asignacion not in {'sin_asignar', 'asignados', 'todos'}:
+        asignacion = 'sin_asignar'
+
+    return {
+        'fecha': fecha,
+        'vendedores_ids': vendedores_ids,
+        'asignacion': asignacion,
+        'localidad': (datos.get('localidad') or '').strip(),
+    }
+
+
+def _pedidos_para_planificar(filtros):
+    """Fuente única de resultados; también protege la selección global."""
+    queryset = (
+        Pedido.objects
+        .filter(venta__fecha_entrega=filtros['fecha'])
+        .exclude(estado=Pedido.ENTREGADO)
+        .select_related(
+            'venta__cliente', 'venta__vendedor__usuario', 'repartidor__usuario',
+        )
+        .order_by('localidad_entrega', 'venta__cliente__nombre', 'pk')
+    )
+    if filtros['vendedores_ids']:
+        queryset = queryset.filter(venta__vendedor_id__in=filtros['vendedores_ids'])
+    if filtros['asignacion'] == 'sin_asignar':
+        queryset = queryset.filter(repartidor__isnull=True)
+    elif filtros['asignacion'] == 'asignados':
+        queryset = queryset.filter(repartidor__isnull=False)
+    if filtros['localidad']:
+        queryset = queryset.filter(localidad_entrega=filtros['localidad'])
+    return queryset
+
+
+def _url_planificacion(filtros):
+    parametros = {
+        'fecha': filtros['fecha'].isoformat(),
+        'asignacion': filtros['asignacion'],
+    }
+    if filtros['vendedores_ids']:
+        parametros['vendedor'] = filtros['vendedores_ids']
+    if filtros['localidad']:
+        parametros['localidad'] = filtros['localidad']
+    return f"{reverse('reparto_planificar')}?{urlencode(parametros, doseq=True)}"
+
+
+@user_passes_test(_es_admin, login_url='/admin/login/')
+def planificar_reparto(request):
+    """Bandeja paginada para filtrar y asignar una tanda de reparto."""
+    filtros = _filtros_planificacion(request)
+    queryset = _pedidos_para_planificar(filtros)
     if request.method == 'POST':
-        repartidor_id = request.POST.get('repartidor_id')
-        repartidor = get_object_or_404(Repartidor, pk=repartidor_id, activo=True)
+        repartidor = get_object_or_404(
+            Repartidor,
+            pk=request.POST.get('repartidor_id'),
+            activo=True,
+        )
+        if request.POST.get('seleccionar_todos') == '1':
+            pedidos_ids = list(queryset.values_list('pk', flat=True))
+        else:
+            elegidos = _parse_ids(','.join(request.POST.getlist('pedido')))
+            pedidos_ids = list(
+                queryset.filter(pk__in=elegidos).values_list('pk', flat=True)
+            )
+
+        if not pedidos_ids:
+            messages.error(request, 'Seleccioná al menos un pedido para asignar.')
+            return redirect(_url_planificacion(filtros))
+
         asignados = 0
         omitidos = 0
         with transaction.atomic():
-            bloqueados = {
-                pedido.pk: pedido
-                for pedido in Pedido.objects.select_for_update().filter(pk__in=ids)
-            }
-            for pedido_original in pedidos:
-                pedido = bloqueados[pedido_original.pk]
+            pedidos = list(
+                Pedido.objects
+                .select_for_update()
+                .filter(pk__in=pedidos_ids)
+                .order_by('pk')
+            )
+            for pedido in pedidos:
                 if pedido.estado == Pedido.ENTREGADO:
                     omitidos += 1
                     continue
@@ -135,7 +203,7 @@ def asignar_pedidos_repartidor(request):
                     estado_anterior=anterior,
                     estado_nuevo=pedido.estado,
                     usuario=request.user,
-                    observacion=f'Asignado a {repartidor}',
+                    observacion=f'Planificación de reparto: asignado a {repartidor}',
                 )
                 asignados += 1
 
@@ -143,13 +211,55 @@ def asignar_pedidos_repartidor(request):
         if omitidos:
             mensaje += f' {omitidos} entregado(s) no se modificaron.'
         messages.success(request, mensaje)
-        return redirect('/admin/venta/pedido/')
+        return redirect(_url_planificacion(filtros))
 
-    return render(request, 'venta/reparto_asignar.html', {
-        'pedidos': pedidos,
-        'pedidos_ids': ','.join(str(p.pk) for p in pedidos),
+    total_resultados = queryset.count()
+    sin_ubicacion = queryset.filter(
+        Q(direccion_confirmada=False)
+        | Q(latitud_entrega__isnull=True)
+        | Q(longitud_entrega__isnull=True)
+    ).count()
+    pagina = Paginator(queryset, PEDIDOS_POR_PAGINA).get_page(request.GET.get('page'))
+
+    vendedores = list(
+        Vendedor.objects.select_related('usuario').order_by('usuario__username')
+    )
+    vendedores_elegidos = {str(pk) for pk in filtros['vendedores_ids']}
+    for vendedor in vendedores:
+        vendedor.seleccionado_planificacion = str(vendedor.pk) in vendedores_elegidos
+
+    base_localidades = (
+        Pedido.objects
+        .filter(venta__fecha_entrega=filtros['fecha'])
+        .exclude(estado=Pedido.ENTREGADO)
+    )
+    if filtros['vendedores_ids']:
+        base_localidades = base_localidades.filter(
+            venta__vendedor_id__in=filtros['vendedores_ids']
+        )
+    localidades = list(
+        base_localidades
+        .exclude(localidad_entrega='')
+        .order_by('localidad_entrega')
+        .values_list('localidad_entrega', flat=True)
+        .distinct()
+    )
+
+    query_sin_pagina = request.GET.copy()
+    query_sin_pagina.pop('page', None)
+    return render(request, 'venta/reparto_planificar.html', {
+        'pagina': pagina,
+        'total_resultados': total_resultados,
+        'sin_ubicacion': sin_ubicacion,
         'repartidores': Repartidor.objects.filter(activo=True).select_related('usuario'),
-        'sin_ubicacion': sum(not p.tiene_coordenadas_entrega for p in pedidos),
+        'vendedores': vendedores,
+        'vendedores_ids': filtros['vendedores_ids'],
+        'fecha': filtros['fecha'],
+        'hoy': _fecha_hoy_operativa(),
+        'asignacion': filtros['asignacion'],
+        'localidad_actual': filtros['localidad'],
+        'localidades': localidades,
+        'filtros_query': query_sin_pagina.urlencode(),
     })
 
 

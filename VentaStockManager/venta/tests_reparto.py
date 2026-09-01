@@ -49,12 +49,12 @@ class RepartoFlujoTests(TestCase):
             vencimiento=date.today() + timedelta(days=60),
         )
 
-    def _crear_venta(self, cliente=None):
+    def _crear_venta(self, cliente=None, fecha_entrega=None, vendedor=None):
         venta = Venta.objects.create(
             fecha_compra=date.today(),
-            fecha_entrega=date.today(),
+            fecha_entrega=fecha_entrega or date.today(),
             cliente=cliente or self.cliente,
-            vendedor=self.vendedor,
+            vendedor=vendedor or self.vendedor,
         )
         ArticuloVenta.objects.create(
             venta=venta,
@@ -287,8 +287,10 @@ class RepartoFlujoTests(TestCase):
 
         self.assertEqual(reparto['name'], 'Repartos')
         self.assertEqual(reparto['app_url'], '/reparto/')
-        self.assertEqual(reparto['models'][0]['name'], 'Ver mapa')
-        self.assertEqual(reparto['models'][0]['admin_url'], '/reparto/')
+        self.assertEqual(reparto['models'][0]['name'], 'Planificar reparto')
+        self.assertEqual(reparto['models'][0]['admin_url'], '/reparto/planificar/')
+        self.assertEqual(reparto['models'][1]['name'], 'Ver mapa')
+        self.assertEqual(reparto['models'][1]['admin_url'], '/reparto/')
 
     def test_vendedor_no_ve_aplicacion_general_de_repartos(self):
         from VentaStockManager.admin import admin_site
@@ -318,14 +320,17 @@ class RepartoFlujoTests(TestCase):
 
         self.client.force_login(self.admin)
         response = self.client.post(
-            reverse('asignar_pedidos_repartidor'),
+            reverse('reparto_planificar'),
             data={
-                'pedidos_ids': str(pedido_elegido.pk),
+                'fecha': str(date.today()),
+                'asignacion': 'sin_asignar',
+                'pedido': str(pedido_elegido.pk),
                 'repartidor_id': str(self.repartidor.pk),
             },
         )
 
-        self.assertRedirects(response, '/admin/venta/pedido/', fetch_redirect_response=False)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse('reparto_planificar')))
         pedido_elegido.refresh_from_db()
         otro_pedido.refresh_from_db()
         self.assertEqual(pedido_elegido.repartidor, self.repartidor)
@@ -351,9 +356,10 @@ class RepartoFlujoTests(TestCase):
         pedido = self._crear_venta().pedido
         self.client.force_login(self.usuario_vendedor)
         response = self.client.post(
-            reverse('asignar_pedidos_repartidor'),
+            reverse('reparto_planificar'),
             data={
-                'pedidos_ids': str(pedido.pk),
+                'fecha': str(date.today()),
+                'pedido': str(pedido.pk),
                 'repartidor_id': str(self.repartidor.pk),
             },
         )
@@ -362,6 +368,89 @@ class RepartoFlujoTests(TestCase):
         self.assertIn('/admin/login/', response.url)
         pedido.refresh_from_db()
         self.assertIsNone(pedido.repartidor)
+
+    def test_planificacion_abre_en_hoy_y_no_esta_en_acciones_de_pedido(self):
+        from VentaStockManager.admin import admin_site
+
+        pedido_hoy = self._crear_venta().pedido
+        pedido_manana = self._crear_venta(
+            fecha_entrega=date.today() + timedelta(days=1),
+        ).pedido
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse('reparto_planificar'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['fecha'], date.today())
+        self.assertContains(response, f'value="{date.today().isoformat()}"')
+        self.assertContains(response, f'#{pedido_hoy.pk}')
+        self.assertNotContains(response, f'#{pedido_manana.pk}')
+        request = RequestFactory().get('/admin/venta/pedido/')
+        request.user = self.admin
+        pedido_admin = admin_site._registry[Pedido]
+        self.assertNotIn('asignar_repartidor', pedido_admin.get_actions(request))
+
+    def test_planificacion_selecciona_todos_los_filtros_incluso_otras_paginas(self):
+        User = get_user_model()
+        usuario_vendedor_dos = User.objects.create_user(
+            'vendedor_reparto_dos', password='x', is_staff=True,
+        )
+        vendedor_dos = Vendedor.objects.create(
+            usuario=usuario_vendedor_dos,
+            nombre='Venta',
+            apellido='Dos',
+        )
+        usuario_vendedor_tres = User.objects.create_user(
+            'vendedor_reparto_tres', password='x', is_staff=True,
+        )
+        vendedor_tres = Vendedor.objects.create(
+            usuario=usuario_vendedor_tres,
+            nombre='Venta',
+            apellido='Tres',
+        )
+        pedidos_vendedor_uno = [
+            self._crear_venta().pedido
+            for _ in range(21)
+        ]
+        pedido_vendedor_dos = self._crear_venta(vendedor=vendedor_dos).pedido
+        pedido_vendedor_tres = self._crear_venta(vendedor=vendedor_tres).pedido
+        pedido_manana = self._crear_venta(
+            fecha_entrega=date.today() + timedelta(days=1),
+        ).pedido
+
+        self.client.force_login(self.admin)
+        filtros = {
+            'fecha': str(date.today()),
+            'vendedor': [str(self.vendedor.pk), str(vendedor_dos.pk)],
+            'asignacion': 'sin_asignar',
+        }
+        primera_pagina = self.client.get(reverse('reparto_planificar'), filtros)
+
+        self.assertEqual(primera_pagina.status_code, 200)
+        self.assertEqual(primera_pagina.context['total_resultados'], 22)
+        self.assertEqual(primera_pagina.context['pagina'].paginator.num_pages, 2)
+        self.assertContains(primera_pagina, 'Incluye todas las páginas')
+
+        asignar = self.client.post(reverse('reparto_planificar'), {
+            **filtros,
+            'seleccionar_todos': '1',
+            'repartidor_id': str(self.repartidor.pk),
+        })
+
+        self.assertEqual(asignar.status_code, 302)
+        self.assertEqual(
+            Pedido.objects.filter(
+                pk__in=[pedido.pk for pedido in pedidos_vendedor_uno],
+                repartidor=self.repartidor,
+            ).count(),
+            21,
+        )
+        pedido_vendedor_dos.refresh_from_db()
+        pedido_vendedor_tres.refresh_from_db()
+        pedido_manana.refresh_from_db()
+        self.assertEqual(pedido_vendedor_dos.repartidor, self.repartidor)
+        self.assertIsNone(pedido_vendedor_tres.repartidor)
+        self.assertIsNone(pedido_manana.repartidor)
 
     def test_repartidor_solo_actualiza_sus_pedidos(self):
         direccion = DireccionCliente.objects.create(
