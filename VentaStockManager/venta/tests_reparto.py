@@ -429,7 +429,12 @@ class RepartoFlujoTests(TestCase):
         self.assertEqual(primera_pagina.status_code, 200)
         self.assertEqual(primera_pagina.context['total_resultados'], 22)
         self.assertEqual(primera_pagina.context['pagina'].paginator.num_pages, 2)
-        self.assertContains(primera_pagina, 'Incluye todas las páginas')
+        self.assertContains(
+            primera_pagina,
+            'Seleccionar los 20 pedidos de esta página',
+        )
+        self.assertContains(primera_pagina, 'Incluir también todas las páginas')
+        self.assertContains(primera_pagina, 'Es opcional')
 
         asignar = self.client.post(reverse('reparto_planificar'), {
             **filtros,

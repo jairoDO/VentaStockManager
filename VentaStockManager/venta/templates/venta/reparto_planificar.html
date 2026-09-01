@@ -106,7 +106,15 @@ a calcular el queryset y asigna también los pedidos de las páginas no visibles
     </section>
 
     <form method="post"
-          x-data="{ seleccionarTodos: false, seleccionados: [] }"
+          x-data="{
+            seleccionarTodos: false,
+            seleccionarPagina: false,
+            seleccionados: [],
+            idsPagina: [{% for pedido in pagina.object_list %}'{{ pedido.pk }}'{% if not forloop.last %}, {% endif %}{% endfor %}],
+            cambiarSeleccionPagina() {
+              this.seleccionados = this.seleccionarPagina ? [...this.idsPagina] : [];
+            },
+          }"
           class="space-y-5">
       {% csrf_token %}
       <input type="hidden" name="fecha" value="{{ fecha|date:'Y-m-d' }}">
@@ -127,18 +135,33 @@ a calcular el queryset y asigna también los pedidos de las páginas no visibles
               </p>
             </div>
             {% if total_resultados %}
-              <label class="flex cursor-pointer items-start gap-3 rounded-lg border-2 border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950">
-                <input type="checkbox" name="seleccionar_todos" value="1"
-                       x-model="seleccionarTodos"
-                       @change="if (seleccionarTodos) seleccionados = []"
-                       class="mt-0.5 h-5 w-5 rounded border-blue-400 text-blue-700">
-                <span>
-                  <strong class="block">Seleccionar los {{ total_resultados }} pedidos</strong>
-                  <span class="text-xs text-blue-700">
-                    Incluye todas las páginas, no solamente la página {{ pagina.number }}.
+              <div class="flex flex-col gap-2">
+                <label class="flex cursor-pointer items-start gap-3 rounded-lg border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900">
+                  <input type="checkbox"
+                         x-model="seleccionarPagina"
+                         :disabled="seleccionarTodos"
+                         @change="cambiarSeleccionPagina()"
+                         class="mt-0.5 h-5 w-5 rounded border-slate-400 text-blue-700">
+                  <span>
+                    <strong class="block">Seleccionar los {{ pagina.object_list|length }} pedidos de esta página</strong>
+                    <span class="text-xs text-slate-600">No afecta las otras páginas.</span>
                   </span>
-                </span>
-              </label>
+                </label>
+                {% if pagina.paginator.num_pages > 1 %}
+                  <label class="flex cursor-pointer items-start gap-3 rounded-lg border-2 border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950">
+                    <input type="checkbox" name="seleccionar_todos" value="1"
+                           x-model="seleccionarTodos"
+                           @change="seleccionados = []; seleccionarPagina = false"
+                           class="mt-0.5 h-5 w-5 rounded border-blue-400 text-blue-700">
+                    <span>
+                      <strong class="block">Incluir también todas las páginas</strong>
+                      <span class="text-xs text-blue-700">
+                        Es opcional: amplía la selección a los {{ total_resultados }} pedidos encontrados.
+                      </span>
+                    </span>
+                  </label>
+                {% endif %}
+              </div>
             {% endif %}
           </div>
         </div>
@@ -170,6 +193,7 @@ a calcular el queryset y asigna también los pedidos de las páginas no visibles
                     <td class="px-4 py-3">
                       <input type="checkbox" name="pedido" value="{{ pedido.pk }}"
                              x-model="seleccionados" :disabled="seleccionarTodos"
+                             @change="seleccionarPagina = seleccionados.length === idsPagina.length"
                              class="h-5 w-5 rounded border-slate-300 text-blue-700">
                     </td>
                     <td class="px-4 py-3 font-mono font-semibold">#{{ pedido.pk }}</td>
@@ -242,7 +266,7 @@ a calcular el queryset y asigna también los pedidos de las páginas no visibles
             <p class="mt-2 text-sm font-medium text-red-700">No hay repartidores activos. Creá uno antes de asignar.</p>
           {% endif %}
           <p class="mt-2 text-xs text-slate-500" x-show="!seleccionarTodos" x-cloak>
-            La selección manual corresponde a esta página. Para abarcar todas las páginas usá “Seleccionar los {{ total_resultados }} pedidos”.
+            La selección normal corresponde a esta página. “Incluir también todas las páginas” es opcional.
           </p>
         </section>
       {% endif %}
