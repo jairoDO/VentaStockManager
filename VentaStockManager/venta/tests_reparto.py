@@ -405,6 +405,9 @@ class RepartoFlujoTests(TestCase):
         response = self.client.get(reverse('admin:venta_pedido_changelist'))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="toggle-fecha-compra-pedidos"')
+        self.assertContains(response, 'Mostrar fecha de compra')
+        self.assertContains(response, 'td.field-venta_fecha_compra')
         ids_ordenados = [pedido.pk for pedido in response.context['cl'].result_list]
         self.assertEqual(
             ids_ordenados,

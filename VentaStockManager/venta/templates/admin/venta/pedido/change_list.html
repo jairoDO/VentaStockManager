@@ -17,6 +17,13 @@ El contexto `resumen_cobranza` lo inyecta `PedidoAdmin.changelist_view`.
 {% endblock %}
 
 {% block result_list %}
+  <style>
+    html:not(.mostrar-fecha-compra-pedidos) th.column-venta_fecha_compra,
+    html:not(.mostrar-fecha-compra-pedidos) td.field-venta_fecha_compra {
+      display: none;
+    }
+  </style>
+
   {% if resumen_cobranza %}
     <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
                 padding:14px 18px; margin-bottom:14px; display:flex; gap:24px;
@@ -44,5 +51,42 @@ El contexto `resumen_cobranza` lo inyecta `PedidoAdmin.changelist_view`.
       </div>
     </div>
   {% endif %}
+
+  <div style="display:flex; justify-content:flex-end; margin:0 0 12px;">
+    <button type="button" id="toggle-fecha-compra-pedidos" aria-pressed="false"
+            style="display:inline-flex; align-items:center; gap:7px; padding:8px 13px;
+                   border:1px solid #cbd5e1; border-radius:6px; background:#fff;
+                   color:#334155; font-weight:600; cursor:pointer;">
+      <span aria-hidden="true">👁</span>
+      <span id="toggle-fecha-compra-pedidos-label">Mostrar fecha de compra</span>
+    </button>
+  </div>
+
   {{ block.super }}
+
+  <script>
+    (function () {
+      function iniciarToggleFechaCompra() {
+        const boton = document.getElementById('toggle-fecha-compra-pedidos');
+        const etiqueta = document.getElementById('toggle-fecha-compra-pedidos-label');
+        if (!boton || !etiqueta) return;
+
+        boton.addEventListener('click', function () {
+          const mostrando = document.documentElement.classList.toggle(
+            'mostrar-fecha-compra-pedidos'
+          );
+          boton.setAttribute('aria-pressed', String(mostrando));
+          etiqueta.textContent = mostrando
+            ? 'Ocultar fecha de compra'
+            : 'Mostrar fecha de compra';
+        });
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', iniciarToggleFechaCompra);
+      } else {
+        iniciarToggleFechaCompra();
+      }
+    }());
+  </script>
 {% endblock %}
