@@ -286,7 +286,10 @@ class PedidoEstadoHistorialInline(admin.TabularInline):
 class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     readonly_fields = ('venta','mostrar_articulos')
-    ordering = ('-venta__fecha_compra',)
+    # La operación diaria de pedidos gira alrededor de cuándo se entrega,
+    # no de cuándo se cargó la venta. Django usa este orden al abrir la
+    # lista por primera vez; el usuario puede invertirlo desde el encabezado.
+    ordering = ('-venta__fecha_entrega', '-id')
     list_select_related = (
         'venta__cliente', 'venta__vendedor__usuario', 'repartidor__usuario',
     )
@@ -375,6 +378,7 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
             '<span style="color:#b91c1c;font-weight:600;">✗ Sin dirección</span>'
         )
     direccion_reparto_badge.short_description = 'Dirección reparto'
+    direccion_reparto_badge.admin_order_field = 'direccion_confirmada'
 
     def changelist_view(self, request, extra_context=None):
         """
@@ -421,14 +425,17 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     def venta_fecha_compra(self, obj):
         return obj.venta.fecha_compra
     venta_fecha_compra.short_description = 'Fecha de Compra'
+    venta_fecha_compra.admin_order_field = 'venta__fecha_compra'
 
     def venta_fecha_entrega(self, obj):
         return obj.venta.fecha_entrega
     venta_fecha_entrega.short_description = 'Fecha de Entrega'
+    venta_fecha_entrega.admin_order_field = 'venta__fecha_entrega'
 
     def venta_cliente(self, obj):
         return obj.venta.cliente
     venta_cliente.short_description = 'Cliente'
+    venta_cliente.admin_order_field = 'venta__cliente__nombre'
 
     def venta_vendedor(self, obj):
         # Usa Vendedor.display_name() para mostrar
@@ -437,6 +444,7 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         v = obj.venta.vendedor
         return v.display_name() if v else '-'
     venta_vendedor.short_description = 'Vendedor'
+    venta_vendedor.admin_order_field = 'venta__vendedor__nombre'
     
     def descargar_pdf(self, obj):
         if obj:

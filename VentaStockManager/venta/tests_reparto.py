@@ -390,6 +390,45 @@ class RepartoFlujoTests(TestCase):
         pedido_admin = admin_site._registry[Pedido]
         self.assertNotIn('asignar_repartidor', pedido_admin.get_actions(request))
 
+    def test_admin_pedidos_ordena_por_entrega_y_columnas_son_ordenables(self):
+        from VentaStockManager.admin import admin_site
+
+        pedido_ayer = self._crear_venta(
+            fecha_entrega=date.today() - timedelta(days=1),
+        ).pedido
+        pedido_manana = self._crear_venta(
+            fecha_entrega=date.today() + timedelta(days=1),
+        ).pedido
+        pedido_hoy = self._crear_venta(fecha_entrega=date.today()).pedido
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse('admin:venta_pedido_changelist'))
+
+        self.assertEqual(response.status_code, 200)
+        ids_ordenados = [pedido.pk for pedido in response.context['cl'].result_list]
+        self.assertEqual(
+            ids_ordenados,
+            [pedido_manana.pk, pedido_hoy.pk, pedido_ayer.pk],
+        )
+
+        pedido_admin = admin_site._registry[Pedido]
+        self.assertEqual(
+            pedido_admin.venta_fecha_entrega.admin_order_field,
+            'venta__fecha_entrega',
+        )
+        self.assertEqual(
+            pedido_admin.venta_fecha_compra.admin_order_field,
+            'venta__fecha_compra',
+        )
+        self.assertEqual(
+            pedido_admin.venta_cliente.admin_order_field,
+            'venta__cliente__nombre',
+        )
+        self.assertEqual(
+            pedido_admin.venta_vendedor.admin_order_field,
+            'venta__vendedor__nombre',
+        )
+
     def test_planificacion_selecciona_todos_los_filtros_incluso_otras_paginas(self):
         User = get_user_model()
         usuario_vendedor_dos = User.objects.create_user(
