@@ -23,6 +23,7 @@ import hashlib
 import json
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -55,6 +56,27 @@ ZONA_HORARIA_OPERATIVA = ZoneInfo('America/Argentina/Cordoba')
 def _fecha_hoy_operativa():
     """Fecha comercial actual, independiente de que el servidor use UTC."""
     return datetime.now(ZONA_HORARIA_OPERATIVA).date()
+
+
+def api_login_required(view_func):
+    """Devuelve JSON 401 en APIs en vez de redirigir fetch a una página HTML."""
+    @wraps(view_func)
+    def wrapped(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return JsonResponse(
+                {
+                    'ok': False,
+                    'codigo': 'sesion_vencida',
+                    'error': (
+                        'Tu sesión venció. Volvé a iniciar sesión y luego '
+                        'reintentá; la dirección escrita sigue en pantalla.'
+                    ),
+                },
+                status=401,
+            )
+        return view_func(request, *args, **kwargs)
+
+    return wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +660,7 @@ def api_cliente_saldo(request, cliente_id):
     })
 
 
-@login_required
+@api_login_required
 @require_GET
 def api_direccion_geocodificar(request):
     """Convierte una dirección escrita en opciones ubicables en el mapa."""
@@ -690,7 +712,7 @@ def api_direccion_geocodificar(request):
     return JsonResponse({'ok': True, 'resultados': resultados})
 
 
-@login_required
+@api_login_required
 @require_POST
 def api_cliente_direccion_guardar(request, cliente_id):
     """Crea o actualiza una dirección confirmada desde la venta."""

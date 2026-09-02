@@ -754,12 +754,25 @@
           </div>
         </div>
 
-        <button type="button" @click="buscarDireccionEnMapa()"
-                :disabled="modalDireccion.buscando || modalDireccion.direccion_texto.trim().length < 5"
-                class="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium disabled:bg-slate-300 disabled:cursor-not-allowed">
-          <span x-show="!modalDireccion.buscando">⌕ Buscar dirección en el mapa</span>
-          <span x-show="modalDireccion.buscando" x-cloak>Buscando dirección…</span>
-        </button>
+        <div class="flex flex-col sm:flex-row gap-2">
+          <button type="button" @click="buscarDireccionEnMapa()"
+                  :disabled="modalDireccion.buscando || modalDireccion.direccion_texto.trim().length < 5"
+                  class="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium disabled:bg-slate-300 disabled:cursor-not-allowed">
+            <span x-show="!modalDireccion.buscando">⌕ Buscar dirección en el mapa</span>
+            <span x-show="modalDireccion.buscando" x-cloak>Buscando dirección…</span>
+          </button>
+          <button type="button" @click="activarUbicacionManual()"
+                  class="w-full sm:w-auto px-4 py-2 bg-white hover:bg-slate-50 border border-slate-400 text-slate-800 rounded font-medium">
+            ✋ Ubicar manualmente
+          </button>
+        </div>
+
+        <div x-show="modalDireccion.modo_manual" x-cloak
+             class="text-sm text-blue-900 bg-blue-50 border border-blue-200 rounded p-3">
+          <strong class="block mb-1">Modo manual activado</strong>
+          Escribí la dirección, tocá el lugar exacto en el mapa y mové el marcador si hace falta.
+          Después presioná “Confirmar ubicación manual”.
+        </div>
 
         <div x-show="modalDireccion.resultado_nombre" x-cloak
              class="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded p-3">
@@ -797,7 +810,8 @@
                 :disabled="modalDireccion.guardando || !modalDireccion.direccion_texto.trim()
                   || modalDireccion.latitud === null || modalDireccion.longitud === null"
                 class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium disabled:bg-slate-300">
-          <span x-show="!modalDireccion.guardando">Confirmar dirección</span>
+          <span x-show="!modalDireccion.guardando"
+                x-text="modalDireccion.modo_manual ? 'Confirmar ubicación manual' : 'Confirmar dirección'"></span>
           <span x-show="modalDireccion.guardando" x-cloak>Guardando…</span>
         </button>
         </div>
@@ -891,6 +905,7 @@
         fuente: 'manual',
         resultados: [],
         resultado_nombre: '',
+        modo_manual: false,
         mapa: null,
         marcador: null,
       },
@@ -1104,6 +1119,23 @@
       },
 
       // ---- Dirección y ubicación del cliente ----
+      async leerRespuestaApi(respuesta) {
+        const urlRespuesta = String(respuesta.url || '');
+        if (
+          respuesta.status === 401
+          || respuesta.status === 403
+          || (respuesta.redirected && urlRespuesta.includes('/login/'))
+        ) {
+          throw new Error('sesion_vencida');
+        }
+        const tipoContenido = String(
+          respuesta.headers.get('content-type') || ''
+        ).toLowerCase();
+        if (!tipoContenido.includes('application/json')) {
+          throw new Error('respuesta_no_json');
+        }
+        return respuesta.json();
+      },
       abrirModalDireccion() {
         const actual = this.cliente.direccion_principal || {};
         this.modalDireccion.abierto = true;
@@ -1122,6 +1154,7 @@
         this.modalDireccion.fuente = actual.fuente || 'manual';
         this.modalDireccion.resultados = [];
         this.modalDireccion.resultado_nombre = '';
+        this.modalDireccion.modo_manual = false;
         this.$nextTick(() => this.inicializarMapaDireccion());
       },
       cerrarModalDireccion() {
@@ -1151,6 +1184,7 @@
         if (tienePunto) this.colocarMarcadorDireccion(centro[0], centro[1]);
         mapa.on('click', (event) => {
           this.modalDireccion.fuente = 'manual';
+          this.modalDireccion.modo_manual = true;
           this.modalDireccion.precision_metros = null;
           this.modalDireccion.resultados = [];
           this.modalDireccion.resultado_nombre = '';
@@ -1170,6 +1204,7 @@
             m.latitud = punto.lat;
             m.longitud = punto.lng;
             m.fuente = 'manual';
+            m.modo_manual = true;
             m.precision_metros = null;
             m.resultados = [];
             m.resultado_nombre = '';
@@ -1184,6 +1219,7 @@
         m.error = '';
         if (!navigator.geolocation) {
           m.error = 'Este dispositivo no permite detectar ubicación. Marcala manualmente en el mapa.';
+          m.modo_manual = true;
           return;
         }
         m.detectando = true;
@@ -1199,6 +1235,7 @@
           },
           (error) => {
             m.detectando = false;
+            m.modo_manual = true;
             const mensajes = {
               1: 'No se autorizó la ubicación. Podés buscarla o marcarla manualmente.',
               2: 'El teléfono no pudo determinar la ubicación.',
@@ -1220,10 +1257,23 @@
         m.latitud = null;
         m.longitud = null;
         m.fuente = 'manual';
+        m.modo_manual = true;
         if (m.mapa && m.marcador) {
           m.mapa.removeLayer(m.marcador);
           m.marcador = null;
         }
+      },
+      activarUbicacionManual() {
+        const m = this.modalDireccion;
+        m.error = '';
+        m.modo_manual = true;
+        m.fuente = 'manual';
+        m.resultados = [];
+        m.resultado_nombre = '';
+        this.$nextTick(() => this.$refs.mapaDireccion?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        }));
       },
       async buscarDireccionEnMapa() {
         const m = this.modalDireccion;
@@ -1244,7 +1294,7 @@
           const r = await fetch(`/venta/api/direcciones/geocodificar/?${params}`, {
             credentials: 'same-origin',
           });
-          const data = await r.json();
+          const data = await this.leerRespuestaApi(r);
           if (!r.ok || !data.ok) {
             m.error = data.error || `Error del servidor (HTTP ${r.status})`;
             return;
@@ -1252,6 +1302,7 @@
           m.resultados = data.resultados || [];
           if (!m.resultados.length) {
             m.error = 'No encontramos esa dirección. Agregá localidad y provincia, o marcá el punto manualmente.';
+            m.modo_manual = true;
             return;
           }
           const localidadBuscada = m.localidad.trim().toLocaleLowerCase('es');
@@ -1265,7 +1316,12 @@
             m.error = 'Encontramos varias ubicaciones posibles. Elegí la correcta de la lista para colocar el pin.';
           }
         } catch (e) {
-          m.error = 'No se pudo buscar la dirección. Revisá la conexión e intentá nuevamente.';
+          if (e.message === 'sesion_vencida') {
+            m.error = 'Tu sesión venció. Volvé a iniciar sesión y luego reintentá; la dirección escrita no se perdió.';
+          } else {
+            m.modo_manual = true;
+            m.error = 'No se pudo buscar automáticamente. Podés continuar con “Ubicar manualmente”.';
+          }
         } finally {
           m.buscando = false;
         }
@@ -1276,6 +1332,7 @@
         m.localidad = resultado.localidad || m.localidad;
         m.provincia = resultado.provincia || m.provincia;
         m.fuente = 'geocodificada';
+        m.modo_manual = false;
         m.precision_metros = null;
         m.resultado_nombre = resultado.display_name || m.direccion_texto;
         this.colocarMarcadorDireccion(resultado.latitud, resultado.longitud);
@@ -1293,7 +1350,7 @@
             + '&addressdetails=1&accept-language=es';
           const r = await fetch(url);
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = await r.json();
+          const data = await this.leerRespuestaApi(r);
           const a = data.address || {};
           const calle = a.road || a.pedestrian || a.residential || '';
           const numero = a.house_number || '';
@@ -1338,7 +1395,7 @@
               fuente: m.fuente,
             }),
           });
-          const data = await r.json();
+          const data = await this.leerRespuestaApi(r);
           if (!r.ok || !data.ok) {
             m.error = data.error || `Error del servidor (HTTP ${r.status})`;
             return;
@@ -1346,7 +1403,13 @@
           this.cliente.direccion_principal = data.direccion;
           this.cerrarModalDireccion();
         } catch (e) {
-          m.error = 'Error de red: ' + (e.message || e);
+          if (e.message === 'sesion_vencida') {
+            m.error = 'Tu sesión venció. Volvé a iniciar sesión y luego reintentá; la dirección escrita no se perdió.';
+          } else if (e.message === 'respuesta_no_json') {
+            m.error = 'El servidor no pudo guardar la dirección. Reintentá en unos segundos.';
+          } else {
+            m.error = 'No se pudo guardar la dirección. Revisá la conexión e intentá nuevamente.';
+          }
         } finally {
           m.guardando = false;
         }

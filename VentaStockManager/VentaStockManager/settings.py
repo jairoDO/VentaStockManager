@@ -78,6 +78,12 @@ SESSION_COOKIE_AGE = 60 * 60 * 24 * 30  # 30 días en segundos
 # es contraproducente — re-loguearse cada mañana es molesto.
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
+# Todas las vistas protegidas deben volver al acceso unificado. Sin esto,
+# @login_required usa /accounts/login/ (default de Django), una ruta que no
+# existe en este proyecto. En llamadas fetch esa respuesta HTML terminaba
+# mostrándose en Safari como "The string did not match the expected pattern".
+LOGIN_URL = 'login'
+
 
 # ---------------------------------------------------------------------------
 # Apps + middleware

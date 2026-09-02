@@ -121,6 +121,45 @@ class RepartoFlujoTests(TestCase):
         self.assertIn('Ubicá la dirección en el mapa', response.json()['error'])
         self.assertFalse(DireccionCliente.objects.filter(cliente=self.cliente).exists())
 
+    def test_confirmar_direccion_manualmente_acepta_texto_y_pin(self):
+        self.client.force_login(self.usuario_vendedor)
+        response = self.client.post(
+            reverse('venta_api_cliente_direccion', args=[self.cliente.pk]),
+            data=json.dumps({
+                'direccion_texto': 'Sol Naciente 3498',
+                'localidad': 'Córdoba',
+                'provincia': 'Córdoba',
+                'referencia': 'Pin confirmado con el cliente',
+                'latitud': '-31.381234',
+                'longitud': '-64.182345',
+                'fuente': DireccionCliente.FUENTE_MANUAL,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        direccion = DireccionCliente.objects.get(cliente=self.cliente)
+        self.assertTrue(direccion.confirmada)
+        self.assertEqual(direccion.fuente, DireccionCliente.FUENTE_MANUAL)
+        self.assertEqual(direccion.direccion_texto, 'Sol Naciente 3498')
+        self.assertEqual(str(direccion.latitud), '-31.381234')
+        self.assertEqual(str(direccion.longitud), '-64.182345')
+
+    def test_api_direccion_sin_sesion_devuelve_json_claro(self):
+        from django.conf import settings
+
+        response = self.client.post(
+            reverse('venta_api_cliente_direccion', args=[self.cliente.pk]),
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response['Content-Type'], 'application/json')
+        self.assertEqual(response.json()['codigo'], 'sesion_vencida')
+        self.assertIn('Tu sesión venció', response.json()['error'])
+        self.assertEqual(settings.LOGIN_URL, 'login')
+
     @patch('venta.views_nueva._consultar_nominatim')
     def test_buscar_direccion_devuelve_opciones_para_el_mapa(self, consultar):
         consultar.return_value = [
@@ -269,6 +308,10 @@ class RepartoFlujoTests(TestCase):
         self.assertContains(response, 'Dirección pendiente de confirmar')
         self.assertContains(response, 'Usar mi ubicación actual')
         self.assertContains(response, 'Buscar dirección en el mapa')
+        self.assertContains(response, 'Ubicar manualmente')
+        self.assertContains(response, 'Confirmar ubicación manual')
+        self.assertContains(response, 'Tu sesión venció')
+        self.assertContains(response, 'leerRespuestaApi')
         self.assertContains(response, '/venta/api/direcciones/geocodificar/')
         self.assertContains(response, 'Ubicá un punto en el mapa antes de confirmar')
         self.assertContains(response, 'Confirmá la dirección para poder guardar la venta')
