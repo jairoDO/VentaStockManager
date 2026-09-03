@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 # y difusiones de listas (la cuenta de WhatsApp es la misma — si
 # excedemos por un lado, el ban afecta todo).
 def _delay() -> float:
-    return float(getattr(settings, 'WHATSAPP_RATE_LIMIT_SECONDS', 3.5))
+    return float(getattr(settings, 'WHATSAPP_DELAY_SECONDS', 15))
 
 
 def crear_envios_pendientes_difusion(
@@ -71,6 +71,7 @@ def crear_envios_pendientes_difusion(
     }
 
     nuevos = []
+    necesita_link_publico = False
     for cid in cliente_ids:
         cliente = clientes.get(cid)
         if not cliente:
@@ -78,6 +79,11 @@ def crear_envios_pendientes_difusion(
         if not cliente.whatsapp_number:
             continue  # skip silenciosamente — no hay forma de mandar
         modo = cfg.resolver_formato_lista(cliente=cliente, override=modo_override)
+        if modo in (
+            DifusionListaPreciosEnvio.MODO_LINK,
+            DifusionListaPreciosEnvio.MODO_AMBOS,
+        ):
+            necesita_link_publico = True
         nuevos.append(DifusionListaPreciosEnvio(
             lista=lista,
             cliente=cliente,
@@ -89,6 +95,14 @@ def crear_envios_pendientes_difusion(
 
     if not nuevos:
         return 0
+
+    # El link es parte del contenido del envío, por lo que debe existir
+    # ANTES de crear la cola. No dependemos de que el operador haya
+    # pasado previamente por el botón "Compartir link público": también
+    # cubre el flujo descargar PDF → difundir.
+    if necesita_link_publico and not lista.link_activo:
+        lista.compartir()
+
     DifusionListaPreciosEnvio.objects.bulk_create(nuevos, batch_size=500)
     return len(nuevos)
 
@@ -215,9 +229,25 @@ def procesar_difusion(lista_id: int) -> dict:
         )
         return {'ok': False, 'error': f'wa-bot no disponible: {motivo}'}
 
-    # Armar el share_url una vez. Si la lista no tiene link activo,
-    # acá tendríamos que crearlo — pero la pantalla de difundir solo
-    # se abre cuando ya hay link, así que confiamos en que está.
+    # Garantía defensiva adicional: el link pudo vencer entre el momento
+    # de encolar y el momento en que el worker comenzó a procesar. Si hay
+    # al menos un pendiente que necesita link, lo creamos/renovamos antes
+    # de construir el mensaje.
+    pendientes_base = DifusionListaPreciosEnvio.objects.filter(
+        lista=lista,
+        status=DifusionListaPreciosEnvio.STATUS_PENDIENTE,
+    )
+    necesita_link_publico = pendientes_base.filter(
+        modo__in=(
+            DifusionListaPreciosEnvio.MODO_LINK,
+            DifusionListaPreciosEnvio.MODO_AMBOS,
+        ),
+    ).exists()
+    if necesita_link_publico and not lista.link_activo:
+        lista.compartir()
+
+    # Armar la URL pública una vez, usando el token que acabamos de
+    # garantizar. Esta ruta no requiere login.
     share_url = ''
     if lista.link_activo and lista.share_token:
         # No tenemos `request` acá, así que armamos URL con SITE_URL del
@@ -240,10 +270,7 @@ def procesar_difusion(lista_id: int) -> dict:
     enviados = 0
     fallidos = 0
 
-    pendientes = DifusionListaPreciosEnvio.objects.filter(
-        lista=lista,
-        status=DifusionListaPreciosEnvio.STATUS_PENDIENTE,
-    ).select_related('cliente').order_by('created_at')
+    pendientes = pendientes_base.select_related('cliente').order_by('created_at')
 
     for envio in pendientes:
         # Re-fetch defensivo: si dos workers procesaron en paralelo

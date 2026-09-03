@@ -24,6 +24,8 @@
     const cbFavor = container.querySelector('.af-favor');
     const cbDeudor = container.querySelector('.af-deudor');
     const cbWhatsappValido = container.querySelector('.af-whatsapp-valido');
+    const selVendedores = container.querySelector('.af-vendedores');
+    const inputBarrio = container.querySelector('.af-barrio');
     const filtrosBox = container.querySelector('.af-filtros');
     const clientList = container.querySelector('.af-client-list');
     const clientSearch = container.querySelector('.af-client-search');
@@ -52,6 +54,8 @@
     // solo_con_whatsapp_valido: default true si no viene en el state
     // (es el comportamiento recomendado / legal).
     cbWhatsappValido.checked = state.solo_con_whatsapp_valido !== false;
+    inputBarrio.value = state.barrio || '';
+    const selectedVendedores = new Set((state.vendedor_ids || []).map(Number));
     const selectedIds = new Set((state.clientes_ids || []).map(Number));
     let currentPage = 1;
     let totalPages = 1;
@@ -65,6 +69,8 @@
         con_saldo_a_favor: cbFavor.checked,
         con_saldo_deudor: cbDeudor.checked,
         solo_con_whatsapp_valido: cbWhatsappValido.checked,
+        vendedor_ids: Array.from(selectedVendedores),
+        barrio: inputBarrio.value.trim(),
         clientes_ids: Array.from(selectedIds),
       };
       hidden.value = JSON.stringify(next);
@@ -84,6 +90,8 @@
     function loadClients(page) {
       currentPage = page || 1;
       const params = new URLSearchParams({page: String(currentPage), q: clientSearch.value.trim()});
+      Array.from(selectedVendedores).forEach(function (id) { params.append('vendedor', String(id)); });
+      if (inputBarrio.value.trim()) params.set('barrio', inputBarrio.value.trim());
       clientList.innerHTML = '<div style="padding:16px; color:#64748b; text-align:center;">Cargando clientes…</div>';
       fetch('/wa-campania/api/clientes/?' + params.toString(), {credentials: 'same-origin'})
         .then(function (response) {
@@ -91,6 +99,15 @@
           return response.json();
         })
         .then(function (data) {
+          if (selVendedores.dataset.loaded !== '1') {
+            selVendedores.innerHTML = (data.vendedores || []).map(function (vendedor) {
+              return '<option value="' + vendedor.id + '">' + escapeHtml(vendedor.nombre) + '</option>';
+            }).join('');
+            Array.from(selVendedores.options).forEach(function (option) {
+              option.selected = selectedVendedores.has(Number(option.value));
+            });
+            selVendedores.dataset.loaded = '1';
+          }
           const excludedIds = (data.excluded_sender_client_ids || []).map(Number);
           excludedIds.forEach(function (id) { selectedIds.delete(id); });
           if (data.excluded_sender_number) {
@@ -136,6 +153,24 @@
     clientSearch.addEventListener('input', function () {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(function () { loadClients(1); }, 250);
+    });
+
+    selVendedores.addEventListener('change', function () {
+      selectedVendedores.clear();
+      Array.from(selVendedores.selectedOptions).forEach(function (option) {
+        selectedVendedores.add(Number(option.value));
+      });
+      cbTodos.checked = false;
+      sync();
+      loadClients(1);
+    });
+    inputBarrio.addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        cbTodos.checked = false;
+        sync();
+        loadClients(1);
+      }, 350);
     });
 
     [cbTodos, selDias, cbFavor, cbDeudor, cbWhatsappValido].forEach(function (el) {

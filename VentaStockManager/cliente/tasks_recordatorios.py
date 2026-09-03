@@ -120,7 +120,7 @@ def _ya_recibio_recordatorio_reciente(cliente, frecuencia_dias: int) -> bool:
 # a TODA la integración con WA.
 def _delay() -> float:
     from django.conf import settings
-    return float(getattr(settings, 'WHATSAPP_RATE_LIMIT_SECONDS', 3.5))
+    return float(getattr(settings, 'WHATSAPP_DELAY_SECONDS', 15))
 
 
 def procesar_recordatorios_saldo(force_send: bool = False) -> dict:

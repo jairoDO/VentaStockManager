@@ -373,10 +373,10 @@ WHATSAPP_API_URL = env.str("WHATSAPP_API_URL", default="http://wa-bot:3000")
 # requests sin auth (modo dev). En producción ambos lados tienen que
 # tener el MISMO valor o el bot va a rechazar todo con 401.
 WHATSAPP_API_TOKEN = env.str("WHATSAPP_API_TOKEN", default="")
-# Rate limit del worker: cuántos segundos esperar entre envíos.
-# Open-WA recomienda al menos 3 segundos; 4-5 es más seguro para no
-# levantar sospechas en WhatsApp.
-WHATSAPP_DELAY_SECONDS = env.int("WHATSAPP_DELAY_SECONDS", default=4)
+# Pausa común de los workers entre envíos automáticos. No existe un
+# intervalo que garantice evitar restricciones; usamos un valor
+# conservador y además segmentamos la audiencia por consentimiento.
+WHATSAPP_DELAY_SECONDS = env.int("WHATSAPP_DELAY_SECONDS", default=15)
 
 
 # ---------------------------------------------------------------------------

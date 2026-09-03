@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.db.models import Exists, OuterRef, QuerySet, Sum
+from django.db.models import Exists, OuterRef, Q, QuerySet, Sum
 from django.utils import timezone
 
 from cliente.models import Cliente, MovimientoCuenta
@@ -65,6 +65,25 @@ def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
             qs = qs.filter(Exists(ventas_recientes))
             condiciones_aplicadas = True
 
+        vendedor_ids = []
+        for vendedor_id in f.get('vendedor_ids') or []:
+            try:
+                vendedor_ids.append(int(vendedor_id))
+            except (TypeError, ValueError):
+                continue
+        if vendedor_ids:
+            qs = qs.filter(ventas__vendedor_id__in=vendedor_ids)
+            condiciones_aplicadas = True
+
+        barrio = str(f.get('barrio') or '').strip()
+        if barrio:
+            qs = qs.filter(
+                Q(direccion__icontains=barrio)
+                | Q(direcciones__direccion_texto__icontains=barrio)
+                | Q(direcciones__localidad__icontains=barrio)
+            )
+            condiciones_aplicadas = True
+
         # Saldo: lo calculamos con un annotate sumando MovimientoCuenta.
         # No usamos la property `Cliente.saldo` porque eso obliga a
         # iterar en Python; queremos quedarnos en SQL.
@@ -95,4 +114,4 @@ def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
     # cliente como las leyes anti-spam (ley AR de defensa del consumidor).
     qs = qs.filter(puede_recibir_whatsapp=True)
 
-    return qs.order_by('id')
+    return qs.order_by('id').distinct()

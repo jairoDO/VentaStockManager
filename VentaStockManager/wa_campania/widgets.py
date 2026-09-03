@@ -17,6 +17,8 @@ Esquema del JSON que mantenemos (NO cambia, así
     "compraron_ultimos_dias": int | None,
     "con_saldo_a_favor": bool,
     "con_saldo_deudor": bool,
+    "vendedor_ids": list[int],
+    "barrio": str,
     "solo_con_whatsapp_valido": bool,
   }
 """
@@ -93,6 +95,25 @@ class AudienciaFiltroWidget(forms.Widget):
 
             <!-- Filtros (se ocultan si "todos" está tildado) -->
             <div class="af-filtros" style="display: flex; flex-direction: column; gap: 10px;">
+
+              <div>
+                <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:4px;">
+                  Vendedor
+                </label>
+                <select class="af-vendedores" multiple size="4"
+                        style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; background:white;">
+                  <option disabled>Cargando vendedores…</option>
+                </select>
+                <div style="font-size:11px; color:#64748b; margin-top:3px;">Podés elegir uno o varios vendedores.</div>
+              </div>
+
+              <div>
+                <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:4px;">
+                  Barrio o localidad
+                </label>
+                <input type="search" class="af-barrio" placeholder="Ej. Alta Córdoba"
+                       style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px;">
+              </div>
 
               <!-- Filtro: días desde última compra -->
               <div>

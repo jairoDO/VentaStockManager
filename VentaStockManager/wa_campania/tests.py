@@ -13,6 +13,7 @@ Node.js. Los tests cubren:
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from unittest import mock
 
@@ -20,7 +21,9 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from cliente.models import Cliente, CuentaCliente, MovimientoCuenta
+from cliente.models import Cliente, CuentaCliente, DireccionCliente, MovimientoCuenta
+from vendedor.models import Vendedor
+from venta.models import Venta
 from wa_campania.audiencia import resolver_clientes
 from wa_campania.models import Campania, EnvioWhatsapp
 from wa_campania.tasks import (
@@ -115,6 +118,45 @@ class AudienciaResolverTests(TestCase):
         })
         self.assertFalse(qs.exists())
 
+    def test_filtra_clientes_por_vendedor(self):
+        usuario = User.objects.create_user('vendedor_filtro')
+        vendedor = Vendedor.objects.create(
+            usuario=usuario, nombre='Ana', apellido='Ventas',
+        )
+        Venta.objects.create(
+            fecha_compra=date.today(), fecha_entrega=date.today(),
+            cliente=self.c_con_wa, vendedor=vendedor,
+        )
+
+        qs = resolver_clientes({
+            'vendedor_ids': [vendedor.id],
+            'solo_con_whatsapp_valido': True,
+        })
+
+        self.assertEqual(list(qs.values_list('id', flat=True)), [self.c_con_wa.id])
+
+    def test_filtra_por_barrio_o_localidad_y_respeta_opt_in(self):
+        DireccionCliente.objects.create(
+            cliente=self.c_con_wa,
+            direccion_texto='Av. Principal 123',
+            localidad='Alta Córdoba',
+        )
+        no_consentido = _crear_cliente(
+            'No', 'Consentido Barrio', whatsapp='5493515557777', puede_recibir=False,
+        )
+        DireccionCliente.objects.create(
+            cliente=no_consentido,
+            direccion_texto='Calle Secundaria 10',
+            localidad='Alta Córdoba',
+        )
+
+        qs = resolver_clientes({
+            'barrio': 'Alta Córdoba',
+            'solo_con_whatsapp_valido': True,
+        })
+
+        self.assertEqual(list(qs.values_list('id', flat=True)), [self.c_con_wa.id])
+
 
 class ClientesCampaniaApiTests(TestCase):
 
@@ -165,6 +207,32 @@ class ClientesCampaniaApiTests(TestCase):
         self.assertEqual(data['excluded_sender_number'], cliente.whatsapp_number)
         self.assertEqual(data['excluded_sender_client_ids'], [cliente.id])
         self.assertNotIn(cliente.id, [item['id'] for item in data['results']])
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_lista_filtra_por_vendedor_y_barrio(self, mock_status):
+        usuario = User.objects.create_user('vendedor_api')
+        vendedor = Vendedor.objects.create(
+            usuario=usuario, nombre='Vendedor', apellido='Norte',
+        )
+        cliente = Cliente.objects.get(nombre='Cliente 04')
+        Venta.objects.create(
+            fecha_compra=date.today(), fecha_entrega=date.today(),
+            cliente=cliente, vendedor=vendedor,
+        )
+        DireccionCliente.objects.create(
+            cliente=cliente, direccion_texto='Los Paraísos 100',
+            localidad='Barrio Norte',
+        )
+
+        response = self.client.get(
+            '/wa-campania/api/clientes/',
+            {'vendedor': vendedor.id, 'barrio': 'Barrio Norte'},
+        )
+        data = response.json()
+
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['results'][0]['id'], cliente.id)
+        self.assertIn(vendedor.id, [item['id'] for item in data['vendedores']])
 
 
 class CampaniaAdminTests(TestCase):

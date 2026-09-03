@@ -66,6 +66,25 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
         puede_recibir_whatsapp=True,
     ).exclude(whatsapp_number='').order_by('nombre', 'apellido', 'id')
 
+    vendedor_ids = []
+    for raw_id in request.GET.getlist('vendedor'):
+        try:
+            vendedor_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    if vendedor_ids:
+        qs = qs.filter(ventas__vendedor_id__in=vendedor_ids)
+
+    barrio = (request.GET.get('barrio') or '').strip()
+    if barrio:
+        qs = qs.filter(
+            Q(direccion__icontains=barrio)
+            | Q(direcciones__direccion_texto__icontains=barrio)
+            | Q(direcciones__localidad__icontains=barrio)
+        )
+
+    qs = qs.distinct()
+
     # WhatsApp no entrega de forma visible mensajes enviados a la misma
     # cuenta que está vinculada al bot. Evitamos ofrecerla como destinataria
     # y devolvemos el dato para que el widget pueda explicárselo al operador.
@@ -97,6 +116,8 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
 
     paginator = Paginator(qs, 10)
     pagina = paginator.get_page(request.GET.get('page') or 1)
+    from vendedor.models import Vendedor
+
     return JsonResponse({
         'results': [
             {
@@ -114,6 +135,12 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
         'has_next': pagina.has_next(),
         'excluded_sender_number': sender_number,
         'excluded_sender_client_ids': excluded_sender_client_ids,
+        'vendedores': [
+            {'id': vendedor.id, 'nombre': vendedor.display_name()}
+            for vendedor in Vendedor.objects.select_related('usuario').order_by(
+                'usuario__username', 'id',
+            )
+        ],
     })
 
 
