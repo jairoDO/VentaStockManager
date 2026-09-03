@@ -6,12 +6,23 @@
     <div class="submit-row">
       <input type="submit" value="Guardar y enviar" name="_saveandsend" class="default">
     </div>
-  {% elif original.estado == "finalizada" and original.total_fallidos %}
+  {% elif original.estado == "finalizada" %}
     <div class="submit-row">
-      <input type="submit" value="Reenviar fallidos ({{ original.total_fallidos }})" name="_retryfailed" class="default">
-      <p class="deletelink-box" style="float:none; margin:8px 0 0; color:#64748b;">
-        Solo vuelve a intentar los fallidos; los enviados correctamente no se duplican.
+      {% if original.total_fallidos %}
+        <input type="submit" value="Reenviar fallidos ({{ original.total_fallidos }})" name="_retryfailed" class="default">
+      {% endif %}
+      <input type="submit" value="Reenviar campaña completa ({{ original.total_envios }})"
+             name="_retryall"
+             onclick="return confirm('Se creará una campaña nueva y se volverá a enviar a todos los destinatarios. ¿Continuar?');">
+      <input type="submit" value="Crear copia con los mismos destinatarios"
+             name="_duplicatecampaign">
+      <p style="float:none; clear:both; margin:10px 0 0; color:#64748b;">
+        “Reenviar completa” conserva el historial anterior. “Crear copia” permite editar el mensaje antes de enviarlo.
       </p>
+    </div>
+  {% elif original and original.estado != "enviando" %}
+    <div class="submit-row">
+      <input type="submit" value="Crear copia con los mismos destinatarios" name="_duplicatecampaign">
     </div>
   {% endif %}
 {% endblock %}

@@ -323,6 +323,87 @@ class CampaniaAdminTests(TestCase):
 
         self.assertEqual(preparar_reenvio_fallidos(campania.pk), 0)
 
+    def test_crear_copia_conserva_destinatarios_exactos_como_borrador(self):
+        elegido = _crear_cliente('Cliente', 'Elegido', whatsapp='5493515559911')
+        _crear_cliente('Cliente', 'No elegido', whatsapp='5493515559912')
+        original = Campania.objects.create(
+            nombre='Promo original',
+            mensaje='Mensaje original',
+            audiencia_filtro={'todos': True, 'solo_con_whatsapp_valido': True},
+            estado=Campania.ESTADO_FINALIZADA,
+            creado_por=self.admin,
+        )
+        EnvioWhatsapp.objects.create(
+            campania=original,
+            cliente=elegido,
+            telefono_usado=elegido.whatsapp_number,
+            status=EnvioWhatsapp.STATUS_ENVIADO,
+        )
+
+        response = self.client.post(
+            reverse('admin:wa_campania_campania_change', args=[original.pk]),
+            {
+                'nombre': original.nombre,
+                'mensaje': original.mensaje,
+                'audiencia_filtro': '{"todos": true}',
+                '_duplicatecampaign': 'Crear copia',
+            },
+        )
+
+        copia = Campania.objects.exclude(pk=original.pk).get()
+        self.assertRedirects(
+            response,
+            reverse('admin:wa_campania_campania_change', args=[copia.pk]),
+            fetch_redirect_response=False,
+        )
+        self.assertEqual(copia.estado, Campania.ESTADO_BORRADOR)
+        self.assertEqual(copia.mensaje, original.mensaje)
+        self.assertEqual(copia.audiencia_filtro['clientes_ids'], [elegido.id])
+
+    @mock.patch('wa_campania.admin.async_task')
+    @mock.patch('wa_campania.admin.wa_client.is_ready', return_value=(True, 'CONNECTED'))
+    def test_reenviar_completa_crea_nueva_campania_y_preserva_original(
+        self, mock_ready, mock_async,
+    ):
+        elegido = _crear_cliente('Cliente', 'Reenvío', whatsapp='5493515559921')
+        original = Campania.objects.create(
+            nombre='Promo enviada',
+            mensaje='Hola {{nombre}}',
+            audiencia_filtro={'todos': True, 'solo_con_whatsapp_valido': True},
+            estado=Campania.ESTADO_FINALIZADA,
+            creado_por=self.admin,
+        )
+        envio_original = EnvioWhatsapp.objects.create(
+            campania=original,
+            cliente=elegido,
+            telefono_usado=elegido.whatsapp_number,
+            status=EnvioWhatsapp.STATUS_ENVIADO,
+        )
+
+        response = self.client.post(
+            reverse('admin:wa_campania_campania_change', args=[original.pk]),
+            {
+                'nombre': original.nombre,
+                'mensaje': original.mensaje,
+                'audiencia_filtro': '{"todos": true}',
+                '_retryall': 'Reenviar completa',
+            },
+        )
+
+        nueva = Campania.objects.exclude(pk=original.pk).get()
+        envio_original.refresh_from_db()
+        self.assertRedirects(
+            response,
+            reverse('admin:wa_campania_campania_change', args=[nueva.pk]),
+            fetch_redirect_response=False,
+        )
+        self.assertEqual(envio_original.status, EnvioWhatsapp.STATUS_ENVIADO)
+        self.assertEqual(nueva.envios.count(), 1)
+        self.assertEqual(nueva.envios.get().status, EnvioWhatsapp.STATUS_PENDIENTE)
+        mock_async.assert_called_once_with(
+            'wa_campania.tasks.enviar_campania', nueva.pk,
+        )
+
 
 class RenderMensajeTests(TestCase):
 

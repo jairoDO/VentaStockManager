@@ -14,6 +14,8 @@ Diseño:
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from django.contrib import admin, messages
 from django.db import models as django_models
 from django.http import HttpResponseRedirect
@@ -228,7 +230,7 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
         self.message_user(
             request,
             f'Campaña guardada y encolada. Se van a procesar {n} envíos en '
-            f'background (uno cada ~4 segundos).',
+            f'background (uno cada ~15 segundos).',
             level=messages.SUCCESS,
         )
         return True
@@ -243,11 +245,102 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
         return super().response_add(request, obj, post_url_continue)
 
     def response_change(self, request, obj):
+        if '_duplicatecampaign' in request.POST:
+            return self._respuesta_crear_copia(request, obj)
+        if '_retryall' in request.POST:
+            return self._respuesta_reenviar_completa(request, obj)
         if '_retryfailed' in request.POST:
             return self._respuesta_reenviar_fallidos(request, obj)
         if '_saveandsend' in request.POST:
             return self._respuesta_guardar_y_enviar(request, obj)
         return super().response_change(request, obj)
+
+    def _audiencia_para_copia(self, obj):
+        """Copia destinatarios efectivos; si aún no hubo envíos, copia filtros."""
+        cliente_ids = list(
+            obj.envios.order_by('cliente_id')
+            .values_list('cliente_id', flat=True)
+            .distinct()
+        )
+        if cliente_ids:
+            audiencia = dict(Campania.AUDIENCIA_DEFAULT)
+            audiencia['clientes_ids'] = cliente_ids
+            return audiencia
+        return deepcopy(obj.audiencia_filtro or Campania.AUDIENCIA_DEFAULT)
+
+    def _crear_copia(self, request, obj, sufijo):
+        nombre_base = obj.nombre[:max(1, 120 - len(sufijo))].rstrip()
+        return Campania.objects.create(
+            nombre=f'{nombre_base}{sufijo}',
+            mensaje=obj.mensaje,
+            adjunto=obj.adjunto.name if obj.adjunto else None,
+            audiencia_filtro=self._audiencia_para_copia(obj),
+            estado=Campania.ESTADO_BORRADOR,
+            creado_por=request.user,
+        )
+
+    def _respuesta_crear_copia(self, request, obj):
+        if obj.estado == Campania.ESTADO_ENVIANDO:
+            self.message_user(
+                request,
+                'Esperá a que termine la campaña antes de copiar sus destinatarios.',
+                level=messages.WARNING,
+            )
+            destino = obj
+        else:
+            destino = self._crear_copia(request, obj, ' (copia)')
+            self.message_user(
+                request,
+                f'Se creó "{destino.nombre}" con los mismos destinatarios. '
+                'Podés modificarla antes de enviarla.',
+                level=messages.SUCCESS,
+            )
+        return HttpResponseRedirect(
+            reverse('admin:wa_campania_campania_change', args=[destino.pk])
+        )
+
+    def _respuesta_reenviar_completa(self, request, obj):
+        if obj.estado != Campania.ESTADO_FINALIZADA:
+            self.message_user(
+                request,
+                'La campaña completa sólo puede reenviarse cuando terminó el proceso anterior.',
+                level=messages.WARNING,
+            )
+            return HttpResponseRedirect(
+                reverse('admin:wa_campania_campania_change', args=[obj.pk])
+            )
+
+        bot_ready, motivo = wa_client.is_ready()
+        if not bot_ready:
+            self.message_user(
+                request,
+                f'No se inició el reenvío porque WhatsApp no está conectado ({motivo}).',
+                level=messages.ERROR,
+            )
+            return HttpResponseRedirect(
+                reverse('admin:wa_campania_campania_change', args=[obj.pk])
+            )
+
+        nueva = self._crear_copia(request, obj, ' (reenvío)')
+        cantidad = crear_envios_pendientes(nueva)
+        if cantidad:
+            async_task('wa_campania.tasks.enviar_campania', nueva.pk)
+            self.message_user(
+                request,
+                f'Se creó un reenvío nuevo y se encolaron {cantidad} destinatarios. '
+                'La campaña anterior conserva su historial.',
+                level=messages.SUCCESS,
+            )
+        else:
+            self.message_user(
+                request,
+                'Se creó la copia, pero actualmente no tiene destinatarios elegibles. '
+                'Revisá teléfonos y consentimiento antes de enviarla.',
+                level=messages.ERROR,
+            )
+        return HttpResponseRedirect(
+            reverse('admin:wa_campania_campania_change', args=[nueva.pk])
+        )
 
     def _respuesta_reenviar_fallidos(self, request, obj):
         if obj.estado != Campania.ESTADO_FINALIZADA:
