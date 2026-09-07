@@ -18,6 +18,7 @@ Esquema del JSON que mantenemos (NO cambia, así
     "con_saldo_a_favor": bool,
     "con_saldo_deudor": bool,
     "vendedor_ids": list[int],
+    "campania_origen_id": int | None,
     "barrio": str,
     "solo_con_whatsapp_valido": bool,
   }
@@ -98,7 +99,18 @@ class AudienciaFiltroWidget(forms.Widget):
 
               <div>
                 <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:4px;">
-                  Vendedor
+                  Clientes de una campaña anterior
+                </label>
+                <select class="af-campania-origen"
+                        style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; background:white;">
+                  <option value="">No usar una campaña anterior</option>
+                </select>
+                <div style="font-size:11px; color:#64748b; margin-top:3px;">Reutiliza sus destinatarios y permite refinarlos con vendedor o barrio.</div>
+              </div>
+
+              <div>
+                <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:4px;">
+                  Vendedor asignado
                 </label>
                 <select class="af-vendedores" multiple size="4"
                         style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; background:white;">

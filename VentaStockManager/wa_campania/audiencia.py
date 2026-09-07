@@ -55,6 +55,15 @@ def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
         # AND de filtros opcionales.
         condiciones_aplicadas = False
 
+        campania_origen_id = f.get('campania_origen_id')
+        try:
+            campania_origen_id = int(campania_origen_id) if campania_origen_id else None
+        except (TypeError, ValueError):
+            campania_origen_id = None
+        if campania_origen_id:
+            qs = qs.filter(envios_whatsapp__campania_id=campania_origen_id)
+            condiciones_aplicadas = True
+
         dias = f.get('compraron_ultimos_dias')
         if dias:
             desde = timezone.now().date() - timedelta(days=int(dias))
@@ -72,7 +81,10 @@ def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
             except (TypeError, ValueError):
                 continue
         if vendedor_ids:
-            qs = qs.filter(ventas__vendedor_id__in=vendedor_ids)
+            # La cartera confirmada es la fuente de verdad. No usamos
+            # cualquier venta histórica porque un cliente puede haber sido
+            # atendido antes por otro vendedor y luego reasignado.
+            qs = qs.filter(vendedor_asignado_id__in=vendedor_ids)
             condiciones_aplicadas = True
 
         barrio = str(f.get('barrio') or '').strip()

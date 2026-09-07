@@ -22,6 +22,7 @@ Manejo de fallos:
 from __future__ import annotations
 
 import logging
+import random
 import time
 
 from django.conf import settings
@@ -163,7 +164,7 @@ def enviar_campania(campania_id: int) -> dict:
         except Exception as exc:
             log.error('No se pudo leer el adjunto de campaña %s: %s', campania_id, exc)
 
-    delay = getattr(settings, 'WHATSAPP_DELAY_SECONDS', 4)
+    delay = getattr(settings, 'WHATSAPP_DELAY_SECONDS', 30)
     enviados = 0
     fallidos = 0
 
@@ -227,7 +228,9 @@ def enviar_campania(campania_id: int) -> dict:
 
         # Rate limit. Si el delay es 0 (testing), no esperamos.
         if delay > 0:
-            time.sleep(delay)
+            # Evitamos un patrón perfectamente mecánico. El valor configurado
+            # es el promedio y cada pausa varía un 20% hacia arriba o abajo.
+            time.sleep(random.uniform(delay * 0.8, delay * 1.2))
 
     campania.estado = Campania.ESTADO_FINALIZADA
     campania.enviada_at = timezone.now()

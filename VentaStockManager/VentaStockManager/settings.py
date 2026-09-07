@@ -376,7 +376,7 @@ WHATSAPP_API_TOKEN = env.str("WHATSAPP_API_TOKEN", default="")
 # Pausa común de los workers entre envíos automáticos. No existe un
 # intervalo que garantice evitar restricciones; usamos un valor
 # conservador y además segmentamos la audiencia por consentimiento.
-WHATSAPP_DELAY_SECONDS = env.int("WHATSAPP_DELAY_SECONDS", default=15)
+WHATSAPP_DELAY_SECONDS = env.int("WHATSAPP_DELAY_SECONDS", default=30)
 
 
 # ---------------------------------------------------------------------------

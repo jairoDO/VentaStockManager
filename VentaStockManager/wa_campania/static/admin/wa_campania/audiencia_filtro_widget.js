@@ -25,6 +25,7 @@
     const cbDeudor = container.querySelector('.af-deudor');
     const cbWhatsappValido = container.querySelector('.af-whatsapp-valido');
     const selVendedores = container.querySelector('.af-vendedores');
+    const selCampaniaOrigen = container.querySelector('.af-campania-origen');
     const inputBarrio = container.querySelector('.af-barrio');
     const filtrosBox = container.querySelector('.af-filtros');
     const clientList = container.querySelector('.af-client-list');
@@ -56,6 +57,7 @@
     cbWhatsappValido.checked = state.solo_con_whatsapp_valido !== false;
     inputBarrio.value = state.barrio || '';
     const selectedVendedores = new Set((state.vendedor_ids || []).map(Number));
+    let selectedCampaniaOrigen = state.campania_origen_id ? Number(state.campania_origen_id) : null;
     const selectedIds = new Set((state.clientes_ids || []).map(Number));
     let currentPage = 1;
     let totalPages = 1;
@@ -70,6 +72,7 @@
         con_saldo_deudor: cbDeudor.checked,
         solo_con_whatsapp_valido: cbWhatsappValido.checked,
         vendedor_ids: Array.from(selectedVendedores),
+        campania_origen_id: selectedCampaniaOrigen,
         barrio: inputBarrio.value.trim(),
         clientes_ids: Array.from(selectedIds),
       };
@@ -91,6 +94,7 @@
       currentPage = page || 1;
       const params = new URLSearchParams({page: String(currentPage), q: clientSearch.value.trim()});
       Array.from(selectedVendedores).forEach(function (id) { params.append('vendedor', String(id)); });
+      if (selectedCampaniaOrigen) params.set('campania', String(selectedCampaniaOrigen));
       if (inputBarrio.value.trim()) params.set('barrio', inputBarrio.value.trim());
       clientList.innerHTML = '<div style="padding:16px; color:#64748b; text-align:center;">Cargando clientes…</div>';
       fetch('/wa-campania/api/clientes/?' + params.toString(), {credentials: 'same-origin'})
@@ -107,6 +111,15 @@
               option.selected = selectedVendedores.has(Number(option.value));
             });
             selVendedores.dataset.loaded = '1';
+          }
+          if (selCampaniaOrigen.dataset.loaded !== '1') {
+            selCampaniaOrigen.innerHTML = '<option value="">No usar una campaña anterior</option>' +
+              (data.campanias || []).map(function (campania) {
+                return '<option value="' + campania.id + '">' + escapeHtml(campania.nombre) +
+                  ' · ' + escapeHtml(campania.fecha) + '</option>';
+              }).join('');
+            selCampaniaOrigen.value = selectedCampaniaOrigen ? String(selectedCampaniaOrigen) : '';
+            selCampaniaOrigen.dataset.loaded = '1';
           }
           const excludedIds = (data.excluded_sender_client_ids || []).map(Number);
           excludedIds.forEach(function (id) { selectedIds.delete(id); });
@@ -160,6 +173,12 @@
       Array.from(selVendedores.selectedOptions).forEach(function (option) {
         selectedVendedores.add(Number(option.value));
       });
+      cbTodos.checked = false;
+      sync();
+      loadClients(1);
+    });
+    selCampaniaOrigen.addEventListener('change', function () {
+      selectedCampaniaOrigen = selCampaniaOrigen.value ? Number(selCampaniaOrigen.value) : null;
       cbTodos.checked = false;
       sync();
       loadClients(1);

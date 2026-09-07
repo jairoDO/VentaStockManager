@@ -230,7 +230,7 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
         self.message_user(
             request,
             f'Campaña guardada y encolada. Se van a procesar {n} envíos en '
-            f'background (uno cada ~15 segundos).',
+            f'background (uno cada ~30 segundos, con una pequeña variación).',
             level=messages.SUCCESS,
         )
         return True

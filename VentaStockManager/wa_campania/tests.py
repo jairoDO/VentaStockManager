@@ -127,9 +127,48 @@ class AudienciaResolverTests(TestCase):
             fecha_compra=date.today(), fecha_entrega=date.today(),
             cliente=self.c_con_wa, vendedor=vendedor,
         )
+        self.c_con_wa.vendedor_asignado = vendedor
+        self.c_con_wa.asignacion_vendedor_confirmada = True
+        self.c_con_wa.save(update_fields=[
+            'vendedor_asignado', 'asignacion_vendedor_confirmada',
+        ])
 
         qs = resolver_clientes({
             'vendedor_ids': [vendedor.id],
+            'solo_con_whatsapp_valido': True,
+        })
+
+        self.assertEqual(list(qs.values_list('id', flat=True)), [self.c_con_wa.id])
+
+    def test_vendedor_usa_cartera_actual_y_no_ventas_historicas(self):
+        usuario = User.objects.create_user('vendedor_anterior')
+        vendedor = Vendedor.objects.create(
+            usuario=usuario, nombre='Vendedor', apellido='Anterior',
+        )
+        Venta.objects.create(
+            fecha_compra=date.today(), fecha_entrega=date.today(),
+            cliente=self.c_con_wa, vendedor=vendedor,
+        )
+
+        qs = resolver_clientes({
+            'vendedor_ids': [vendedor.id],
+            'solo_con_whatsapp_valido': True,
+        })
+
+        self.assertFalse(qs.exists())
+
+    def test_reutiliza_clientes_de_una_campania_anterior(self):
+        campania = Campania.objects.create(
+            nombre='Anterior', mensaje='Hola', audiencia_filtro={'todos': True},
+        )
+        EnvioWhatsapp.objects.create(
+            campania=campania,
+            cliente=self.c_con_wa,
+            telefono_usado=self.c_con_wa.whatsapp_number,
+        )
+
+        qs = resolver_clientes({
+            'campania_origen_id': campania.id,
             'solo_con_whatsapp_valido': True,
         })
 
@@ -219,6 +258,11 @@ class ClientesCampaniaApiTests(TestCase):
             fecha_compra=date.today(), fecha_entrega=date.today(),
             cliente=cliente, vendedor=vendedor,
         )
+        cliente.vendedor_asignado = vendedor
+        cliente.asignacion_vendedor_confirmada = True
+        cliente.save(update_fields=[
+            'vendedor_asignado', 'asignacion_vendedor_confirmada',
+        ])
         DireccionCliente.objects.create(
             cliente=cliente, direccion_texto='Los Paraísos 100',
             localidad='Barrio Norte',
@@ -233,6 +277,27 @@ class ClientesCampaniaApiTests(TestCase):
         self.assertEqual(data['total'], 1)
         self.assertEqual(data['results'][0]['id'], cliente.id)
         self.assertIn(vendedor.id, [item['id'] for item in data['vendedores']])
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_lista_filtra_por_campania_anterior(self, mock_status):
+        cliente = Cliente.objects.get(nombre='Cliente 06')
+        campania = Campania.objects.create(
+            nombre='Campaña de agosto', mensaje='Hola',
+            audiencia_filtro={'todos': True},
+        )
+        EnvioWhatsapp.objects.create(
+            campania=campania,
+            cliente=cliente,
+            telefono_usado=cliente.whatsapp_number,
+        )
+
+        data = self.client.get(
+            '/wa-campania/api/clientes/', {'campania': campania.id},
+        ).json()
+
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['results'][0]['id'], cliente.id)
+        self.assertIn(campania.id, [item['id'] for item in data['campanias']])
 
 
 class CampaniaAdminTests(TestCase):

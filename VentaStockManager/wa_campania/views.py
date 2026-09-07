@@ -73,7 +73,11 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
         except (TypeError, ValueError):
             continue
     if vendedor_ids:
-        qs = qs.filter(ventas__vendedor_id__in=vendedor_ids)
+        qs = qs.filter(vendedor_asignado_id__in=vendedor_ids)
+
+    campania_origen_id = request.GET.get('campania')
+    if campania_origen_id and str(campania_origen_id).isdigit():
+        qs = qs.filter(envios_whatsapp__campania_id=int(campania_origen_id))
 
     barrio = (request.GET.get('barrio') or '').strip()
     if barrio:
@@ -117,6 +121,7 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
     paginator = Paginator(qs, 10)
     pagina = paginator.get_page(request.GET.get('page') or 1)
     from vendedor.models import Vendedor
+    from .models import Campania
 
     return JsonResponse({
         'results': [
@@ -140,6 +145,16 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
             for vendedor in Vendedor.objects.select_related('usuario').order_by(
                 'usuario__username', 'id',
             )
+        ],
+        'campanias': [
+            {
+                'id': campania.id,
+                'nombre': campania.nombre,
+                'fecha': campania.created_at.strftime('%d/%m/%Y'),
+            }
+            for campania in Campania.objects.filter(
+                envios__isnull=False,
+            ).distinct().order_by('-created_at')[:50]
         ],
     })
 
