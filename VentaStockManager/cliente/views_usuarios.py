@@ -81,6 +81,7 @@ def lista_usuarios(request: HttpRequest) -> HttpResponse:
                 f'{vendedor_asociado.nombre} {vendedor_asociado.apellido}'
                 if vendedor_asociado else ''
             ),
+            'es_vendedor': vendedor_asociado is not None,
             'repartidor_nombre': str(repartidor_asociado) if repartidor_asociado else '',
             'es_repartidor': repartidor_asociado is not None,
             'telefono': (
@@ -221,6 +222,30 @@ def cambiar_tipo(request: HttpRequest, user_id: int) -> HttpResponse:
     messages.success(
         request,
         f'✓ "{user.username}" ahora es {nuevo_tipo}.',
+    )
+    return HttpResponseRedirect('/usuarios/')
+
+
+@user_passes_test(_solo_superuser, login_url='/admin/login/')
+@require_POST
+def agregar_perfil_vendedor(request: HttpRequest, user_id: int) -> HttpResponse:
+    """Agrega capacidad de vendedor sin quitar el rol administrativo."""
+    user = get_object_or_404(User, pk=user_id)
+    if hasattr(user, 'vendedor'):
+        messages.info(request, f'"{user.username}" ya tiene perfil de vendedor.')
+        return HttpResponseRedirect('/usuarios/')
+
+    nombre = (user.first_name or user.username).strip()
+    apellido = (user.last_name or 'Vendedor').strip()
+    Vendedor.objects.create(
+        usuario=user,
+        nombre=nombre,
+        apellido=apellido,
+    )
+    messages.success(
+        request,
+        f'✓ "{user.username}" ahora también puede trabajar como vendedor. '
+        'Conservó todos sus permisos de administrador.',
     )
     return HttpResponseRedirect('/usuarios/')
 

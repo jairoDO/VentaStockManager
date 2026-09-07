@@ -14,13 +14,18 @@ from django.urls import path
 
 from .views_usuarios import (
     lista_usuarios, crear_usuario, cambiar_tipo,
-    desactivar_usuario, resetear_password,
+    agregar_perfil_vendedor, desactivar_usuario, resetear_password,
 )
 
 urlpatterns = [
     path('usuarios/', lista_usuarios, name='gestion_usuarios'),
     path('usuarios/crear/', crear_usuario, name='crear_usuario'),
     path('usuarios/<int:user_id>/cambiar-tipo/', cambiar_tipo, name='cambiar_tipo_usuario'),
+    path(
+        'usuarios/<int:user_id>/agregar-vendedor/',
+        agregar_perfil_vendedor,
+        name='agregar_perfil_vendedor',
+    ),
     path('usuarios/<int:user_id>/desactivar/', desactivar_usuario, name='desactivar_usuario'),
     path('usuarios/<int:user_id>/resetear-password/', resetear_password, name='resetear_password_usuario'),
 ]

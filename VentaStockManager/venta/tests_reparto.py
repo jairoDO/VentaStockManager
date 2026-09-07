@@ -40,6 +40,8 @@ class RepartoFlujoTests(TestCase):
             telefono='3515555555',
             whatsapp_number='5493515555555',
             direccion='',
+            vendedor_asignado=self.vendedor,
+            asignacion_vendedor_confirmada=True,
         )
         self.articulo = Articulo.objects.create(
             nombre='Producto reparto',
@@ -792,3 +794,20 @@ class RepartoFlujoTests(TestCase):
         self.assertTrue(administrador.is_staff)
         self.assertTrue(administrador.is_superuser)
         self.assertFalse(Vendedor.objects.filter(usuario=administrador).exists())
+
+    def test_administrador_puede_agregarse_perfil_vendedor_sin_perder_rol(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse('agregar_perfil_vendedor', args=[self.admin.pk]),
+        )
+
+        self.assertRedirects(
+            response,
+            reverse('gestion_usuarios'),
+            fetch_redirect_response=False,
+        )
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_superuser)
+        self.assertTrue(self.admin.is_staff)
+        self.assertTrue(Vendedor.objects.filter(usuario=self.admin).exists())

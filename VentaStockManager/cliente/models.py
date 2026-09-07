@@ -47,6 +47,31 @@ class Cliente(models.Model):
     direccion = models.CharField(max_length=50, default='direccion', blank=True, null=True)
     codigo_interno = models.CharField(max_length=50, default='no-codigo', blank=True, null=True)
 
+    # Cartera comercial. `vendedor_asignado` es la relación efectiva que
+    # controla qué clientes aparecen al cargar una venta. Para los clientes
+    # históricos no decidimos automáticamente: `vendedor_sugerido` se obtiene
+    # de su venta más reciente y queda pendiente de confirmación del admin.
+    vendedor_asignado = models.ForeignKey(
+        'vendedor.Vendedor',
+        null=True,
+        blank=True,
+        related_name='clientes_asignados',
+        on_delete=models.SET_NULL,
+        help_text='Vendedor responsable de atender a este cliente.',
+    )
+    vendedor_sugerido = models.ForeignKey(
+        'vendedor.Vendedor',
+        null=True,
+        blank=True,
+        related_name='clientes_sugeridos',
+        on_delete=models.SET_NULL,
+        help_text='Sugerencia calculada desde la venta más reciente.',
+    )
+    asignacion_vendedor_confirmada = models.BooleanField(
+        default=False,
+        help_text='Indica que el administrador revisó la asignación.',
+    )
+
     # Cómo prefiere ESTE cliente recibir la lista de precios. Si está
     # en NULL (default), se aplica el modo global de
     # `ConfiguracionGeneral.formato_default_lista_precios`. El operador
@@ -168,6 +193,15 @@ class Cliente(models.Model):
         except CuentaCliente.DoesNotExist:
             return Decimal('0')
         return cuenta.saldo
+
+
+class CarteraCliente(Cliente):
+    """Acceso de menú a la pantalla masiva de asignación comercial."""
+
+    class Meta:
+        proxy = True
+        verbose_name = 'Asignar clientes a vendedores'
+        verbose_name_plural = 'Asignar clientes a vendedores'
 
 
 class DireccionCliente(models.Model):

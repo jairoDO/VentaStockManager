@@ -40,13 +40,13 @@ from venta.admin import VentaAdmin, PedidoAdmin, AlertaStockAdmin
 from articulo.admin import ArticuloAdmin
 from cliente.admin import (
     ClienteAdmin, CuentaClienteAdmin, MovimientoCuentaAdmin, PrecioClienteAdmin,
-    AlertaClienteInactivoAdmin,
+    AlertaClienteInactivoAdmin, CarteraClienteAdmin,
 )
 from compra.admin import ProvedorAdmin, CompraAdmin
 from venta.models import Venta, Pedido, AlertaStock
 from articulo.models import Articulo
 from cliente.models import (
-    Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente,
+    CarteraCliente, Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente,
     AlertaClienteInactivo,
 )
 from compra.models import Proveedor, Compra
@@ -436,6 +436,7 @@ admin_site.register(SolicitudListaCliente, SolicitudListaClienteAdmin)
 # custom con filtros y "agregar por categoría" viene en próxima fase.
 admin_site.register(ListaPrecios, ListaPreciosAdmin)
 admin_site.register(Cliente, ClienteAdmin)
+admin_site.register(CarteraCliente, CarteraClienteAdmin)
 admin_site.register(Proveedor, ProvedorAdmin)
 admin_site.register(Compra, CompraAdmin)
 admin_site.register(FacturaConfiguration, FacturaConfigurationAdmin)

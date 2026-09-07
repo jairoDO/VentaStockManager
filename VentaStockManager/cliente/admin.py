@@ -6,15 +6,31 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Sum, Subquery, OuterRef, Value, Count
 from django.db.models.functions import Coalesce
+from django.template.response import TemplateResponse
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
 from cliente.models import (
-    Cliente, CuentaCliente, DireccionCliente, MovimientoCuenta, PrecioCliente,
+    CarteraCliente, Cliente, CuentaCliente, DireccionCliente, MovimientoCuenta, PrecioCliente,
     AlertaClienteInactivo,
 )
 from cliente.admin_permissions import SuperuserOnlyAdminMixin, StaffFullAccessAdminMixin
+from vendedor.models import Vendedor
+
+
+class ReasignarClientesForm(forms.Form):
+    vendedor = forms.ModelChoiceField(
+        queryset=Vendedor.objects.none(),
+        label='Nuevo vendedor responsable',
+        empty_label='Elegir vendedor',
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['vendedor'].queryset = (
+            Vendedor.objects.select_related('usuario').order_by('nombre', 'apellido')
+        )
 
 
 class _RegistrarMovimientoBase(forms.ModelForm):
@@ -173,7 +189,32 @@ class DireccionClienteInline(admin.StackedInline):
     readonly_fields = ('fuente',)
 
 
+class CarteraClienteAdmin(admin.ModelAdmin):
+    """Hace visible la gestión de cartera como una aplicación del admin."""
+    icon_name = 'group_add'
+
+    def changelist_view(self, request, extra_context=None):
+        from django.shortcuts import redirect
+        return redirect('cliente_cartera')
+
+    def has_module_permission(self, request):
+        return request.user.is_authenticated and request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_authenticated and request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
+    change_list_template = 'admin/cliente/cliente/change_list.html'
     icon_name = "account_circle"
     model = Cliente
     search_fields = ['nombre']
@@ -185,14 +226,28 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     list_display = (
         'nombre_completo',
         'codigo_interno',
+        'vendedor_asignado',
+        'sugerencia_vendedor',
         'telefono',
         'whatsapp_number',
         'wa_estado',
         'saldo_actual',
         'link_extracto',
     )
-    list_filter = ('puede_recibir_whatsapp', WhatsappConfiguradoFilter)
-    actions = ['accion_habilitar_whatsapp', 'accion_deshabilitar_whatsapp']
+    list_filter = (
+        'vendedor_asignado',
+        'vendedor_sugerido',
+        'asignacion_vendedor_confirmada',
+        'puede_recibir_whatsapp',
+        WhatsappConfiguradoFilter,
+    )
+    actions = [
+        'accion_confirmar_vendedor_sugerido',
+        'accion_descartar_vendedor_sugerido',
+        'accion_reasignar_vendedor',
+        'accion_habilitar_whatsapp',
+        'accion_deshabilitar_whatsapp',
+    ]
     inlines = (DireccionClienteInline,)
 
     def get_queryset(self, request):
@@ -232,8 +287,109 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         if not request.user.is_superuser:
-            return ['direccion']
+            return [
+                'direccion',
+                'vendedor_asignado',
+                'vendedor_sugerido',
+                'asignacion_vendedor_confirmada',
+            ]
         return []
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if not request.user.is_superuser:
+            actions.pop('accion_confirmar_vendedor_sugerido', None)
+            actions.pop('accion_descartar_vendedor_sugerido', None)
+            actions.pop('accion_reasignar_vendedor', None)
+        return actions
+
+    def save_model(self, request, obj, form, change):
+        if request.user.is_superuser and 'vendedor_asignado' in form.changed_data:
+            obj.asignacion_vendedor_confirmada = bool(obj.vendedor_asignado_id)
+            if obj.vendedor_asignado_id == obj.vendedor_sugerido_id:
+                obj.vendedor_sugerido = None
+        super().save_model(request, obj, form, change)
+
+    def sugerencia_vendedor(self, obj):
+        if obj.asignacion_vendedor_confirmada:
+            return format_html('<span style="color:#2e7d32;">✓ Confirmada</span>')
+        if obj.vendedor_sugerido_id:
+            return format_html(
+                '<span style="color:#b45309;">Sugerido: {}</span>',
+                obj.vendedor_sugerido.display_name(),
+            )
+        return format_html('<span style="color:#888;">Sin sugerencia</span>')
+
+    sugerencia_vendedor.short_description = 'Asignación'
+
+    @admin.action(description='Confirmar vendedor sugerido')
+    def accion_confirmar_vendedor_sugerido(self, request, queryset):
+        pendientes = queryset.filter(
+            vendedor_sugerido__isnull=False,
+            asignacion_vendedor_confirmada=False,
+        )
+        cantidad = pendientes.update(
+            vendedor_asignado=models.F('vendedor_sugerido'),
+            vendedor_sugerido=None,
+            asignacion_vendedor_confirmada=True,
+        )
+        self.message_user(
+            request,
+            f'{cantidad} cliente(s) quedaron asignados al vendedor sugerido.',
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description='Descartar vendedor sugerido')
+    def accion_descartar_vendedor_sugerido(self, request, queryset):
+        cantidad = queryset.filter(
+            asignacion_vendedor_confirmada=False,
+        ).update(vendedor_sugerido=None)
+        self.message_user(
+            request,
+            f'{cantidad} sugerencia(s) descartadas.',
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description='Reasignar clientes a otro vendedor')
+    def accion_reasignar_vendedor(self, request, queryset):
+        if not request.user.is_superuser:
+            self.message_user(
+                request,
+                'Solo un administrador puede reasignar clientes.',
+                level=messages.ERROR,
+            )
+            return None
+
+        if request.POST.get('confirmar_reasignacion'):
+            form = ReasignarClientesForm(request.POST)
+            if form.is_valid():
+                vendedor = form.cleaned_data['vendedor']
+                cantidad = queryset.update(
+                    vendedor_asignado=vendedor,
+                    vendedor_sugerido=None,
+                    asignacion_vendedor_confirmada=True,
+                )
+                self.message_user(
+                    request,
+                    f'{cantidad} cliente(s) reasignados a {vendedor.display_name()}.',
+                    level=messages.SUCCESS,
+                )
+                return None
+        else:
+            form = ReasignarClientesForm()
+
+        return TemplateResponse(
+            request,
+            'admin/cliente/cliente/reasignar_vendedor.html',
+            {
+                **self.admin_site.each_context(request),
+                'title': 'Reasignar clientes',
+                'clientes': queryset,
+                'form': form,
+                'action_checkbox_name': admin.helpers.ACTION_CHECKBOX_NAME,
+                'opts': self.model._meta,
+            },
+        )
 
     def saldo_actual(self, obj):
         # Usamos el campo anotado por `get_queryset` en vez de

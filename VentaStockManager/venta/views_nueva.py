@@ -99,6 +99,15 @@ def _vendedor_for_user(user):
     return vendedor.id if vendedor else None
 
 
+def _clientes_de_la_cartera(user, queryset=None):
+    """Limita la búsqueda de Nueva venta a la cartera del usuario actual."""
+    queryset = queryset if queryset is not None else Cliente.objects.all()
+    vendedor_id = _vendedor_for_user(user)
+    if not vendedor_id:
+        return queryset.none()
+    return queryset.filter(vendedor_asignado_id=vendedor_id)
+
+
 def _direccion_to_dict(direccion: DireccionCliente | None) -> dict | None:
     if not direccion:
         return None
@@ -501,11 +510,26 @@ def api_cliente_crear(request):
         duplicados = duplicados.filter(apellido__iexact=apellido)
     duplicado_existente = duplicados.first()
 
+    vendedor_id = _vendedor_for_user(request.user)
+    if not vendedor_id:
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': (
+                    'Tu usuario no tiene un perfil de vendedor asociado. '
+                    'El administrador debe configurarlo antes de crear clientes.'
+                ),
+            },
+            status=400,
+        )
+
     cliente = Cliente(
         nombre=nombre,
         apellido=apellido or '',
         telefono=telefono or '',
         direccion=direccion or '',
+        vendedor_asignado_id=vendedor_id,
+        asignacion_vendedor_confirmada=True,
     )
     cliente.save()
 
@@ -553,7 +577,7 @@ def api_clientes_buscar(request):
         return JsonResponse({'results': []})
 
     qs = (
-        Cliente.objects
+        _clientes_de_la_cartera(request.user, Cliente.objects.all())
         .select_related('cuenta')
         .prefetch_related(Prefetch(
             'direcciones',
@@ -979,17 +1003,14 @@ def api_venta_guardar(request):
         cliente = Cliente.objects.filter(pk=cliente_id).first()
         if not cliente:
             errores.append(f'cliente_id={cliente_id} no existe')
-        elif not (cliente.whatsapp_number or '').strip():
-            # Política del negocio: ninguna venta puede crearse contra
-            # un cliente sin WhatsApp cargado. El front muestra un
-            # panel para cargarlo inline antes de habilitar el guardar,
-            # pero validamos de nuevo acá por si el operador hackeó
-            # el HTML o el cliente fue editado en otra pestaña.
-            #
-            # Solo aplica a CREATE — los edits de ventas existentes
-            # (venta_id != None) no se bloquean porque la venta ya
-            # existe y forzar el campo retroactivamente sería ruido.
-            if not venta_id:
+        elif not venta_id:
+            vendedor_actual_id = _vendedor_for_user(request.user)
+            if (
+                not vendedor_actual_id
+                or cliente.vendedor_asignado_id != vendedor_actual_id
+            ):
+                errores.append('El cliente no pertenece a tu cartera de vendedor.')
+            if not (cliente.whatsapp_number or '').strip():
                 errores.append(
                     f'El cliente {cliente.nombre_completo()} no tiene WhatsApp cargado. '
                     f'Completá el campo antes de guardar la venta.'

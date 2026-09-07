@@ -220,9 +220,13 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
                 {% endif %}
                 {% if u.is_superuser %}
                   <span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">Superusuario</span>
-                {% elif u.es_repartidor %}
+                {% endif %}
+                {% if u.es_vendedor %}
+                  <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Vendedor</span>
+                {% endif %}
+                {% if u.es_repartidor %}
                   <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Repartidor</span>
-                {% else %}
+                {% elif not u.is_superuser and not u.es_vendedor %}
                   <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Vendedor</span>
                 {% endif %}
                 {% if not u.is_active %}
@@ -252,6 +256,19 @@ con acciones inline (cambiar tipo, resetear password, desactivar).
                 {% endif %}
               </div>
             </div>
+
+            {% if not u.es_vendedor and not u.es_repartidor %}
+            <div class="flex flex-wrap gap-1 flex-shrink-0">
+              <form method="post" action="/usuarios/{{ u.id }}/agregar-vendedor/" class="inline">
+                {% csrf_token %}
+                <button type="submit"
+                        title="Mantiene sus permisos actuales y agrega el perfil de vendedor"
+                        class="text-xs px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded">
+                  👔 Agregar como vendedor
+                </button>
+              </form>
+            </div>
+            {% endif %}
 
             {# Acciones — solo si NO sos vos mismo #}
             {% if not u.es_yo_mismo %}

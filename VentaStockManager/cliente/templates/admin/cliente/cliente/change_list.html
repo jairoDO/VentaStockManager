@@ -1,0 +1,10 @@
+{% extends "admin/change_list.html" %}
+
+{% block object-tools-items %}
+  {% if request.user.is_superuser %}
+    <li>
+      <a href="{% url 'cliente_cartera' %}" class="addlink">Asignar clientes a vendedores</a>
+    </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

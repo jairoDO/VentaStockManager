@@ -1,0 +1,134 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<style>
+  .cartera { max-width: 1200px; margin: 0 auto; }
+  .panel { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 18px; margin-bottom: 16px; }
+  .filtros { display: grid; grid-template-columns: 2fr repeat(3, 1fr) auto; gap: 10px; align-items: end; }
+  .filtros label, .acciones label { display: block; font-weight: 600; margin-bottom: 5px; }
+  .filtros input, .filtros select, .acciones select { width: 100%; min-height: 40px; }
+  .tabla-cartera { width: 100%; border-collapse: collapse; }
+  .tabla-cartera th, .tabla-cartera td { border-bottom: 1px solid #e5e7eb; padding: 10px 8px; text-align: left; }
+  .tabla-cartera th { background: #f4f6f8; }
+  .tabla-cartera th:first-child, .tabla-cartera td:first-child { width: 52px; text-align: center; }
+  /* Material Admin oculta el input nativo porque espera envolverlo con
+     su propio label. Esta pantalla usa checks simples, así que restauramos
+     explícitamente el casillero visible y clickeable. */
+  .tabla-cartera input[type="checkbox"] {
+    appearance: auto !important;
+    -webkit-appearance: checkbox !important;
+    position: static !important;
+    opacity: 1 !important;
+    width: 20px !important;
+    height: 20px !important;
+    margin: 0 !important;
+    pointer-events: auto !important;
+    cursor: pointer;
+  }
+  .sugerido { color: #a35b00; font-weight: 600; }
+  .sin-dato { color: #777; }
+  .acciones { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: end; }
+  .boton { min-height: 40px; padding: 8px 16px; border: 0; border-radius: 4px; cursor: pointer; }
+  .primario { background: #1976d2; color: white; }
+  .confirmar { background: #2e7d32; color: white; }
+  .paginacion { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+  @media (max-width: 800px) {
+    .filtros, .acciones { grid-template-columns: 1fr; }
+    .panel-tabla { overflow-x: auto; }
+  }
+</style>
+
+<div class="cartera">
+  <h1>Asignar clientes a vendedores</h1>
+  <p>Filtrá la cartera, seleccioná varios clientes y confirmá la sugerencia o asignales otro vendedor.</p>
+
+  <form method="get" class="panel filtros">
+    <div>
+      <label for="q">Buscar cliente</label>
+      <input id="q" name="q" value="{{ q }}" placeholder="Nombre, apellido o dirección">
+    </div>
+    <div>
+      <label for="estado">Estado</label>
+      <select id="estado" name="estado">
+        <option value="pendientes" {% if estado == 'pendientes' %}selected{% endif %}>Sugerencias pendientes</option>
+        <option value="asignados" {% if estado == 'asignados' %}selected{% endif %}>Ya asignados</option>
+        <option value="sin_asignar" {% if estado == 'sin_asignar' %}selected{% endif %}>Sin asignar</option>
+        <option value="todos" {% if estado == 'todos' %}selected{% endif %}>Todos</option>
+      </select>
+    </div>
+    <div>
+      <label for="sugerido">Vendedor sugerido</label>
+      <select id="sugerido" name="sugerido">
+        <option value="">Todos</option>
+        {% for vendedor in vendedores %}<option value="{{ vendedor.pk }}" {% if sugerido == vendedor.pk|stringformat:'s' %}selected{% endif %}>{{ vendedor.display_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="asignado">Vendedor actual</label>
+      <select id="asignado" name="asignado">
+        <option value="">Todos</option>
+        {% for vendedor in vendedores %}<option value="{{ vendedor.pk }}" {% if asignado == vendedor.pk|stringformat:'s' %}selected{% endif %}>{{ vendedor.display_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <button class="boton primario" type="submit">Filtrar</button>
+  </form>
+
+  <form method="post" class="panel panel-tabla" id="form-cartera">
+    {% csrf_token %}
+    <input type="hidden" name="volver_a" value="{{ volver_a }}">
+    <table class="tabla-cartera">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="seleccionar-pagina" title="Seleccionar esta página"></th>
+          <th>Cliente</th><th>Dirección</th><th>Vendedor actual</th><th>Sugerido por última venta</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cliente in pagina %}
+          <tr>
+            <td><input class="cliente-check" type="checkbox" name="cliente_ids" value="{{ cliente.pk }}"></td>
+            <td><strong>{{ cliente.nombre_completo }}</strong></td>
+            <td>{{ cliente.direccion|default:'—' }}</td>
+            <td>{% if cliente.vendedor_asignado %}{{ cliente.vendedor_asignado.display_name }}{% else %}<span class="sin-dato">Sin asignar</span>{% endif %}</td>
+            <td>{% if cliente.vendedor_sugerido %}<span class="sugerido">{{ cliente.vendedor_sugerido.display_name }}</span>{% else %}<span class="sin-dato">Sin sugerencia</span>{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5">No hay clientes con estos filtros.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="acciones" style="margin-top: 18px;">
+      <div>
+        <label for="vendedor_destino">Asignar seleccionados a</label>
+        <select id="vendedor_destino" name="vendedor_destino">
+          <option value="">Elegir vendedor</option>
+          {% for vendedor in vendedores %}<option value="{{ vendedor.pk }}">{{ vendedor.display_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <button class="boton primario" id="asignar-vendedor" name="accion" value="asignar_vendedor" type="submit">Asignar vendedor</button>
+      <button class="boton confirmar" name="accion" value="confirmar_sugerencias" type="submit">Confirmar sugerencias</button>
+    </div>
+  </form>
+
+  <div class="paginacion">
+    <span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }} · {{ pagina.paginator.count }} cliente(s)</span>
+    <div>
+      {% if pagina.has_previous %}<a href="?{{ query_sin_pagina }}&page={{ pagina.previous_page_number }}">← Anterior</a>{% endif %}
+      {% if pagina.has_next %}<a style="margin-left:16px" href="?{{ query_sin_pagina }}&page={{ pagina.next_page_number }}">Siguiente →</a>{% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('seleccionar-pagina')?.addEventListener('change', function () {
+    document.querySelectorAll('.cliente-check').forEach((check) => { check.checked = this.checked; });
+  });
+  document.getElementById('asignar-vendedor')?.addEventListener('click', function (event) {
+    if (!document.getElementById('vendedor_destino').value) {
+      event.preventDefault();
+      window.alert('Elegí el vendedor al que querés asignar los clientes.');
+    }
+  });
+</script>
+{% endblock %}
