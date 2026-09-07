@@ -323,6 +323,7 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     icon_name = "library_books"
     actions = [
         'generar_pdfs',
+        'generar_pdfs_continuo',
         'informe_diario_vendedor_a4',
         'informe_diario_vendedor_configurado',
         'marcar_como_saldada',
@@ -459,6 +460,16 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         return HttpResponseRedirect(reverse('generar_pdf_pedidos') + f"?pedidos_ids={','.join(map(str, pedido_ids))}")
 
     generar_pdfs.short_description = "Generar PDFs para pedidos seleccionados"
+
+    def generar_pdfs_continuo(self, request, queryset):
+        pedido_ids = queryset.values_list('id', flat=True)
+        url = reverse('generar_pdf_pedidos')
+        ids = ','.join(map(str, pedido_ids))
+        return HttpResponseRedirect(f'{url}?pedidos_ids={ids}&formato=continuo')
+
+    generar_pdfs_continuo.short_description = (
+        "Generar ticket continuo para pedidos seleccionados"
+    )
 
     @admin.action(description='📄 Informe diario por vendedor (A4)')
     def informe_diario_vendedor_a4(self, request, queryset):
@@ -606,8 +617,16 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
     def descargar_pdf(self, obj):
         if obj:
             url = reverse('generar_pdf_pedido', args=[obj.id])
-            return format_html('<a href="{}" target="_blank">Descargar PDF</a>', url)
+            return format_html(
+                '<a href="{}?formato=continuo" target="_blank">Ticket continuo</a>'
+                ' &nbsp;|&nbsp; '
+                '<a href="{}" target="_blank">Dividido</a>',
+                url,
+                url,
+            )
         return ''
+
+    descargar_pdf.short_description = 'Imprimir ticket'
 
     def mostrar_articulos(self, obj):
         """

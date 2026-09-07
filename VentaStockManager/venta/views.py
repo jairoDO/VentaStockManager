@@ -610,7 +610,14 @@ def generar_pdf_pedidos(request, pedido_ids=None):
             # Columna de % chica, no necesita el ancho de precio.
             col_widths.append(1.5 * cm)
         col_widths.append(config.column_width_total * cm)
-        tabla_articulos = Table(data_articulos, colWidths=col_widths)
+        # Si el pedido es largo y debe continuar en otra página del ticket,
+        # repetimos los títulos de las columnas para que la segunda parte sea
+        # legible. ReportLab divide la tabla por filas automáticamente.
+        tabla_articulos = Table(
+            data_articulos,
+            colWidths=col_widths,
+            repeatRows=1,
+        )
 
         estilo_tabla_articulos = TableStyle([
             ('GRID', (0, 0), (-1, -1), 1, config.table_border_color),
@@ -772,9 +779,24 @@ def generar_pdf_pedidos(request, pedido_ids=None):
             elements.append(PageBreak())
         
 
-    # Dejamos un pequeño margen de seguridad para el frame de ReportLab, sin
-    # convertirlo en una franja vacía visible al final del comprobante.
-    page_height = max(8 * cm, max(alturas_pedidos) + 0.65 * cm)
+    # Los drivers de impresoras térmicas suelen tratar el rollo como hojas de
+    # largo limitado. Una única página PDF de 40/60 cm puede verse completa en
+    # pantalla pero recortarse físicamente al llegar al límite configurado en
+    # el driver. Mantenemos el alto dinámico para tickets cortos y, si supera
+    # 28 cm, dejamos que ReportLab lo divida en varias páginas. El driver recibe
+    # así páginas de tamaño soportado y no pierde productos ni la firma final.
+    margen_seguridad = 1.2 * cm
+    alto_necesario = max(alturas_pedidos) + margen_seguridad
+    alto_maximo_ticket = 28 * cm
+    # `formato=continuo` permite aprovechar el rollo como una sola tira cuando
+    # el modelo/controlador de la impresora admite páginas PDF muy largas. El
+    # formato dividido sigue siendo el predeterminado porque es el compatible
+    # con más impresoras térmicas y evita que el final quede físicamente fuera.
+    formato_continuo = request.GET.get('formato') == 'continuo'
+    if formato_continuo:
+        page_height = max(8 * cm, alto_necesario)
+    else:
+        page_height = max(8 * cm, min(alto_necesario, alto_maximo_ticket))
     page_size = (config.page_width * cm, page_height)
 
     # Set margins to zero

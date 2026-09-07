@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import re
 
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
@@ -54,3 +55,54 @@ class PedidoPDFControlTests(TestCase):
         self.assertEqual(response['Content-Type'], 'application/pdf')
         self.assertTrue(response.content.startswith(b'%PDF-'))
         self.assertGreater(len(response.content), 1000)
+
+    def test_pedido_largo_se_divide_en_paginas_en_vez_de_cortarse(self):
+        # Con 55 productos el comprobante supera ampliamente el largo de una
+        # hoja térmica. Debe continuar en otra página, no crecer como una única
+        # página que algunos drivers recortan.
+        for numero in range(55):
+            articulo = Articulo.objects.create(
+                nombre=f'Producto largo numero {numero:02d}',
+                stock=100,
+                precio_minorista='100.00',
+                precio_mayorista='90.00',
+                vencimiento=date.today() + timedelta(days=90),
+            )
+            ArticuloVenta.objects.create(
+                venta=self.pedido.venta,
+                articulo=articulo,
+                cantidad=1,
+                precio='100.00',
+            )
+
+        request = RequestFactory().get('/venta/pedido/generar-pdf/')
+        response = generar_pdf_pedidos(request, [self.pedido.pk])
+
+        # Los diccionarios de página de ReportLab conservan `/Type /Page` sin
+        # comprimir. Excluimos `/Pages` con el límite de palabra del regex.
+        paginas = len(re.findall(rb'/Type\s*/Page\b', response.content))
+        self.assertGreaterEqual(paginas, 2)
+
+    def test_pedido_largo_puede_generarse_como_una_tira_continua(self):
+        for numero in range(55):
+            articulo = Articulo.objects.create(
+                nombre=f'Producto continuo numero {numero:02d}',
+                stock=100,
+                precio_minorista='100.00',
+                precio_mayorista='90.00',
+                vencimiento=date.today() + timedelta(days=90),
+            )
+            ArticuloVenta.objects.create(
+                venta=self.pedido.venta,
+                articulo=articulo,
+                cantidad=1,
+                precio='100.00',
+            )
+
+        request = RequestFactory().get(
+            '/venta/pedido/generar-pdf/?formato=continuo'
+        )
+        response = generar_pdf_pedidos(request, [self.pedido.pk])
+
+        paginas = len(re.findall(rb'/Type\s*/Page\b', response.content))
+        self.assertEqual(paginas, 1)
