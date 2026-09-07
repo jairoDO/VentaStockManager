@@ -203,4 +203,6 @@ class AudienciaFiltroWidget(forms.Widget):
         return s.replace("'", '&#39;')
 
     class Media:
-        js = ('admin/wa_campania/audiencia_filtro_widget.js',)
+        # URL versionada: después de un deploy algunos teléfonos conservaban
+        # el JS anterior y los desplegables quedaban en "Cargando…".
+        js = ('/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260907b',)

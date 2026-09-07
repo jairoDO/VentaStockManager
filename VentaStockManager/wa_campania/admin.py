@@ -226,6 +226,8 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
             )
             return False
 
+        campania.estado = Campania.ESTADO_ENVIANDO
+        campania.save(update_fields=['estado'])
         async_task('wa_campania.tasks.enviar_campania', campania.id)
         self.message_user(
             request,
@@ -324,6 +326,8 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
         nueva = self._crear_copia(request, obj, ' (reenvío)')
         cantidad = crear_envios_pendientes(nueva)
         if cantidad:
+            nueva.estado = Campania.ESTADO_ENVIANDO
+            nueva.save(update_fields=['estado'])
             async_task('wa_campania.tasks.enviar_campania', nueva.pk)
             self.message_user(
                 request,
@@ -375,7 +379,7 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
                     )
         return HttpResponseRedirect(reverse('admin:wa_campania_campania_change', args=[obj.pk]))
 
-    @admin.action(description='Enviar campaña a la audiencia configurada')
+    @admin.action(description='Enviar o repetir campaña')
     def accion_enviar_campania(self, request, queryset):
         # Para evitar disparos accidentales, solo procesamos UNA
         # campaña por vez. Si seleccionaron varias, abortamos.
@@ -387,6 +391,10 @@ class CampaniaAdmin(_SuperuserOnlyMixin, admin.ModelAdmin):
             )
             return
         campania = queryset.first()
+        if campania.estado == Campania.ESTADO_FINALIZADA:
+            # Una campaña ya enviada es inmutable para conservar su historial.
+            # La acción crea una nueva con los mismos destinatarios y la envía.
+            return self._respuesta_reenviar_completa(request, campania)
         self._encolar_campania(request, campania)
 
 

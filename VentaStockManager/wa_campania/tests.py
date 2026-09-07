@@ -309,6 +309,42 @@ class CampaniaAdminTests(TestCase):
         self.client.force_login(self.admin)
 
     @mock.patch('wa_campania.admin.async_task')
+    @mock.patch('wa_campania.admin.wa_client.is_ready', return_value=(True, 'CONNECTED'))
+    def test_accion_sobre_finalizada_crea_y_envia_repeticion(
+        self, mock_ready, mock_async,
+    ):
+        elegido = _crear_cliente('Cliente', 'Acción', whatsapp='5493515559919')
+        original = Campania.objects.create(
+            nombre='Campaña terminada', mensaje='Hola',
+            audiencia_filtro={'todos': True},
+            estado=Campania.ESTADO_FINALIZADA,
+            creado_por=self.admin,
+        )
+        EnvioWhatsapp.objects.create(
+            campania=original,
+            cliente=elegido,
+            telefono_usado=elegido.whatsapp_number,
+            status=EnvioWhatsapp.STATUS_ENVIADO,
+        )
+
+        response = self.client.post(
+            reverse('admin:wa_campania_campania_changelist'),
+            {
+                'action': 'accion_enviar_campania',
+                '_selected_action': [original.pk],
+            },
+        )
+
+        nueva = Campania.objects.exclude(pk=original.pk).get()
+        nueva.refresh_from_db()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(nueva.envios.count(), 1)
+        self.assertEqual(nueva.estado, Campania.ESTADO_ENVIANDO)
+        mock_async.assert_called_once_with(
+            'wa_campania.tasks.enviar_campania', nueva.pk,
+        )
+
+    @mock.patch('wa_campania.admin.async_task')
     @mock.patch('wa_campania.admin.crear_envios_pendientes', return_value=1)
     def test_guardar_y_enviar_guarda_y_encola(self, mock_crear, mock_async):
         response = self.client.post(
