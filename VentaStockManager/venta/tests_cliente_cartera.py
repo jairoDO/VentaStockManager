@@ -9,7 +9,11 @@ from django.urls import reverse
 from cliente.models import Cliente
 from cliente.admin import ClienteAdmin
 from vendedor.models import Vendedor
-from venta.views_nueva import api_cliente_crear, api_clientes_buscar
+from venta.views_nueva import (
+    api_cliente_asignarme,
+    api_cliente_crear,
+    api_clientes_buscar,
+)
 
 
 class CarteraClienteTests(TestCase):
@@ -58,6 +62,55 @@ class CarteraClienteTests(TestCase):
             [resultado['id'] for resultado in payload['results']],
             [self.cliente_osvaldo.pk],
         )
+
+    def test_si_no_hay_resultado_propio_busca_clientes_sin_asignar(self):
+        libre = Cliente.objects.create(nombre='Micaela', apellido='Libre')
+        request = self.factory.get('/venta/api/clientes/buscar/', {'q': 'Micaela'})
+        request.user = self.user_osvaldo
+
+        response = api_clientes_buscar(request)
+        payload = json.loads(response.content)
+
+        self.assertTrue(payload['buscando_sin_asignar'])
+        self.assertEqual([r['id'] for r in payload['results']], [libre.pk])
+        self.assertTrue(payload['results'][0]['requiere_asignacion'])
+
+    def test_resultado_propio_tiene_prioridad_sobre_un_cliente_libre(self):
+        Cliente.objects.create(nombre='Maira', apellido='Libre')
+        request = self.factory.get('/venta/api/clientes/buscar/', {'q': 'Maira'})
+        request.user = self.user_osvaldo
+
+        payload = json.loads(api_clientes_buscar(request).content)
+
+        self.assertFalse(payload['buscando_sin_asignar'])
+        self.assertEqual(
+            [r['id'] for r in payload['results']],
+            [self.cliente_osvaldo.pk],
+        )
+
+    def test_vendedor_puede_asignarse_un_cliente_libre(self):
+        libre = Cliente.objects.create(nombre='Cliente', apellido='Libre')
+        request = self.factory.post(f'/venta/api/clientes/{libre.pk}/asignarme/')
+        request.user = self.user_osvaldo
+
+        response = api_cliente_asignarme(request, libre.pk)
+        libre.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(libre.vendedor_asignado, self.osvaldo)
+        self.assertTrue(libre.asignacion_vendedor_confirmada)
+
+    def test_vendedor_no_puede_quitar_cliente_a_otro(self):
+        request = self.factory.post(
+            f'/venta/api/clientes/{self.cliente_otro.pk}/asignarme/',
+        )
+        request.user = self.user_osvaldo
+
+        response = api_cliente_asignarme(request, self.cliente_otro.pk)
+        self.cliente_otro.refresh_from_db()
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.cliente_otro.vendedor_asignado, self.otro)
 
     def test_cliente_nuevo_queda_asignado_al_vendedor_logueado(self):
         request = self.factory.post(

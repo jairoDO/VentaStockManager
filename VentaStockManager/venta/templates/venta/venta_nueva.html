@@ -73,10 +73,15 @@
              x-cloak
              @click.outside="cliente.dropdownAbierto = false"
              class="absolute z-10 w-full bg-white border border-slate-200 rounded shadow-lg mt-1 max-h-72 overflow-y-auto">
+          <div x-show="cliente.buscandoSinAsignar" x-cloak
+               class="px-3 py-2 text-xs bg-amber-50 text-amber-800 border-b border-amber-200">
+            No apareció en tu cartera. Estos clientes todavía no tienen vendedor asignado.
+          </div>
           <template x-for="c in cliente.results" :key="c.id">
-            <button type="button"
-                    @click="seleccionarCliente(c)"
-                    class="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-100 last:border-0">
+            <div class="flex items-center border-b border-slate-100 last:border-0 hover:bg-blue-50">
+              <button type="button"
+                      @click="if (!c.requiere_asignacion) seleccionarCliente(c)"
+                      class="flex-1 text-left px-3 py-2">
               <div class="font-medium flex justify-between">
                 <span x-text="c.nombre"></span>
                 <span x-show="Number(c.saldo) !== 0"
@@ -86,7 +91,15 @@
                       x-text="(Number(c.saldo) > 0 ? '+' : '') + formatARS(c.saldo)"></span>
               </div>
               <div class="text-xs text-slate-500" x-text="c.direccion + (c.telefono ? ' · ' + c.telefono : '')"></div>
-            </button>
+              </button>
+              <button type="button" x-show="c.requiere_asignacion" x-cloak
+                      @click.stop="asignarmeCliente(c)"
+                      :disabled="asignandoClienteId === c.id"
+                      class="mr-3 px-3 py-1.5 text-xs font-semibold rounded bg-amber-500 hover:bg-amber-600 text-white disabled:bg-slate-300">
+                <span x-show="asignandoClienteId !== c.id">Asignarme</span>
+                <span x-show="asignandoClienteId === c.id">Asignando…</span>
+              </button>
+            </div>
           </template>
         </div>
         <p x-show="cliente.id" x-cloak class="text-xs text-emerald-700 mt-1">
@@ -862,7 +875,9 @@
         listas_activas: [],
         results: [],
         dropdownAbierto: false,
+        buscandoSinAsignar: false,
       },
+      asignandoClienteId: null,
 
       // Panel inline para cargar WhatsApp cuando el cliente
       // seleccionado no lo tiene. Aparece encima del form principal.
@@ -1026,7 +1041,27 @@
         });
         const data = await r.json();
         this.cliente.results = data.results || [];
+        this.cliente.buscandoSinAsignar = !!data.buscando_sin_asignar;
         this.cliente.dropdownAbierto = true;
+      },
+      async asignarmeCliente(c) {
+        this.asignandoClienteId = c.id;
+        try {
+          const r = await fetch(`/venta/api/clientes/${c.id}/asignarme/`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'X-CSRFToken': getCookie('csrftoken')},
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) throw new Error(data.error || 'No se pudo asignar el cliente.');
+          c.requiere_asignacion = false;
+          this.cliente.buscandoSinAsignar = false;
+          this.seleccionarCliente(c);
+        } catch (error) {
+          this.errores = [error.message];
+        } finally {
+          this.asignandoClienteId = null;
+        }
       },
       seleccionarCliente(c) {
         this.cliente.id = c.id;
@@ -1042,6 +1077,7 @@
         this.cliente.listas_activas = [];  // se completa en refrescarSaldoCliente
         this.cliente.dropdownAbierto = false;
         this.cliente.results = [];
+        this.cliente.buscandoSinAsignar = false;
         // Reset de los campos de cobro: si el operador eligió otro
         // cliente, no queremos arrastrar el saldo aplicado del previo.
         this.aplicarSaldo = false;

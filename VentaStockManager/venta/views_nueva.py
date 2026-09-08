@@ -577,24 +577,38 @@ def api_clientes_buscar(request):
     if len(q) < 2:
         return JsonResponse({'results': []})
 
+    coincidencia = (
+        Q(nombre__icontains=q)
+        | Q(apellido__icontains=q)
+        | Q(direccion__icontains=q)
+    )
+    base_qs = Cliente.objects.select_related('cuenta').prefetch_related(Prefetch(
+        'direcciones',
+        queryset=DireccionCliente.objects.order_by('-es_principal', '-actualizada_en'),
+        to_attr='_direcciones_ordenadas',
+    ))
     qs = (
-        _clientes_de_la_cartera(request.user, Cliente.objects.all())
-        .select_related('cuenta')
-        .prefetch_related(Prefetch(
-            'direcciones',
-            queryset=DireccionCliente.objects.order_by('-es_principal', '-actualizada_en'),
-            to_attr='_direcciones_ordenadas',
-        ))
-        .filter(
-            Q(nombre__icontains=q)
-            | Q(apellido__icontains=q)
-            | Q(direccion__icontains=q)
-        )
+        _clientes_de_la_cartera(request.user, base_qs)
+        .filter(coincidencia)
         .order_by('nombre', 'apellido')[:20]
     )
+    clientes = list(qs)
+    buscando_sin_asignar = False
+
+    # Segunda oportunidad: si no hubo coincidencias en la cartera propia,
+    # ofrecemos sólo clientes libres. Nunca mostramos los asignados a otro
+    # vendedor, para evitar apropiaciones accidentales.
+    if not clientes:
+        buscando_sin_asignar = True
+        clientes = list(
+            base_qs
+            .filter(vendedor_asignado__isnull=True)
+            .filter(coincidencia)
+            .order_by('nombre', 'apellido')[:20]
+        )
 
     results = []
-    for c in qs:
+    for c in clientes:
         direccion_principal = _direccion_principal(c)
         results.append({
             'id': c.id,
@@ -604,8 +618,43 @@ def api_clientes_buscar(request):
             'whatsapp_number': c.whatsapp_number or '',
             'saldo': str(c.saldo),
             'direccion_principal': _direccion_to_dict(direccion_principal),
+            'requiere_asignacion': buscando_sin_asignar,
         })
-    return JsonResponse({'results': results})
+    return JsonResponse({
+        'results': results,
+        'buscando_sin_asignar': buscando_sin_asignar,
+    })
+
+
+@login_required
+@require_POST
+def api_cliente_asignarme(request, cliente_id):
+    """Asigna al vendedor logueado un cliente que todavía está libre."""
+    vendedor_id = _vendedor_for_user(request.user)
+    if not vendedor_id:
+        return JsonResponse({
+            'ok': False,
+            'error': 'Tu usuario no tiene un perfil de vendedor asociado.',
+        }, status=400)
+
+    with transaction.atomic():
+        cliente = Cliente.objects.select_for_update().filter(pk=cliente_id).first()
+        if not cliente:
+            return JsonResponse({'ok': False, 'error': 'Cliente inexistente.'}, status=404)
+        if cliente.vendedor_asignado_id not in (None, vendedor_id):
+            return JsonResponse({
+                'ok': False,
+                'error': 'Este cliente ya fue asignado a otro vendedor.',
+            }, status=409)
+        cliente.vendedor_asignado_id = vendedor_id
+        cliente.vendedor_sugerido = None
+        cliente.asignacion_vendedor_confirmada = True
+        cliente.save(update_fields=[
+            'vendedor_asignado', 'vendedor_sugerido',
+            'asignacion_vendedor_confirmada',
+        ])
+
+    return JsonResponse({'ok': True, 'cliente_id': cliente.id})
 
 
 def _listas_activas_de_cliente(cliente, max_resultados: int = 3) -> list[dict]:
