@@ -289,11 +289,12 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         if not request.user.is_superuser:
             return [
                 'direccion',
+                'creado_por',
                 'vendedor_asignado',
                 'vendedor_sugerido',
                 'asignacion_vendedor_confirmada',
             ]
-        return []
+        return ['creado_por']
 
     def get_actions(self, request):
         actions = super().get_actions(request)
@@ -304,6 +305,14 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         return actions
 
     def save_model(self, request, obj, form, change):
+        if not change and not obj.creado_por_id:
+            obj.creado_por = request.user
+            if not obj.vendedor_asignado_id:
+                vendedor_creador = Vendedor.objects.filter(
+                    usuario=request.user,
+                ).first()
+                if vendedor_creador:
+                    obj.vendedor_sugerido = vendedor_creador
         if request.user.is_superuser and 'vendedor_asignado' in form.changed_data:
             obj.asignacion_vendedor_confirmada = bool(obj.vendedor_asignado_id)
             if obj.vendedor_asignado_id == obj.vendedor_sugerido_id:
@@ -314,9 +323,14 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         if obj.asignacion_vendedor_confirmada:
             return format_html('<span style="color:#2e7d32;">✓ Confirmada</span>')
         if obj.vendedor_sugerido_id:
+            origen = (
+                'creó el cliente'
+                if obj.creado_por_id == obj.vendedor_sugerido.usuario_id
+                else 'última venta'
+            )
             return format_html(
-                '<span style="color:#b45309;">Sugerido: {}</span>',
-                obj.vendedor_sugerido.display_name(),
+                '<span style="color:#b45309;">Sugerido: {} ({})</span>',
+                obj.vendedor_sugerido.display_name(), origen,
             )
         return format_html('<span style="color:#888;">Sin sugerencia</span>')
 

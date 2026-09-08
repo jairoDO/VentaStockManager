@@ -1,10 +1,13 @@
 import json
+from types import SimpleNamespace
 
+from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
 from cliente.models import Cliente
+from cliente.admin import ClienteAdmin
 from vendedor.models import Vendedor
 from venta.views_nueva import api_cliente_crear, api_clientes_buscar
 
@@ -75,6 +78,21 @@ class CarteraClienteTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(cliente.vendedor_asignado, self.osvaldo)
         self.assertTrue(cliente.asignacion_vendedor_confirmada)
+        self.assertEqual(cliente.creado_por, self.user_osvaldo)
+
+    def test_cliente_creado_desde_admin_sugiere_al_vendedor_creador(self):
+        request = self.factory.post('/admin/cliente/cliente/add/')
+        request.user = self.user_otro
+        cliente = Cliente(nombre='Micaela', apellido='Creada por Lucas')
+        form = SimpleNamespace(changed_data=[])
+
+        ClienteAdmin(Cliente, admin.site).save_model(
+            request, cliente, form, change=False,
+        )
+
+        self.assertEqual(cliente.creado_por, self.user_otro)
+        self.assertEqual(cliente.vendedor_sugerido, self.otro)
+        self.assertFalse(cliente.asignacion_vendedor_confirmada)
 
     def test_pantalla_masiva_filtra_y_confirma_sugerencias(self):
         self.cliente_osvaldo.vendedor_asignado = None

@@ -47,6 +47,15 @@ class Cliente(models.Model):
     direccion = models.CharField(max_length=50, default='direccion', blank=True, null=True)
     codigo_interno = models.CharField(max_length=50, default='no-codigo', blank=True, null=True)
 
+    creado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        related_name='clientes_creados',
+        on_delete=models.SET_NULL,
+        help_text='Usuario que dio de alta al cliente.',
+    )
+
     # Cartera comercial. `vendedor_asignado` es la relación efectiva que
     # controla qué clientes aparecen al cargar una venta. Para los clientes
     # históricos no decidimos automáticamente: `vendedor_sugerido` se obtiene
@@ -65,7 +74,7 @@ class Cliente(models.Model):
         blank=True,
         related_name='clientes_sugeridos',
         on_delete=models.SET_NULL,
-        help_text='Sugerencia calculada desde la venta más reciente.',
+        help_text='Sugerencia calculada desde el creador o la venta más reciente.',
     )
     asignacion_vendedor_confirmada = models.BooleanField(
         default=False,

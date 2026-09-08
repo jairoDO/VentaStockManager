@@ -67,6 +67,7 @@ def gestionar_cartera_clientes(request):
         return redirect(f'{request.path}?{query}' if query else request.path)
 
     qs = Cliente.objects.select_related(
+        'creado_por',
         'vendedor_asignado__usuario',
         'vendedor_sugerido__usuario',
     ).order_by('nombre', 'apellido', 'pk')

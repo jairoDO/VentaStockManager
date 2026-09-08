@@ -80,7 +80,7 @@
       <thead>
         <tr>
           <th><input type="checkbox" id="seleccionar-pagina" title="Seleccionar esta página"></th>
-          <th>Cliente</th><th>Dirección</th><th>Vendedor actual</th><th>Sugerido por última venta</th>
+          <th>Cliente</th><th>Dirección</th><th>Vendedor actual</th><th>Vendedor sugerido</th>
         </tr>
       </thead>
       <tbody>
@@ -90,7 +90,7 @@
             <td><strong>{{ cliente.nombre_completo }}</strong></td>
             <td>{{ cliente.direccion|default:'—' }}</td>
             <td>{% if cliente.vendedor_asignado %}{{ cliente.vendedor_asignado.display_name }}{% else %}<span class="sin-dato">Sin asignar</span>{% endif %}</td>
-            <td>{% if cliente.vendedor_sugerido %}<span class="sugerido">{{ cliente.vendedor_sugerido.display_name }}</span>{% else %}<span class="sin-dato">Sin sugerencia</span>{% endif %}</td>
+            <td>{% if cliente.vendedor_sugerido %}<span class="sugerido">{{ cliente.vendedor_sugerido.display_name }}</span><br><small>{% if cliente.creado_por_id == cliente.vendedor_sugerido.usuario_id %}Creó el cliente{% else %}Última venta{% endif %}</small>{% else %}<span class="sin-dato">Sin sugerencia</span>{% endif %}</td>
           </tr>
         {% empty %}
           <tr><td colspan="5">No hay clientes con estos filtros.</td></tr>

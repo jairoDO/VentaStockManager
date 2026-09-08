@@ -528,6 +528,7 @@ def api_cliente_crear(request):
         apellido=apellido or '',
         telefono=telefono or '',
         direccion=direccion or '',
+        creado_por=request.user,
         vendedor_asignado_id=vendedor_id,
         asignacion_vendedor_confirmada=True,
     )
