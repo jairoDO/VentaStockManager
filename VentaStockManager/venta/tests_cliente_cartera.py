@@ -71,7 +71,7 @@ class CarteraClienteTests(TestCase):
         response = api_clientes_buscar(request)
         payload = json.loads(response.content)
 
-        self.assertTrue(payload['buscando_sin_asignar'])
+        self.assertTrue(payload['buscando_fuera_cartera'])
         self.assertEqual([r['id'] for r in payload['results']], [libre.pk])
         self.assertTrue(payload['results'][0]['requiere_asignacion'])
 
@@ -82,7 +82,7 @@ class CarteraClienteTests(TestCase):
 
         payload = json.loads(api_clientes_buscar(request).content)
 
-        self.assertFalse(payload['buscando_sin_asignar'])
+        self.assertFalse(payload['buscando_fuera_cartera'])
         self.assertEqual(
             [r['id'] for r in payload['results']],
             [self.cliente_osvaldo.pk],
@@ -100,7 +100,7 @@ class CarteraClienteTests(TestCase):
         self.assertEqual(libre.vendedor_asignado, self.osvaldo)
         self.assertTrue(libre.asignacion_vendedor_confirmada)
 
-    def test_vendedor_no_puede_quitar_cliente_a_otro(self):
+    def test_vendedor_puede_reasignarse_cliente_de_otro(self):
         request = self.factory.post(
             f'/venta/api/clientes/{self.cliente_otro.pk}/asignarme/',
         )
@@ -109,8 +109,23 @@ class CarteraClienteTests(TestCase):
         response = api_cliente_asignarme(request, self.cliente_otro.pk)
         self.cliente_otro.refresh_from_db()
 
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(self.cliente_otro.vendedor_asignado, self.otro)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.cliente_otro.vendedor_asignado, self.osvaldo)
+
+    def test_si_no_hay_resultado_propio_muestra_cliente_de_otro(self):
+        request = self.factory.get(
+            '/venta/api/clientes/buscar/', {'q': 'Otro'},
+        )
+        request.user = self.user_osvaldo
+
+        payload = json.loads(api_clientes_buscar(request).content)
+
+        self.assertTrue(payload['buscando_fuera_cartera'])
+        self.assertEqual(payload['results'][0]['id'], self.cliente_otro.pk)
+        self.assertEqual(
+            payload['results'][0]['vendedor_actual'],
+            self.otro.display_name(),
+        )
 
     def test_cliente_nuevo_queda_asignado_al_vendedor_logueado(self):
         request = self.factory.post(

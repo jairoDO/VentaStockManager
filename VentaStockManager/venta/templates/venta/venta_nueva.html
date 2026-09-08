@@ -73,9 +73,9 @@
              x-cloak
              @click.outside="cliente.dropdownAbierto = false"
              class="absolute z-10 w-full bg-white border border-slate-200 rounded shadow-lg mt-1 max-h-72 overflow-y-auto">
-          <div x-show="cliente.buscandoSinAsignar" x-cloak
+          <div x-show="cliente.buscandoFueraCartera" x-cloak
                class="px-3 py-2 text-xs bg-amber-50 text-amber-800 border-b border-amber-200">
-            No apareció en tu cartera. Estos clientes todavía no tienen vendedor asignado.
+            No apareció en tu cartera. Para usar uno de estos clientes tenés que asignártelo.
           </div>
           <template x-for="c in cliente.results" :key="c.id">
             <div class="flex items-center border-b border-slate-100 last:border-0 hover:bg-blue-50">
@@ -91,6 +91,8 @@
                       x-text="(Number(c.saldo) > 0 ? '+' : '') + formatARS(c.saldo)"></span>
               </div>
               <div class="text-xs text-slate-500" x-text="c.direccion + (c.telefono ? ' · ' + c.telefono : '')"></div>
+              <div x-show="c.requiere_asignacion" class="text-xs font-semibold text-amber-700 mt-1"
+                   x-text="c.vendedor_actual ? 'Actualmente asignado a: ' + c.vendedor_actual : 'Sin vendedor asignado'"></div>
               </button>
               <button type="button" x-show="c.requiere_asignacion" x-cloak
                       @click.stop="asignarmeCliente(c)"
@@ -875,7 +877,7 @@
         listas_activas: [],
         results: [],
         dropdownAbierto: false,
-        buscandoSinAsignar: false,
+        buscandoFueraCartera: false,
       },
       asignandoClienteId: null,
 
@@ -1041,7 +1043,7 @@
         });
         const data = await r.json();
         this.cliente.results = data.results || [];
-        this.cliente.buscandoSinAsignar = !!data.buscando_sin_asignar;
+        this.cliente.buscandoFueraCartera = !!data.buscando_fuera_cartera;
         this.cliente.dropdownAbierto = true;
       },
       async asignarmeCliente(c) {
@@ -1055,7 +1057,7 @@
           const data = await r.json();
           if (!r.ok || !data.ok) throw new Error(data.error || 'No se pudo asignar el cliente.');
           c.requiere_asignacion = false;
-          this.cliente.buscandoSinAsignar = false;
+          this.cliente.buscandoFueraCartera = false;
           this.seleccionarCliente(c);
         } catch (error) {
           this.errores = [error.message];
@@ -1077,7 +1079,7 @@
         this.cliente.listas_activas = [];  // se completa en refrescarSaldoCliente
         this.cliente.dropdownAbierto = false;
         this.cliente.results = [];
-        this.cliente.buscandoSinAsignar = false;
+        this.cliente.buscandoFueraCartera = false;
         // Reset de los campos de cobro: si el operador eligió otro
         // cliente, no queremos arrastrar el saldo aplicado del previo.
         this.aplicarSaldo = false;
