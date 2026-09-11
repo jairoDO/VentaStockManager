@@ -175,6 +175,20 @@ class MyAdminSite(MaterialAdminSite):
                         'view_only': True,
                     },
                     {
+                        'name': 'Planilla diaria',
+                        'object_name': 'PlanillaReparto',
+                        'admin_url': '/reparto/planilla/',
+                        'add_url': None,
+                        'perms': {
+                            'add': False,
+                            'change': False,
+                            'delete': False,
+                            'view': True,
+                        },
+                        'icon': 'description',
+                        'view_only': True,
+                    },
+                    {
                         'name': 'Ver mapa',
                         'object_name': 'MapaRepartos',
                         'admin_url': '/reparto/',

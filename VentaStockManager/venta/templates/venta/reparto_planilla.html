@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planilla diaria de reparto</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>[x-cloak] { display: none !important; }</style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+  <main class="mx-auto max-w-7xl p-4 md:p-7">
+    <header class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <a href="/admin/" class="text-sm font-medium text-blue-700 hover:underline">← Volver al administrador</a>
+        <h1 class="mt-2 text-2xl font-bold md:text-3xl">Planilla diaria de reparto</h1>
+        <p class="mt-1 text-sm text-slate-500">
+          Elegí el día y el repartidor, seleccioná sus pedidos e imprimí la hoja antes de salir.
+        </p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <a href="{% url 'reparto_planificar' %}"
+           class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold shadow-sm hover:bg-slate-100">
+          Planificar reparto
+        </a>
+        <a href="{% url 'reparto_panel' %}"
+           class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold shadow-sm hover:bg-slate-100">
+          🗺 Ver mapa
+        </a>
+      </div>
+    </header>
+
+    {% if messages %}
+      <div class="mb-5 space-y-2">
+        {% for message in messages %}
+          <div class="rounded-lg border px-4 py-3 text-sm font-medium
+                      {% if message.tags == 'error' %}border-red-300 bg-red-50 text-red-800
+                      {% else %}border-blue-300 bg-blue-50 text-blue-800{% endif %}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <section class="mb-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <h2 class="text-lg font-bold">1. Buscar reparto</h2>
+        <a href="{% url 'reparto_planilla' %}" class="text-sm text-blue-700 hover:underline">Limpiar filtros</a>
+      </div>
+      <form method="get" class="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+        <div>
+          <label for="fecha" class="mb-1 block text-sm font-semibold text-slate-700">Fecha de entrega</label>
+          <input id="fecha" name="fecha" type="date" required value="{{ fecha|date:'Y-m-d' }}"
+                 class="w-full rounded-lg border-2 border-slate-300 px-3 py-2.5 focus:border-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label for="repartidor_filtro" class="mb-1 block text-sm font-semibold text-slate-700">Repartidor</label>
+          <select id="repartidor_filtro" name="repartidor_id" required
+                  class="w-full rounded-lg border-2 border-slate-300 bg-white px-3 py-2.5 focus:border-blue-500 focus:outline-none">
+            <option value="">Elegir repartidor…</option>
+            {% for opcion in repartidores %}
+              <option value="{{ opcion.pk }}" {% if repartidor and opcion.pk == repartidor.pk %}selected{% endif %}>{{ opcion }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button type="submit" class="rounded-lg bg-blue-700 px-6 py-2.5 font-semibold text-white shadow-sm hover:bg-blue-800">
+          Ver pedidos
+        </button>
+      </form>
+    </section>
+
+    {% if repartidor %}
+      <form method="post" target="_blank"
+            x-data="{
+              seleccionarPagina: false,
+              seleccionarTodos: false,
+              seleccionados: [],
+              idsPagina: [{% for pedido in pagina.object_list %}'{{ pedido.pk }}'{% if not forloop.last %}, {% endif %}{% endfor %}],
+              cambiarPagina() {
+                this.seleccionados = this.seleccionarPagina ? [...this.idsPagina] : [];
+              },
+            }">
+        {% csrf_token %}
+        <input type="hidden" name="fecha" value="{{ fecha|date:'Y-m-d' }}">
+        <input type="hidden" name="repartidor_id" value="{{ repartidor.pk }}">
+
+        <section class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div class="flex flex-col gap-4 border-b border-slate-200 p-4 md:flex-row md:items-center md:justify-between md:p-5">
+            <div>
+              <h2 class="text-lg font-bold">2. Elegir pedidos</h2>
+              <p class="mt-1 text-sm text-slate-500">
+                {{ total_resultados }} pedido{{ total_resultados|pluralize }} de {{ repartidor }} para el {{ fecha|date:'d/m/Y' }}.
+              </p>
+            </div>
+            {% if total_resultados %}
+              <div class="flex flex-col gap-2 text-sm">
+                <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2">
+                  <input type="checkbox" x-model="seleccionarPagina" :disabled="seleccionarTodos"
+                         @change="cambiarPagina()" class="h-5 w-5 rounded text-blue-700">
+                  <span>
+                    <strong class="block">Imprimir solo esta página ({{ pagina.object_list|length }} pedidos)</strong>
+                    <span class="block text-xs text-slate-500">Incluye únicamente los pedidos que estás viendo ahora.</span>
+                  </span>
+                </label>
+                {% if pagina.paginator.num_pages > 1 %}
+                  <label class="flex cursor-pointer items-start gap-3 rounded-lg border-2 border-blue-300 bg-blue-50 px-4 py-3 text-blue-950">
+                    <input type="checkbox" name="seleccionar_todos" value="1" x-model="seleccionarTodos"
+                           @change="seleccionados = []; seleccionarPagina = false"
+                           class="mt-0.5 h-5 w-5 rounded text-blue-700">
+                    <span>
+                      <strong class="block">Imprimir todos los pedidos de todas las páginas</strong>
+                      <span class="mt-1 block text-xs text-blue-800">
+                        El PDF incluirá los {{ total_resultados }} pedidos encontrados con estos filtros,
+                        aunque en pantalla solo veas los {{ pagina.object_list|length }} de esta página.
+                      </span>
+                    </span>
+                  </label>
+                {% endif %}
+              </div>
+            {% endif %}
+          </div>
+
+          {% if pagina.object_list %}
+            <div class="overflow-x-auto">
+              <table class="w-full min-w-[950px] text-left text-sm">
+                <thead class="bg-slate-100 text-xs uppercase tracking-wide text-slate-600">
+                  <tr>
+                    <th class="w-12 px-4 py-3"></th>
+                    <th class="px-4 py-3">Pedido</th>
+                    <th class="px-4 py-3">Cliente</th>
+                    <th class="px-4 py-3">Dirección</th>
+                    <th class="px-4 py-3">Estado</th>
+                    <th class="px-4 py-3 text-right">Total</th>
+                    <th class="px-4 py-3">Cobro registrado</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  {% for pedido in pagina.object_list %}
+                    <tr class="hover:bg-slate-50" :class="seleccionarTodos ? 'bg-blue-50' : ''">
+                      <td class="px-4 py-3">
+                        <input type="checkbox" name="pedido" value="{{ pedido.pk }}"
+                               x-model="seleccionados" :disabled="seleccionarTodos"
+                               @change="seleccionarPagina = seleccionados.length === idsPagina.length"
+                               class="h-5 w-5 rounded text-blue-700">
+                      </td>
+                      <td class="px-4 py-3 font-mono font-semibold">#{{ pedido.pk }}</td>
+                      <td class="px-4 py-3 font-medium">{{ pedido.venta.cliente.nombre_completo }}</td>
+                      <td class="px-4 py-3">
+                        <span class="block">{{ pedido.direccion_entrega_texto|default:'Sin dirección' }}</span>
+                        <span class="text-xs text-slate-500">{{ pedido.localidad_entrega }}</span>
+                      </td>
+                      <td class="px-4 py-3">{{ pedido.get_estado_display }}</td>
+                      <td class="px-4 py-3 text-right font-semibold">${{ pedido.total_planilla|floatformat:2 }}</td>
+                      <td class="px-4 py-3">
+                        {% if pedido.cobro_entrega_registrado_en %}
+                          <span class="font-medium text-emerald-800">{{ pedido.forma_pago_entrega_texto }}</span>
+                        {% else %}
+                          <span class="text-amber-700">Pendiente de completar</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            {% if pagina.paginator.num_pages > 1 %}
+              <nav class="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-4">
+                <p class="text-sm text-slate-500">Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</p>
+                <div class="flex gap-2">
+                  {% if pagina.has_previous %}
+                    <a href="?{% if filtros_query %}{{ filtros_query }}&{% endif %}page={{ pagina.previous_page_number }}"
+                       class="rounded border border-slate-300 px-3 py-2 text-sm font-medium">← Anterior</a>
+                  {% endif %}
+                  {% if pagina.has_next %}
+                    <a href="?{% if filtros_query %}{{ filtros_query }}&{% endif %}page={{ pagina.next_page_number }}"
+                       class="rounded border border-slate-300 px-3 py-2 text-sm font-medium">Siguiente →</a>
+                  {% endif %}
+                </div>
+              </nav>
+            {% endif %}
+          {% else %}
+            <div class="p-10 text-center text-slate-500">No hay pedidos asignados a este repartidor para esa fecha.</div>
+          {% endif %}
+        </section>
+
+        {% if total_resultados %}
+          <section class="sticky bottom-3 mt-5 flex flex-col gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-xl backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-sm text-slate-600">
+              La planilla abre como PDF lista para imprimir y llevar durante el reparto.
+            </p>
+            <button type="submit"
+                    :disabled="!seleccionarTodos && seleccionados.length === 0"
+                    :class="(!seleccionarTodos && seleccionados.length === 0) ? 'cursor-not-allowed bg-slate-300' : 'bg-emerald-700 hover:bg-emerald-800'"
+                    class="rounded-lg px-6 py-3 font-bold text-white shadow-sm">
+              📄 Generar planilla PDF
+            </button>
+          </section>
+        {% endif %}
+      </form>
+    {% else %}
+      <section class="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
+        <p class="text-lg font-semibold text-slate-700">Elegí una fecha y un repartidor.</p>
+        <p class="mt-1 text-sm text-slate-500">Después podrás seleccionar los pedidos que saldrán en la planilla.</p>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

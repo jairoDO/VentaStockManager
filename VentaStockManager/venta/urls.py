@@ -46,6 +46,7 @@ from venta.views_reparto import (
     planificar_reparto,
     reparto_actualizar_estado,
     reparto_panel,
+    planilla_reparto,
 )
 
 urlpatterns = [
@@ -105,6 +106,7 @@ urlpatterns = [
     path('venta/pedido/informe-diario/', generar_informe_diario_vendedor,
          name='informe_diario_vendedor'),
     path('reparto/planificar/', planificar_reparto, name='reparto_planificar'),
+    path('reparto/planilla/', planilla_reparto, name='reparto_planilla'),
     path('reparto/', reparto_panel, name='reparto_panel'),
     path('reparto/pedido/<int:pedido_id>/estado/', reparto_actualizar_estado,
          name='reparto_actualizar_estado'),

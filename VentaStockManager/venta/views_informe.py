@@ -27,13 +27,14 @@ planilla se vea coherente con los comprobantes individuales.
 """
 from collections import defaultdict
 from decimal import Decimal
+from html import escape
 from io import BytesIO
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, HttpResponseBadRequest
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import (
@@ -53,6 +54,14 @@ from .models import Pedido
 
 TAMANO_A4 = 'a4'
 TAMANO_CONFIG = 'config'
+
+
+def _recortar_texto(valor, limite=30):
+    """Mantiene compacta la planilla sin perder la identificación."""
+    texto = str(valor or '').strip()
+    if len(texto) <= limite:
+        return texto
+    return texto[:limite - 1].rstrip() + '…'
 
 
 def _parse_pedido_ids(request):
@@ -80,7 +89,7 @@ def _resolver_tamano(request):
         # respetamos eso; alto siempre 29.7 (A4 real, la lib no expone
         # page_height en el modelo actual).
         return (cfg.page_width * cm, 29.7 * cm), cfg
-    return A4, FacturaConfiguration.objects.first() or FacturaConfiguration()
+    return landscape(A4), FacturaConfiguration.objects.first() or FacturaConfiguration()
 
 
 def _color(valor, default='#000000'):
@@ -193,7 +202,7 @@ def _fila_pedido(pedido, cfg_flags, estilos):
         items = pedido.venta.ventas.all()
         if items:
             texto = '<br/>'.join(
-                f'• {it.cantidad} × {it.articulo.nombre}'
+                f'• {it.cantidad} × {escape(_recortar_texto(it.articulo.nombre))}'
                 for it in items
                 if it.articulo
             )
@@ -208,53 +217,104 @@ def _fila_pedido(pedido, cfg_flags, estilos):
         fila.append(Paragraph(marca, body))
     if cfg_flags['formas_pago']:
         if pedido.cobro_entrega_registrado_en:
-            formas = []
-            if pedido.monto_efectivo_entrega:
-                formas.append(f'Efectivo ${pedido.monto_efectivo_entrega:,.2f}')
-            if pedido.monto_transferencia_entrega:
-                formas.append(
-                    f'Transf. ${pedido.monto_transferencia_entrega:,.2f}'
-                )
-            if pedido.monto_cuenta_corriente_entrega:
-                formas.append(
-                    f'Cta. cte. ${pedido.monto_cuenta_corriente_entrega:,.2f}'
-                )
-            fila.append(Paragraph('<br/>'.join(formas) or 'Sin importe', body))
+            fila.extend([
+                Paragraph(
+                    f'${pedido.monto_efectivo_entrega:,.2f}'
+                    if pedido.monto_efectivo_entrega else '—',
+                    body,
+                ),
+                Paragraph(
+                    f'${pedido.monto_transferencia_entrega:,.2f}'
+                    if pedido.monto_transferencia_entrega else '—',
+                    body,
+                ),
+                Paragraph(
+                    f'${pedido.monto_cuenta_corriente_entrega:,.2f}'
+                    if pedido.monto_cuenta_corriente_entrega else '—',
+                    body,
+                ),
+                Paragraph('✓ Registrado', body),
+            ])
         else:
-            # Para pedidos todavía no entregados conservamos las casillas
-            # que se completan a mano en el reparto.
-            fila.append(Paragraph(
-                '[ ] Transf.<br/>[ ] Efec.<br/>[ ] Cta. cte.',
-                body,
-            ))
+            # Las tres columnas de importes quedan vacías. La última
+            # permite marcar rápidamente ventas que se cobraron completas
+            # de una sola forma cuando la planilla vuelve del reparto.
+            fila.extend([
+                Paragraph('—', body),
+                Paragraph('—', body),
+                Paragraph('—', body),
+                Paragraph(
+                    '[ ] Todo efectivo<br/>'
+                    '[ ] Todo transf.<br/>'
+                    '[ ] Todo cta. cte.',
+                    body,
+                ),
+            ])
     return fila
 
 
 def _columnas(cfg_flags):
     cols = []
     if cfg_flags['cliente']:
-        cols.append(('Cliente', 4.5 * cm))
+        cols.append(('Cliente', 3.6 * cm))
     if cfg_flags['direccion']:
-        cols.append(('Dirección', 4.0 * cm))
+        cols.append(('Dirección', 4.2 * cm))
     if cfg_flags['articulos']:
-        cols.append(('Artículos', 7.0 * cm))
+        cols.append(('Artículos', 4.8 * cm))
     if cfg_flags['total']:
         cols.append(('Total', 2.0 * cm))
     if cfg_flags['cobro']:
-        cols.append(('Estado', 2.2 * cm))
+        cols.append(('Estado', 2.0 * cm))
     if cfg_flags['formas_pago']:
-        cols.append(('Forma de pago', 2.6 * cm))
+        cols.extend([
+            ('Efectivo', 1.8 * cm),
+            ('Transf.', 1.8 * cm),
+            ('Cta. cte.', 1.8 * cm),
+            ('Control manual', 3.0 * cm),
+        ])
     return cols
 
 
-def _seccion_vendedor(pedidos, cfg_flags, estilos, cfg_pdf, titulo):
+def _tabla_pedidos(pedidos, cfg_flags, estilos, cfg_pdf, ancho_disponible=None):
+    """Tabla compartida por el informe de ventas y la hoja de reparto."""
+    *_, header_cell = estilos
+    columnas = _columnas(cfg_flags)
+    headers_row = [
+        Paragraph(f'<b>{titulo}</b>', header_cell)
+        for titulo, _ in columnas
+    ]
+    rows = [headers_row]
+    rows.extend(_fila_pedido(pedido, cfg_flags, estilos) for pedido in pedidos)
+    anchos = [ancho for _, ancho in columnas]
+    if ancho_disponible and sum(anchos) > ancho_disponible:
+        escala = ancho_disponible / sum(anchos)
+        anchos = [ancho * escala for ancho in anchos]
+    tabla = Table(
+        rows,
+        colWidths=anchos,
+        repeatRows=1,
+    )
+    tabla.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), _color(cfg_pdf.header_color, '#111827')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('GRID', (0, 0), (-1, -1), cfg_pdf.table_border_width or 0.5,
+         _color(cfg_pdf.table_border_color, '#cbd5e1')),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    return tabla
+
+
+def _seccion_vendedor(
+    pedidos, cfg_flags, estilos, cfg_pdf, titulo, ancho_disponible=None,
+):
     """Devuelve los flowables (elements) de la sección de UN vendedor."""
     body, header, subheader, meta, _, _, header_cell = estilos
     vendedor = pedidos[0].venta.vendedor
     fecha = pedidos[0].venta.fecha_compra
-
-    header_color = _color(cfg_pdf.header_color, '#111827')
-    border = _color(cfg_pdf.table_border_color, '#cbd5e1')
 
     els = []
     # Título centrado (configurable desde ConfiguracionGeneral).
@@ -291,29 +351,63 @@ def _seccion_vendedor(pedidos, cfg_flags, estilos, cfg_pdf, titulo):
         ))
     els.append(Spacer(1, 0.4 * cm))
 
-    columnas = _columnas(cfg_flags)
-    # Uso `header_cell` (texto blanco) — no `body` — porque el
-    # BACKGROUND del header row es oscuro y con body el texto
-    # quedaba negro sobre negro (invisible).
-    headers_row = [Paragraph(f'<b>{col_titulo}</b>', header_cell) for col_titulo, _ in columnas]
-    widths = [w for _, w in columnas]
-    rows = [headers_row]
-    for p in pedidos:
-        rows.append(_fila_pedido(p, cfg_flags, estilos))
-
-    tabla = Table(rows, colWidths=widths, repeatRows=1)
-    tabla.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), header_color),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('GRID', (0, 0), (-1, -1), cfg_pdf.table_border_width or 0.5, border),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 4),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-    ]))
-    els.append(tabla)
+    els.append(_tabla_pedidos(
+        pedidos, cfg_flags, estilos, cfg_pdf, ancho_disponible,
+    ))
     return els
+
+
+def generar_planilla_reparto_pdf(request, pedidos, repartidor, fecha):
+    """Genera la hoja A4 que el repartidor lleva y devuelve al cierre."""
+    cfg_pdf = FacturaConfiguration.objects.first() or FacturaConfiguration()
+    pagesize = landscape(A4)
+    estilos = _build_styles(cfg_pdf, pagesize[0])
+    _, header, subheader, meta, _, _, _ = estilos
+    cfg_flags = {
+        'cliente': True,
+        'direccion': True,
+        'articulos': True,
+        'total': True,
+        'cobro': True,
+        'formas_pago': True,
+    }
+
+    elementos = [
+        Paragraph('Planilla diaria de reparto', header),
+        Paragraph(str(repartidor), subheader),
+        Paragraph(
+            f'Fecha de entrega: {fecha:%d/%m/%Y} · Pedidos: {len(pedidos)}',
+            meta,
+        ),
+        Paragraph(
+            'Los importes cargados en el sistema aparecen en sus columnas. '
+            'Si faltan, completá los importes o marcá una opción de pago total.',
+            meta,
+        ),
+        Spacer(1, 0.4 * cm),
+        _tabla_pedidos(
+            pedidos, cfg_flags, estilos, cfg_pdf,
+            ancho_disponible=pagesize[0] - (1.6 * cm),
+        ),
+    ]
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=pagesize,
+        topMargin=(cfg_pdf.margin_top or 0.8) * cm,
+        bottomMargin=(cfg_pdf.margin_bottom or 0.8) * cm,
+        leftMargin=0.8 * cm,
+        rightMargin=0.8 * cm,
+        title='Planilla diaria de reparto',
+    )
+    doc.build(elementos)
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    buffer.close()
+    respuesta['Content-Disposition'] = (
+        f'inline; filename="planilla_reparto_{fecha:%Y-%m-%d}.pdf"'
+    )
+    return respuesta
 
 
 @login_required
@@ -385,6 +479,11 @@ def generar_informe_diario_vendedor(request):
             elements.append(PageBreak())
         elements.extend(_seccion_vendedor(
             grupos[vendedor_id], cfg_flags, estilos, cfg_pdf, titulo,
+            ancho_disponible=(
+                pagesize[0]
+                - ((cfg_pdf.margin_left or 1) * cm)
+                - ((cfg_pdf.margin_right or 1) * cm)
+            ),
         ))
 
     doc.build(elements)

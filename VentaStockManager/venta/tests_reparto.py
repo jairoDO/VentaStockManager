@@ -425,6 +425,10 @@ class RepartoFlujoTests(TestCase):
         self.assertContains(response, '/venta/api/direcciones/geocodificar/')
         self.assertContains(response, 'Ubicá un punto en el mapa antes de confirmar')
         self.assertContains(response, 'Confirmá la dirección para poder guardar la venta')
+        self.assertContains(response, 'Te sugerimos 08:30–14:00')
+        self.assertContains(response, 'cambiarHorarioCortado()')
+        self.assertContains(response, "this.horarioEntrega.desde1 = data.desde_1 || '08:30'")
+        self.assertContains(response, '5 * 60')
         self.assertContains(response, 'La fecha de entrega es obligatoria')
         self.assertContains(response, "fechaEntrega: ''")
         self.assertNotContains(response, 'Fecha de compra')
@@ -442,8 +446,10 @@ class RepartoFlujoTests(TestCase):
         self.assertEqual(reparto['app_url'], '/reparto/')
         self.assertEqual(reparto['models'][0]['name'], 'Planificar reparto')
         self.assertEqual(reparto['models'][0]['admin_url'], '/reparto/planificar/')
-        self.assertEqual(reparto['models'][1]['name'], 'Ver mapa')
-        self.assertEqual(reparto['models'][1]['admin_url'], '/reparto/')
+        self.assertEqual(reparto['models'][1]['name'], 'Planilla diaria')
+        self.assertEqual(reparto['models'][1]['admin_url'], '/reparto/planilla/')
+        self.assertEqual(reparto['models'][2]['name'], 'Ver mapa')
+        self.assertEqual(reparto['models'][2]['admin_url'], '/reparto/')
 
     def test_vendedor_no_ve_aplicacion_general_de_repartos(self):
         from VentaStockManager.admin import admin_site
@@ -521,6 +527,108 @@ class RepartoFlujoTests(TestCase):
         self.assertIn('/admin/login/', response.url)
         pedido.refresh_from_db()
         self.assertIsNone(pedido.repartidor)
+
+    def test_admin_filtra_y_genera_planilla_por_fecha_y_repartidor(self):
+        pedido_incluido = self._crear_venta().pedido
+        pedido_incluido.repartidor = self.repartidor
+        pedido_incluido.estado = Pedido.ASIGNADO
+        pedido_incluido.save(update_fields=['repartidor', 'estado'])
+
+        pedido_otro = self._crear_venta().pedido
+        pedido_otro.repartidor = self.otro_repartidor
+        pedido_otro.estado = Pedido.ASIGNADO
+        pedido_otro.save(update_fields=['repartidor', 'estado'])
+
+        self.client.force_login(self.admin)
+        pagina = self.client.get(reverse('reparto_planilla'), {
+            'fecha': str(date.today()),
+            'repartidor_id': str(self.repartidor.pk),
+        })
+
+        self.assertEqual(pagina.status_code, 200)
+        self.assertContains(pagina, 'Planilla diaria de reparto')
+        self.assertContains(pagina, f'#{pedido_incluido.pk}')
+        self.assertNotContains(pagina, f'#{pedido_otro.pk}')
+        self.assertContains(pagina, 'Generar planilla PDF')
+
+        pdf = self.client.post(reverse('reparto_planilla'), {
+            'fecha': str(date.today()),
+            'repartidor_id': str(self.repartidor.pk),
+            'pedido': str(pedido_incluido.pk),
+        })
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf['Content-Type'], 'application/pdf')
+        self.assertTrue(pdf.content.startswith(b'%PDF'))
+        self.assertIn('planilla_reparto_', pdf['Content-Disposition'])
+
+    def test_vendedor_no_puede_abrir_planilla_general(self):
+        self.client.force_login(self.usuario_vendedor)
+        response = self.client.get(reverse('reparto_planilla'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/admin/login/', response.url)
+
+    def test_planilla_puede_imprimir_todos_los_filtros_de_todas_las_paginas(self):
+        from django.http import HttpResponse
+
+        pedidos = []
+        for _ in range(26):
+            pedido = self._crear_venta().pedido
+            pedido.repartidor = self.repartidor
+            pedido.estado = Pedido.ASIGNADO
+            pedido.save(update_fields=['repartidor', 'estado'])
+            pedidos.append(pedido)
+
+        self.client.force_login(self.admin)
+        pagina = self.client.get(reverse('reparto_planilla'), {
+            'fecha': str(date.today()),
+            'repartidor_id': str(self.repartidor.pk),
+        })
+        self.assertEqual(pagina.context['pagina'].paginator.num_pages, 2)
+        self.assertContains(
+            pagina,
+            'Imprimir todos los pedidos de todas las páginas',
+        )
+        self.assertContains(
+            pagina,
+            'aunque en pantalla solo veas los 25 de esta página',
+        )
+
+        with patch(
+            'venta.views_informe.generar_planilla_reparto_pdf',
+            return_value=HttpResponse(b'%PDF-demo', content_type='application/pdf'),
+        ) as generar_pdf:
+            response = self.client.post(reverse('reparto_planilla'), {
+                'fecha': str(date.today()),
+                'repartidor_id': str(self.repartidor.pk),
+                'seleccionar_todos': '1',
+            })
+
+        self.assertEqual(response.status_code, 200)
+        pedidos_enviados = generar_pdf.call_args.args[1]
+        self.assertEqual(len(pedidos_enviados), 26)
+        self.assertEqual(
+            {pedido.pk for pedido in pedidos_enviados},
+            {pedido.pk for pedido in pedidos},
+        )
+
+    def test_columnas_de_pago_separadas_y_articulo_recortado(self):
+        from venta.views_informe import _columnas, _recortar_texto
+
+        columnas = _columnas({
+            'cliente': True,
+            'direccion': True,
+            'articulos': True,
+            'total': True,
+            'cobro': True,
+            'formas_pago': True,
+        })
+        self.assertEqual(
+            [titulo for titulo, _ in columnas][-4:],
+            ['Efectivo', 'Transf.', 'Cta. cte.', 'Control manual'],
+        )
+        recortado = _recortar_texto('Producto con un nombre demasiado largo para la planilla')
+        self.assertEqual(len(recortado), 30)
+        self.assertTrue(recortado.endswith('…'))
 
     def test_planificacion_abre_en_hoy_y_no_esta_en_acciones_de_pedido(self):
         from VentaStockManager.admin import admin_site

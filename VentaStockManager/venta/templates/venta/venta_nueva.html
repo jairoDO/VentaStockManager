@@ -255,7 +255,8 @@
           </p>
           <p x-show="!horarioEntrega.cargando && !horarioEntrega.configurado"
              class="text-xs text-amber-800 mt-1">
-            Este cliente todavía no tenía horario para ese día. Completalo para continuar.
+            Este cliente todavía no tenía horario para ese día. Te sugerimos 08:30–14:00;
+            podés modificarlo antes de confirmar.
           </p>
         </div>
         <span x-show="horarioEntrega.cargando" class="text-sm text-slate-500">Cargando horario…</span>
@@ -302,7 +303,7 @@
       <div class="flex flex-wrap items-center justify-between gap-2">
         <label class="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
           <input type="checkbox" x-model="horarioEntrega.usarSegunda"
-                 @change="horarioEntrega.confirmado = false; if (!horarioEntrega.usarSegunda) { horarioEntrega.desde2 = ''; horarioEntrega.hasta2 = ''; }"
+                 @change="cambiarHorarioCortado()"
                  class="rounded border-slate-300">
           Tiene horario cortado
         </label>
@@ -1148,6 +1149,25 @@
       horarioEntregaValido() {
         return this.errorHorarioEntrega() === '';
       },
+      sumarMinutosHorario(valor, minutos) {
+        if (!valor || !valor.includes(':')) return '';
+        const [horas, mins] = valor.split(':').map(Number);
+        if (!Number.isFinite(horas) || !Number.isFinite(mins)) return '';
+        const total = Math.min((23 * 60) + 59, (horas * 60) + mins + minutos);
+        return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+      },
+      cambiarHorarioCortado() {
+        this.horarioEntrega.confirmado = false;
+        this.horarioEntrega.error = '';
+        if (!this.horarioEntrega.usarSegunda) {
+          this.horarioEntrega.desde2 = '';
+          this.horarioEntrega.hasta2 = '';
+          return;
+        }
+        const inicioSegunda = this.horarioEntrega.hasta1 || '14:00';
+        this.horarioEntrega.desde2 = inicioSegunda;
+        this.horarioEntrega.hasta2 = this.sumarMinutosHorario(inicioSegunda, 5 * 60);
+      },
       errorHorarioEntrega() {
         const h = this.horarioEntrega;
         if (!h.desde1 || !h.hasta1) {
@@ -1196,8 +1216,8 @@
           if (this.cliente.id !== clienteId || this.fechaEntrega !== fecha) return;
           this.horarioEntrega.configurado = Boolean(data.configurado);
           this.horarioEntrega.diaLabel = data.dia_label || '';
-          this.horarioEntrega.desde1 = data.desde_1 || '';
-          this.horarioEntrega.hasta1 = data.hasta_1 || '';
+          this.horarioEntrega.desde1 = data.desde_1 || '08:30';
+          this.horarioEntrega.hasta1 = data.hasta_1 || '14:00';
           this.horarioEntrega.desde2 = data.desde_2 || '';
           this.horarioEntrega.hasta2 = data.hasta_2 || '';
           this.horarioEntrega.usarSegunda = Boolean(data.desde_2 && data.hasta_2);

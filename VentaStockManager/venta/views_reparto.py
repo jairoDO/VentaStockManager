@@ -29,6 +29,7 @@ from venta.utils import subtotal_linea, total_venta
 
 ZONA_HORARIA_OPERATIVA = ZoneInfo('America/Argentina/Cordoba')
 PEDIDOS_POR_PAGINA = 20
+PEDIDOS_PLANILLA_POR_PAGINA = 25
 
 
 def _fecha_hoy_operativa():
@@ -166,6 +167,21 @@ def _url_planificacion(filtros):
     return f"{reverse('reparto_planificar')}?{urlencode(parametros, doseq=True)}"
 
 
+def _fecha_desde_datos(datos):
+    try:
+        return date.fromisoformat(datos.get('fecha') or str(_fecha_hoy_operativa()))
+    except ValueError:
+        return _fecha_hoy_operativa()
+
+
+def _url_planilla(fecha, repartidor_id):
+    parametros = {
+        'fecha': fecha.isoformat(),
+        'repartidor_id': repartidor_id or '',
+    }
+    return f"{reverse('reparto_planilla')}?{urlencode(parametros)}"
+
+
 @user_passes_test(_es_admin, login_url='/admin/login/')
 def planificar_reparto(request):
     """Bandeja paginada para filtrar y asignar una tanda de reparto."""
@@ -272,6 +288,69 @@ def planificar_reparto(request):
         'asignacion': filtros['asignacion'],
         'localidad_actual': filtros['localidad'],
         'localidades': localidades,
+        'filtros_query': query_sin_pagina.urlencode(),
+    })
+
+
+@user_passes_test(_es_admin, login_url='/admin/login/')
+def planilla_reparto(request):
+    """Selecciona los pedidos que compondrán la hoja diaria del repartidor."""
+    datos = request.POST if request.method == 'POST' else request.GET
+    fecha = _fecha_desde_datos(datos)
+    repartidor_id = datos.get('repartidor_id') or ''
+    repartidor = None
+    if repartidor_id:
+        repartidor = get_object_or_404(
+            Repartidor.objects.select_related('usuario'),
+            pk=repartidor_id,
+            activo=True,
+        )
+
+    pedidos_qs = Pedido.objects.none()
+    if repartidor:
+        pedidos_qs = (
+            Pedido.objects
+            .filter(
+                venta__fecha_entrega=fecha,
+                repartidor=repartidor,
+            )
+            .select_related('venta__cliente', 'venta__vendedor__usuario', 'repartidor')
+            .prefetch_related('venta__ventas__articulo')
+            .order_by('localidad_entrega', 'venta__cliente__nombre', 'pk')
+        )
+
+    if request.method == 'POST':
+        if not repartidor:
+            messages.error(request, 'Elegí un repartidor para generar la planilla.')
+            return redirect(_url_planilla(fecha, ''))
+        if request.POST.get('seleccionar_todos') == '1':
+            pedidos = list(pedidos_qs)
+        else:
+            pedidos_ids = _parse_ids(','.join(request.POST.getlist('pedido')))
+            pedidos = list(pedidos_qs.filter(pk__in=pedidos_ids))
+        if not pedidos:
+            messages.error(request, 'Seleccioná al menos un pedido para imprimir.')
+            return redirect(_url_planilla(fecha, repartidor.pk))
+
+        from venta.views_informe import generar_planilla_reparto_pdf
+
+        return generar_planilla_reparto_pdf(request, pedidos, repartidor, fecha)
+
+    total_resultados = pedidos_qs.count()
+    pagina = Paginator(pedidos_qs, PEDIDOS_PLANILLA_POR_PAGINA).get_page(
+        request.GET.get('page')
+    )
+    for pedido in pagina.object_list:
+        pedido.total_planilla = total_venta(pedido.venta)
+
+    query_sin_pagina = request.GET.copy()
+    query_sin_pagina.pop('page', None)
+    return render(request, 'venta/reparto_planilla.html', {
+        'pagina': pagina,
+        'total_resultados': total_resultados,
+        'repartidores': Repartidor.objects.filter(activo=True).select_related('usuario'),
+        'repartidor': repartidor,
+        'fecha': fecha,
         'filtros_query': query_sin_pagina.urlencode(),
     })
 

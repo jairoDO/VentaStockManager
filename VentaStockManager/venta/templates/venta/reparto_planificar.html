@@ -23,10 +23,16 @@ a calcular el queryset y asigna también los pedidos de las páginas no visibles
           Elegí la fecha y uno o más vendedores; después asigná la tanda completa a un repartidor.
         </p>
       </div>
-      <a href="{% url 'reparto_panel' %}"
-         class="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100">
-        🗺 Ver mapa
-      </a>
+      <div class="flex flex-wrap gap-2">
+        <a href="{% url 'reparto_planilla' %}"
+           class="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100">
+          📄 Planilla diaria
+        </a>
+        <a href="{% url 'reparto_panel' %}"
+           class="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100">
+          🗺 Ver mapa
+        </a>
+      </div>
     </header>
 
     {% if messages %}

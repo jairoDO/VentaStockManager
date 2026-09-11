@@ -22,7 +22,10 @@
         <p class="text-sm text-slate-500">{{ pedidos|length }} entrega(s) para {{ fecha|date:"d/m/Y" }}</p>
       </div>
       {% if es_vista_admin %}
-        <a href="/admin/venta/pedido/" class="text-sm text-blue-700 underline">Volver al administrador</a>
+        <div class="flex flex-wrap gap-3 text-sm">
+          <a href="{% url 'reparto_planilla' %}" class="font-semibold text-blue-700 underline">📄 Planilla diaria</a>
+          <a href="/admin/venta/pedido/" class="text-blue-700 underline">Volver al administrador</a>
+        </div>
       {% else %}
         <form method="post" action="{% url 'logout' %}">
           {% csrf_token %}
