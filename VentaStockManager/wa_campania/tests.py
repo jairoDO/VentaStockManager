@@ -279,6 +279,22 @@ class ClientesCampaniaApiTests(TestCase):
         self.assertIn(vendedor.id, [item['id'] for item in data['vendedores']])
 
     @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_lista_filtra_por_localidad_sin_elegir_vendedor(self, mock_status):
+        cliente = Cliente.objects.get(nombre='Cliente 05')
+        DireccionCliente.objects.create(
+            cliente=cliente,
+            direccion_texto='Ruta E-55 km 4',
+            localidad='Villa del Lago',
+        )
+
+        data = self.client.get(
+            '/wa-campania/api/clientes/', {'barrio': 'Villa del Lago'},
+        ).json()
+
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['results'][0]['id'], cliente.id)
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
     def test_lista_filtra_por_campania_anterior(self, mock_status):
         cliente = Cliente.objects.get(nombre='Cliente 06')
         campania = Campania.objects.create(
