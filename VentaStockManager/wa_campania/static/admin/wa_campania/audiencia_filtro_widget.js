@@ -8,7 +8,7 @@
  * Estado leído/escrito del JSON:
  *   { todos, compraron_ultimos_dias, con_saldo_a_favor,
  *     con_saldo_deudor, vendedor_ids, campania_origen_id, barrio,
- *     centro_latitud, centro_longitud, radio_km,
+ *     centro_latitud, centro_longitud, radio_km, clientes_excluidos_ids,
  *     solo_con_whatsapp_valido }
  *
  * Compatibilidad: solo vanilla JS. Sin Alpine ni jQuery.
@@ -42,6 +42,11 @@
     const radiusSelect = container.querySelector('.af-radio-km');
     const clearZoneButton = container.querySelector('.af-clear-zone');
     const useLocationButton = container.querySelector('.af-use-location');
+    const audienceTotal = container.querySelector('.af-audience-total');
+    const audienceDetail = container.querySelector('.af-audience-detail');
+    const audienceRecommendation = container.querySelector('.af-audience-recommendation');
+    const useSuggestedRadius = container.querySelector('.af-use-suggested-radius');
+    const sendButton = document.querySelector('input[name="_saveandsend"]');
 
     // Parse del JSON inicial. Si falla, arrancamos con defaults sanos.
     let state;
@@ -66,6 +71,10 @@
     const selectedVendedores = new Set((state.vendedor_ids || []).map(Number));
     let selectedCampaniaOrigen = state.campania_origen_id ? Number(state.campania_origen_id) : null;
     const selectedIds = new Set((state.clientes_ids || []).map(Number));
+    const legacyExactMode = selectedIds.size > 0;
+    const excludedIds = new Set((state.clientes_excluidos_ids || []).map(Number));
+    let lastAudienceTotal = legacyExactMode ? selectedIds.size : 0;
+    let suggestedRadiusKm = null;
     let currentPage = 1;
     let totalPages = 1;
     let searchTimer = null;
@@ -100,14 +109,63 @@
         centro_longitud: centerLongitude,
         radio_km: centerLatitude !== null ? radiusKm : null,
         clientes_ids: Array.from(selectedIds),
+        clientes_excluidos_ids: Array.from(excludedIds),
       };
       hidden.value = JSON.stringify(next);
       // Ocultar filtros si "todos" está tildado — visualmente
       // comunica que esos checkboxes no aplican.
       filtrosBox.style.opacity = next.todos ? '0.4' : '1';
       filtrosBox.style.pointerEvents = next.todos ? 'none' : 'auto';
-      selectedCount.textContent = selectedIds.size + (selectedIds.size === 1 ? ' seleccionado' : ' seleccionados');
+      selectedCount.textContent = legacyExactMode
+        ? selectedIds.size + (selectedIds.size === 1 ? ' seleccionado' : ' seleccionados')
+        : excludedIds.size + (excludedIds.size === 1 ? ' excluido' : ' excluidos');
       clearZoneButton.disabled = centerLatitude === null;
+    }
+
+    function setSendButton(total, active) {
+      if (!sendButton) return;
+      sendButton.disabled = !active || total <= 0;
+      sendButton.value = active && total > 0
+        ? 'Guardar y enviar a ' + total + (total === 1 ? ' cliente' : ' clientes')
+        : 'Guardar y enviar';
+    }
+
+    function updateAudienceSummary(data) {
+      const active = legacyExactMode || !!data.audiencia_activa;
+      const total = legacyExactMode ? selectedIds.size : Number(data.audiencia_total_final || 0);
+      lastAudienceTotal = total;
+      audienceTotal.textContent = active
+        ? total + (total === 1 ? ' cliente' : ' clientes')
+        : 'Elegí un filtro';
+      if (!active) {
+        audienceDetail.textContent = 'Elegí vendedor, zona, actividad, saldo o “todos” para formar la audiencia.';
+      } else {
+        const detail = [];
+        if (Number(data.excluidos_aplicables || 0)) detail.push(data.excluidos_aplicables + ' excluidos');
+        if (Number(data.clientes_sin_coordenadas || 0) && data.zona) {
+          detail.push(data.clientes_sin_coordenadas + ' sin ubicación fuera del cálculo del radio');
+        }
+        detail.push('envío estimado: ' + Number(data.tiempo_estimado_minutos || 0) + ' min');
+        audienceDetail.textContent = detail.join(' · ');
+      }
+      suggestedRadiusKm = Number(data.radio_sugerido_km);
+      const daily = Number(data.recomendacion_diaria);
+      if (daily > 0) {
+        audienceRecommendation.style.display = 'block';
+        audienceRecommendation.textContent = 'Referencia de trabajo: este vendedor visita normalmente cerca de ' + daily +
+          (daily === 1 ? ' cliente por día.' : ' clientes por día.');
+        if (Number.isFinite(suggestedRadiusKm) && suggestedRadiusKm > 0 && centerLatitude !== null) {
+          audienceRecommendation.textContent += ' Un radio de ' + suggestedRadiusKm.toFixed(1).replace('.', ',') +
+            ' km reúne aproximadamente esa cantidad.';
+          useSuggestedRadius.style.display = 'inline-block';
+        } else {
+          useSuggestedRadius.style.display = 'none';
+        }
+      } else {
+        audienceRecommendation.style.display = 'none';
+        useSuggestedRadius.style.display = 'none';
+      }
+      setSendButton(total, active);
     }
 
     function escapeHtml(value) {
@@ -197,7 +255,7 @@
 
       const missing = Number(data.clientes_sin_coordenadas || 0);
       if (data.zona) {
-        mapSummary.textContent = data.total + ' dentro de ' + radiusKm + ' km';
+        mapSummary.textContent = data.audiencia_total + ' dentro de ' + radiusKm + ' km';
         if (missing) mapSummary.textContent += ' · ' + missing + ' sin ubicación no se pudieron evaluar';
       } else {
         mapSummary.textContent = points.length + ' clientes con ubicación';
@@ -240,9 +298,14 @@
     function loadClients(page) {
       currentPage = page || 1;
       const params = new URLSearchParams({page: String(currentPage), q: clientSearch.value.trim()});
+      if (cbTodos.checked) params.set('todos', '1');
       Array.from(selectedVendedores).forEach(function (id) { params.append('vendedor', String(id)); });
       if (selectedCampaniaOrigen) params.set('campania', String(selectedCampaniaOrigen));
       if (inputBarrio.value.trim()) params.set('barrio', inputBarrio.value.trim());
+      if (selDias.value) params.set('dias', selDias.value);
+      if (cbFavor.checked) params.set('favor', '1');
+      if (cbDeudor.checked) params.set('deudor', '1');
+      excludedIds.forEach(function (id) { params.append('excluido', String(id)); });
       if (centerLatitude !== null && centerLongitude !== null) {
         params.set('centro_latitud', String(centerLatitude));
         params.set('centro_longitud', String(centerLongitude));
@@ -275,8 +338,11 @@
             selCampaniaOrigen.dataset.loaded = '1';
             refreshMaterialSelect(selCampaniaOrigen);
           }
-          const excludedIds = (data.excluded_sender_client_ids || []).map(Number);
-          excludedIds.forEach(function (id) { selectedIds.delete(id); });
+          const senderExcludedIds = (data.excluded_sender_client_ids || []).map(Number);
+          senderExcludedIds.forEach(function (id) {
+            selectedIds.delete(id);
+            excludedIds.delete(id);
+          });
           if (data.excluded_sender_number) {
             senderNotice.style.display = 'block';
             senderNotice.textContent = 'El WhatsApp conectado (' + data.excluded_sender_number + ') no aparece en la lista porque una cuenta no puede enviarse mensajes a sí misma.';
@@ -285,15 +351,20 @@
             senderNotice.textContent = '';
           }
           sync();
+          updateAudienceSummary(data);
           totalPages = data.pages || 1;
           currentPage = data.page || 1;
           if (!data.results.length) {
             clientList.innerHTML = '<div style="padding:16px; color:#64748b; text-align:center;">No se encontraron clientes elegibles.</div>';
           } else {
             clientList.innerHTML = data.results.map(function (client) {
-              const checked = selectedIds.has(Number(client.id)) ? ' checked' : '';
+              const clientId = Number(client.id);
+              const checked = legacyExactMode
+                ? selectedIds.has(clientId)
+                : data.audiencia_activa && !excludedIds.has(clientId);
               return '<label style="display:flex; gap:9px; align-items:flex-start; padding:9px 11px; border-bottom:1px solid #f1f5f9; cursor:pointer;">' +
-                '<input type="checkbox" class="af-client-check" value="' + client.id + '"' + checked + '>' +
+                '<input type="checkbox" class="af-client-check" value="' + client.id + '"' + (checked ? ' checked' : '') +
+                (data.audiencia_activa || legacyExactMode ? '' : ' disabled') + '>' +
                 '<span><b style="color:#0f172a;">' + escapeHtml(client.nombre) + '</b>' +
                 '<br><span style="font-size:11px; color:#64748b;">' + escapeHtml(client.whatsapp) +
                 (client.direccion ? ' · ' + escapeHtml(client.direccion) : '') + '</span></span></label>';
@@ -301,12 +372,17 @@
             clientList.querySelectorAll('.af-client-check').forEach(function (checkbox) {
               checkbox.addEventListener('change', function () {
                 const id = Number(checkbox.value);
-                if (checkbox.checked) selectedIds.add(id); else selectedIds.delete(id);
+                if (legacyExactMode) {
+                  if (checkbox.checked) selectedIds.add(id); else selectedIds.delete(id);
+                } else {
+                  if (checkbox.checked) excludedIds.delete(id); else excludedIds.add(id);
+                }
                 sync();
+                loadClients(currentPage);
               });
             });
           }
-          pageInfo.textContent = 'Página ' + currentPage + ' de ' + totalPages + ' · ' + data.total + ' clientes';
+          pageInfo.textContent = 'Página ' + currentPage + ' de ' + totalPages + ' · ' + data.total + ' para revisar';
           prevButton.disabled = !data.has_previous;
           nextButton.disabled = !data.has_next;
           renderMapPoints(data);
@@ -381,9 +457,9 @@
       );
     });
 
-    [cbTodos, selDias, cbFavor, cbDeudor, cbWhatsappValido].forEach(function (el) {
-      el.addEventListener('change', sync);
-    });
+    cbTodos.addEventListener('change', function () { sync(); loadClients(1); });
+    selDias.addEventListener('change', function () { cbTodos.checked = false; sync(); loadClients(1); });
+    cbWhatsappValido.addEventListener('change', function () { sync(); loadClients(1); });
 
     // Mutual exclusion: si tildan "a favor" y "deudor" a la vez, los
     // filtros no van a matchear a nadie. Avisamos en consola y
@@ -391,11 +467,44 @@
     cbFavor.addEventListener('change', function () {
       if (cbFavor.checked && cbDeudor.checked) cbDeudor.checked = false;
       sync();
+      loadClients(1);
     });
     cbDeudor.addEventListener('change', function () {
       if (cbDeudor.checked && cbFavor.checked) cbFavor.checked = false;
       sync();
+      loadClients(1);
     });
+
+    useSuggestedRadius.addEventListener('click', function () {
+      if (!Number.isFinite(suggestedRadiusKm) || suggestedRadiusKm <= 0) return;
+      radiusKm = suggestedRadiusKm;
+      let option = Array.from(radiusSelect.options).find(function (item) {
+        return Number(item.value) === radiusKm;
+      });
+      if (!option) {
+        option = document.createElement('option');
+        option.value = String(radiusKm);
+        option.textContent = radiusKm.toFixed(1).replace('.', ',') + ' km (sugerido)';
+        radiusSelect.appendChild(option);
+      }
+      radiusSelect.value = String(radiusKm);
+      sync();
+      drawSelectedZone();
+      loadClients(1);
+    });
+
+    if (sendButton) {
+      sendButton.addEventListener('click', function (event) {
+        if (lastAudienceTotal <= 0) {
+          event.preventDefault();
+          return;
+        }
+        if (!window.confirm('Se enviará esta campaña a ' + lastAudienceTotal +
+          (lastAudienceTotal === 1 ? ' cliente. ¿Continuar?' : ' clientes. ¿Continuar?'))) {
+          event.preventDefault();
+        }
+      });
+    }
 
     initAudienceMap();
     sync();  // primer flush para que el hidden coincida con el UI

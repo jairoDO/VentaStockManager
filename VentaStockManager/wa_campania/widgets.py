@@ -23,6 +23,7 @@ Esquema del JSON que mantenemos (NO cambia, así
     "centro_latitud": float | None,
     "centro_longitud": float | None,
     "radio_km": float | None,
+    "clientes_excluidos_ids": list[int],
     "solo_con_whatsapp_valido": bool,
   }
 """
@@ -199,14 +200,27 @@ class AudienciaFiltroWidget(forms.Widget):
               </div>
             </div>
 
-            <!-- Selección manual paginada -->
+            <!-- Resumen definitivo -->
+            <div class="af-audience-summary" style="margin-top:16px; padding:14px; border:2px solid #bfdbfe; border-radius:8px; background:#eff6ff;">
+              <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px;">
+                <div>
+                  <div style="font-size:12px; font-weight:700; color:#1e3a8a; text-transform:uppercase;">Destinatarios de esta campaña</div>
+                  <div class="af-audience-total" style="font-size:26px; line-height:1.15; font-weight:800; color:#0f172a;">Elegí un filtro</div>
+                  <div class="af-audience-detail" style="font-size:12px; color:#475569; margin-top:3px;">El número se actualizará automáticamente.</div>
+                </div>
+                <button type="button" class="af-use-suggested-radius" style="display:none; padding:7px 11px;">Usar radio sugerido</button>
+              </div>
+              <div class="af-audience-recommendation" style="display:none; margin-top:9px; padding-top:9px; border-top:1px solid #bfdbfe; font-size:12px; color:#1e40af;"></div>
+            </div>
+
+            <!-- Revisión paginada -->
             <div class="af-seleccion-manual" style="margin-top: 16px; border-top: 1px solid #cbd5e1; padding-top: 14px;">
               <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
                 <div>
-                  <b style="color:#0f172a;">👥 Elegir clientes manualmente</b>
-                  <div style="font-size:11px; color:#64748b;">Si marcás alguno, reemplaza “todos” y los filtros.</div>
+                  <b style="color:#0f172a;">👥 Revisar destinatarios (opcional)</b>
+                  <div style="font-size:11px; color:#64748b;">Todos los encontrados ya están incluidos. Destildá solamente a quien no quieras enviarle.</div>
                 </div>
-                <span class="af-selected-count" style="background:#dbeafe; color:#1d4ed8; padding:3px 9px; border-radius:12px; font-size:11px; font-weight:600;">0 seleccionados</span>
+                <span class="af-selected-count" style="background:#dbeafe; color:#1d4ed8; padding:3px 9px; border-radius:12px; font-size:11px; font-weight:600;">0 excluidos</span>
               </div>
               <input type="search" class="af-client-search" placeholder="Buscar por nombre, dirección o WhatsApp…"
                      style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; margin-bottom:8px;">
@@ -250,5 +264,5 @@ class AudienciaFiltroWidget(forms.Widget):
             'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
             'https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js',
             'https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js',
-            '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260911c',
+            '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260911d',
         )

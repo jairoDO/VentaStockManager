@@ -125,6 +125,18 @@ def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
     if f.get('solo_con_whatsapp_valido', True):
         qs = qs.exclude(whatsapp_number='')
 
+    # Los filtros incluyen automáticamente toda la audiencia encontrada.
+    # El operador solo necesita guardar excepciones puntuales; nunca debe
+    # seleccionar cliente por cliente ni repetirlo en cada página.
+    excluidos_ids = []
+    for cliente_id in f.get('clientes_excluidos_ids') or []:
+        try:
+            excluidos_ids.append(int(cliente_id))
+        except (TypeError, ValueError):
+            continue
+    if excluidos_ids:
+        qs = qs.exclude(pk__in=excluidos_ids)
+
     # Consentimiento: NUNCA pasamos por encima de `puede_recibir_whatsapp`.
     # Es no negociable, no depende del filtro del admin. Si un cliente
     # marcó que no, no recibe — punto. Esto cubre tanto el respeto al

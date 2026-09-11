@@ -118,6 +118,16 @@ class AudienciaResolverTests(TestCase):
         })
         self.assertFalse(qs.exists())
 
+    def test_filtros_incluyen_todos_menos_las_excepciones(self):
+        qs = resolver_clientes({
+            'todos': True,
+            'clientes_excluidos_ids': [self.c_con_wa.id],
+            'solo_con_whatsapp_valido': True,
+        })
+        ids = set(qs.values_list('id', flat=True))
+        self.assertNotIn(self.c_con_wa.id, ids)
+        self.assertIn(self.c_saldo_favor.id, ids)
+
     def test_filtra_clientes_por_vendedor(self):
         usuario = User.objects.create_user('vendedor_filtro')
         vendedor = Vendedor.objects.create(
@@ -257,6 +267,26 @@ class ClientesCampaniaApiTests(TestCase):
 
         response = self.client.get('/wa-campania/api/clientes/', {'q': 'Sin permiso'})
         self.assertEqual(response.json()['total'], 0)
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_busqueda_no_cambia_total_definitivo_de_la_audiencia(self, mock_status):
+        data = self.client.get('/wa-campania/api/clientes/', {
+            'todos': '1', 'q': 'Cliente 11',
+        }).json()
+
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['audiencia_total_final'], 12)
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_exclusion_reduce_total_pero_sigue_visible_para_reincorporar(self, mock_status):
+        cliente = Cliente.objects.get(nombre='Cliente 02')
+        data = self.client.get('/wa-campania/api/clientes/', {
+            'todos': '1', 'excluido': cliente.id,
+        }).json()
+
+        self.assertEqual(data['audiencia_total'], 12)
+        self.assertEqual(data['audiencia_total_final'], 11)
+        self.assertIn(cliente.id, [item['id'] for item in data['results']])
 
     @mock.patch('wa_campania.views.wa_client.get_status_detail')
     def test_excluye_el_numero_conectado_al_bot(self, mock_status):

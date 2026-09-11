@@ -22,18 +22,23 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import timedelta
+from math import ceil
+from statistics import median
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.decorators import user_passes_test
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.core.paginator import Paginator
-from django.db.models import Q
+from django.db.models import Count, Exists, OuterRef, Q, Sum
+from django.conf import settings
 from django.shortcuts import render
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from . import wa_client
-from .geografia import aplicar_zona
+from .geografia import aplicar_zona, distancia_km, normalizar_zona, ubicaciones_de_clientes
 
 
 log = logging.getLogger(__name__)
@@ -60,8 +65,9 @@ def panel_conexion(request: HttpRequest) -> HttpResponse:
 @_superuser_required
 @require_GET
 def api_clientes_campania(request: HttpRequest) -> JsonResponse:
-    """Lista paginada de clientes elegibles para selección manual."""
+    """Previsualiza la audiencia definitiva y permite revisar excepciones."""
     from cliente.models import Cliente
+    from venta.models import Venta
 
     qs = Cliente.objects.filter(
         puede_recibir_whatsapp=True,
@@ -73,22 +79,8 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
             vendedor_ids.append(int(raw_id))
         except (TypeError, ValueError):
             continue
-    if vendedor_ids:
-        qs = qs.filter(vendedor_asignado_id__in=vendedor_ids)
-
     campania_origen_id = request.GET.get('campania')
-    if campania_origen_id and str(campania_origen_id).isdigit():
-        qs = qs.filter(envios_whatsapp__campania_id=int(campania_origen_id))
-
     barrio = (request.GET.get('barrio') or '').strip()
-    if barrio:
-        qs = qs.filter(
-            Q(direccion__icontains=barrio)
-            | Q(direcciones__direccion_texto__icontains=barrio)
-            | Q(direcciones__localidad__icontains=barrio)
-        )
-
-    qs = qs.distinct()
 
     # WhatsApp no entrega de forma visible mensajes enviados a la misma
     # cuenta que está vinculada al bot. Evitamos ofrecerla como destinataria
@@ -110,20 +102,101 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
         )
         qs = qs.exclude(whatsapp_number=sender_number)
 
+    todos = request.GET.get('todos') == '1'
+    filtros_aplicados = todos
+    if not todos:
+        if vendedor_ids:
+            qs = qs.filter(vendedor_asignado_id__in=vendedor_ids)
+            filtros_aplicados = True
+        if campania_origen_id and str(campania_origen_id).isdigit():
+            qs = qs.filter(envios_whatsapp__campania_id=int(campania_origen_id))
+            filtros_aplicados = True
+        if barrio:
+            qs = qs.filter(
+                Q(direccion__icontains=barrio)
+                | Q(direcciones__direccion_texto__icontains=barrio)
+                | Q(direcciones__localidad__icontains=barrio)
+            )
+            filtros_aplicados = True
+
+        dias = request.GET.get('dias')
+        if dias and str(dias).isdigit():
+            desde = timezone.now().date() - timedelta(days=int(dias))
+            qs = qs.filter(Exists(Venta.objects.filter(
+                cliente=OuterRef('pk'), fecha_compra__gte=desde,
+            )))
+            filtros_aplicados = True
+
+        if request.GET.get('favor') == '1' or request.GET.get('deudor') == '1':
+            qs = qs.annotate(saldo_calc=Sum('cuenta__movimientos__monto'))
+            if request.GET.get('favor') == '1':
+                qs = qs.filter(saldo_calc__gt=0)
+            if request.GET.get('deudor') == '1':
+                qs = qs.filter(saldo_calc__lt=0)
+            filtros_aplicados = True
+
+    qs = qs.distinct()
+    qs_antes_de_zona = qs
+    if not todos and normalizar_zona(request.GET):
+        filtros_aplicados = True
+    qs, ubicaciones, zona, sin_coordenadas = aplicar_zona(
+        qs, {} if todos else request.GET,
+    )
+
+    audiencia_total = qs.order_by().values('pk').distinct().count() if filtros_aplicados else 0
+    excluidos_ids = []
+    for raw_id in request.GET.getlist('excluido'):
+        try:
+            excluidos_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    excluidos_aplicables = (
+        qs.filter(pk__in=excluidos_ids).order_by().values('pk').distinct().count()
+        if filtros_aplicados and excluidos_ids else 0
+    )
+    audiencia_total_final = max(0, audiencia_total - excluidos_aplicables)
+
+    # Una referencia operativa, no un límite de WhatsApp: mediana de clientes
+    # únicos visitados por día en los últimos 90 días para cada vendedor.
+    recomendacion_diaria = None
+    radio_sugerido_km = None
+    if vendedor_ids:
+        desde = timezone.now().date() - timedelta(days=90)
+        muestras = Venta.objects.filter(
+            vendedor_id__in=vendedor_ids, fecha_compra__gte=desde,
+        ).values('vendedor_id', 'fecha_compra').annotate(
+            clientes=Count('cliente_id', distinct=True),
+        )
+        por_vendedor = {}
+        for muestra in muestras:
+            por_vendedor.setdefault(muestra['vendedor_id'], []).append(muestra['clientes'])
+        estimaciones = [round(median(valores)) for valores in por_vendedor.values() if valores]
+        if estimaciones:
+            recomendacion_diaria = max(1, sum(estimaciones))
+
+    zona_solicitada = normalizar_zona(request.GET)
+    if recomendacion_diaria and zona_solicitada:
+        latitud, longitud, _ = zona_solicitada
+        distancias = sorted(
+            distancia_km(latitud, longitud, punto['latitud'], punto['longitud'])
+            for punto in ubicaciones_de_clientes(qs_antes_de_zona).values()
+        )
+        if distancias:
+            indice = min(recomendacion_diaria, len(distancias)) - 1
+            radio_sugerido_km = max(0.5, ceil(distancias[indice] * 10) / 10)
+
+    # La búsqueda solo ayuda a revisar la lista; no altera el total a enviar.
+    lista_qs = qs
     buscar = (request.GET.get('q') or '').strip()
     if buscar:
-        qs = qs.filter(
+        lista_qs = lista_qs.filter(
             Q(nombre__icontains=buscar)
             | Q(apellido__icontains=buscar)
             | Q(direccion__icontains=buscar)
             | Q(whatsapp_number__icontains=buscar)
         )
 
-    qs, ubicaciones, zona, sin_coordenadas = aplicar_zona(
-        qs.distinct(), request.GET,
-    )
-
-    paginator = Paginator(qs, 10)
+    paginator = Paginator(lista_qs.distinct(), 10)
     pagina = paginator.get_page(request.GET.get('page') or 1)
     from vendedor.models import Vendedor
     from .models import Campania
@@ -157,6 +230,15 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
         'page': pagina.number,
         'pages': paginator.num_pages,
         'total': paginator.count,
+        'audiencia_activa': filtros_aplicados,
+        'audiencia_total': audiencia_total,
+        'audiencia_total_final': audiencia_total_final,
+        'excluidos_aplicables': excluidos_aplicables,
+        'recomendacion_diaria': recomendacion_diaria,
+        'radio_sugerido_km': radio_sugerido_km,
+        'tiempo_estimado_minutos': ceil(
+            audiencia_total_final * settings.WHATSAPP_DELAY_SECONDS / 60
+        ),
         'has_previous': pagina.has_previous(),
         'has_next': pagina.has_next(),
         'excluded_sender_number': sender_number,
