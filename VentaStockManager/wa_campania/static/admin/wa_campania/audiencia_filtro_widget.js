@@ -7,7 +7,9 @@
  *
  * Estado leído/escrito del JSON:
  *   { todos, compraron_ultimos_dias, con_saldo_a_favor,
- *     con_saldo_deudor, solo_con_whatsapp_valido }
+ *     con_saldo_deudor, vendedor_ids, campania_origen_id, barrio,
+ *     centro_latitud, centro_longitud, radio_km,
+ *     solo_con_whatsapp_valido }
  *
  * Compatibilidad: solo vanilla JS. Sin Alpine ni jQuery.
  */
@@ -35,6 +37,11 @@
     const pageInfo = container.querySelector('.af-page-info');
     const selectedCount = container.querySelector('.af-selected-count');
     const senderNotice = container.querySelector('.af-sender-notice');
+    const mapElement = container.querySelector('.af-map');
+    const mapSummary = container.querySelector('.af-map-summary');
+    const radiusSelect = container.querySelector('.af-radio-km');
+    const clearZoneButton = container.querySelector('.af-clear-zone');
+    const useLocationButton = container.querySelector('.af-use-location');
 
     // Parse del JSON inicial. Si falla, arrancamos con defaults sanos.
     let state;
@@ -62,6 +69,22 @@
     let currentPage = 1;
     let totalPages = 1;
     let searchTimer = null;
+    let centerLatitude = Number(state.centro_latitud);
+    let centerLongitude = Number(state.centro_longitud);
+    if (!Number.isFinite(centerLatitude) || !Number.isFinite(centerLongitude)) {
+      centerLatitude = null;
+      centerLongitude = null;
+    }
+    let radiusKm = Number(state.radio_km) || 3;
+    if (!Array.from(radiusSelect.options).some(function (option) {
+      return Number(option.value) === radiusKm;
+    })) radiusKm = 3;
+    radiusSelect.value = String(radiusKm);
+    let audienceMap = null;
+    let centerMarker = null;
+    let radiusCircle = null;
+    let clientMarkers = null;
+    let fittedInitialPoints = false;
 
     function sync() {
       // Reconstruir el JSON desde el UI.
@@ -74,6 +97,9 @@
         vendedor_ids: Array.from(selectedVendedores),
         campania_origen_id: selectedCampaniaOrigen,
         barrio: inputBarrio.value.trim(),
+        centro_latitud: centerLatitude,
+        centro_longitud: centerLongitude,
+        radio_km: centerLatitude !== null ? radiusKm : null,
         clientes_ids: Array.from(selectedIds),
       };
       hidden.value = JSON.stringify(next);
@@ -82,6 +108,7 @@
       filtrosBox.style.opacity = next.todos ? '0.4' : '1';
       filtrosBox.style.pointerEvents = next.todos ? 'none' : 'auto';
       selectedCount.textContent = selectedIds.size + (selectedIds.size === 1 ? ' seleccionado' : ' seleccionados');
+      clearZoneButton.disabled = centerLatitude === null;
     }
 
     function escapeHtml(value) {
@@ -100,12 +127,125 @@
       window.M.FormSelect.init(select);
     }
 
+    function drawSelectedZone() {
+      if (!audienceMap || centerLatitude === null || centerLongitude === null) return;
+      const center = [centerLatitude, centerLongitude];
+      if (!centerMarker) {
+        centerMarker = window.L.marker(center, {draggable: true}).addTo(audienceMap);
+        centerMarker.bindTooltip('Centro de la zona');
+        centerMarker.on('dragend', function (event) {
+          const point = event.target.getLatLng();
+          setSelectedZone(point.lat, point.lng, true);
+        });
+      } else {
+        centerMarker.setLatLng(center);
+      }
+      if (!radiusCircle) {
+        radiusCircle = window.L.circle(center, {
+          radius: radiusKm * 1000,
+          color: '#4f46e5',
+          fillColor: '#818cf8',
+          fillOpacity: 0.16,
+          weight: 2,
+        }).addTo(audienceMap);
+      } else {
+        radiusCircle.setLatLng(center);
+        radiusCircle.setRadius(radiusKm * 1000);
+      }
+    }
+
+    function setSelectedZone(latitude, longitude, reloadClients) {
+      centerLatitude = Number(latitude);
+      centerLongitude = Number(longitude);
+      cbTodos.checked = false;
+      sync();
+      drawSelectedZone();
+      if (audienceMap) audienceMap.panTo([centerLatitude, centerLongitude]);
+      if (reloadClients) loadClients(1);
+    }
+
+    function clearSelectedZone() {
+      centerLatitude = null;
+      centerLongitude = null;
+      if (audienceMap && centerMarker) audienceMap.removeLayer(centerMarker);
+      if (audienceMap && radiusCircle) audienceMap.removeLayer(radiusCircle);
+      centerMarker = null;
+      radiusCircle = null;
+      fittedInitialPoints = false;
+      sync();
+      loadClients(1);
+    }
+
+    function renderMapPoints(data) {
+      if (!audienceMap || !clientMarkers) return;
+      clientMarkers.clearLayers();
+      const points = data.map_points || [];
+      const bounds = [];
+      points.forEach(function (point) {
+        const coordinates = [Number(point.latitud), Number(point.longitud)];
+        if (!Number.isFinite(coordinates[0]) || !Number.isFinite(coordinates[1])) return;
+        const marker = window.L.circleMarker(coordinates, {
+          radius: 6,
+          color: '#047857',
+          fillColor: '#10b981',
+          fillOpacity: 0.8,
+          weight: 2,
+        });
+        const distance = point.distancia_km === undefined
+          ? ''
+          : '<br>' + Number(point.distancia_km).toFixed(1).replace('.', ',') + ' km del centro';
+        marker.bindTooltip('<b>' + escapeHtml(point.nombre) + '</b>' + distance);
+        marker.addTo(clientMarkers);
+        bounds.push(coordinates);
+      });
+
+      const missing = Number(data.clientes_sin_coordenadas || 0);
+      if (data.zona) {
+        mapSummary.textContent = data.total + ' dentro de ' + radiusKm + ' km';
+        if (missing) mapSummary.textContent += ' · ' + missing + ' sin ubicación no se pudieron evaluar';
+      } else {
+        mapSummary.textContent = points.length + ' clientes con ubicación';
+        if (missing) mapSummary.textContent += ' · ' + missing + ' sin ubicación';
+      }
+
+      if (centerLatitude === null && !fittedInitialPoints && bounds.length) {
+        audienceMap.fitBounds(bounds, {padding: [25, 25], maxZoom: 13});
+        fittedInitialPoints = true;
+      }
+    }
+
+    function initAudienceMap() {
+      if (!mapElement || !window.L) {
+        mapSummary.textContent = 'No se pudo cargar el mapa. Podés usar la localidad escrita.';
+        return;
+      }
+      const initialCenter = centerLatitude === null
+        ? [-31.4201, -64.1888]
+        : [centerLatitude, centerLongitude];
+      audienceMap = window.L.map(mapElement).setView(initialCenter, centerLatitude === null ? 11 : 13);
+      window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(audienceMap);
+      clientMarkers = window.L.layerGroup().addTo(audienceMap);
+      audienceMap.on('click', function (event) {
+        setSelectedZone(event.latlng.lat, event.latlng.lng, true);
+      });
+      drawSelectedZone();
+      setTimeout(function () { audienceMap.invalidateSize(); }, 50);
+    }
+
     function loadClients(page) {
       currentPage = page || 1;
       const params = new URLSearchParams({page: String(currentPage), q: clientSearch.value.trim()});
       Array.from(selectedVendedores).forEach(function (id) { params.append('vendedor', String(id)); });
       if (selectedCampaniaOrigen) params.set('campania', String(selectedCampaniaOrigen));
       if (inputBarrio.value.trim()) params.set('barrio', inputBarrio.value.trim());
+      if (centerLatitude !== null && centerLongitude !== null) {
+        params.set('centro_latitud', String(centerLatitude));
+        params.set('centro_longitud', String(centerLongitude));
+        params.set('radio_km', String(radiusKm));
+      }
       clientList.innerHTML = '<div style="padding:16px; color:#64748b; text-align:center;">Cargando clientes…</div>';
       fetch('/wa-campania/api/clientes/?' + params.toString(), {credentials: 'same-origin'})
         .then(function (response) {
@@ -167,6 +307,7 @@
           pageInfo.textContent = 'Página ' + currentPage + ' de ' + totalPages + ' · ' + data.total + ' clientes';
           prevButton.disabled = !data.has_previous;
           nextButton.disabled = !data.has_next;
+          renderMapPoints(data);
         })
         .catch(function (error) {
           if (selVendedores.dataset.loaded !== '1') {
@@ -211,6 +352,32 @@
         loadClients(1);
       }, 350);
     });
+    radiusSelect.addEventListener('change', function () {
+      radiusKm = Number(radiusSelect.value) || 3;
+      if (centerLatitude !== null) {
+        cbTodos.checked = false;
+        sync();
+        drawSelectedZone();
+        loadClients(1);
+      }
+    });
+    clearZoneButton.addEventListener('click', clearSelectedZone);
+    useLocationButton.addEventListener('click', function () {
+      if (!navigator.geolocation) {
+        mapSummary.textContent = 'Este dispositivo no permite detectar la ubicación. Marcala en el mapa.';
+        return;
+      }
+      mapSummary.textContent = 'Detectando ubicación…';
+      navigator.geolocation.getCurrentPosition(
+        function (position) {
+          setSelectedZone(position.coords.latitude, position.coords.longitude, true);
+        },
+        function () {
+          mapSummary.textContent = 'No se pudo detectar la ubicación. Marcala en el mapa.';
+        },
+        {enableHighAccuracy: true, timeout: 10000},
+      );
+    });
 
     [cbTodos, selDias, cbFavor, cbDeudor, cbWhatsappValido].forEach(function (el) {
       el.addEventListener('change', sync);
@@ -228,6 +395,7 @@
       sync();
     });
 
+    initAudienceMap();
     sync();  // primer flush para que el hidden coincida con el UI
     loadClients(1);
   }

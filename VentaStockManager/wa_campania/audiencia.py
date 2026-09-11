@@ -23,6 +23,7 @@ from django.utils import timezone
 
 from cliente.models import Cliente, MovimientoCuenta
 from venta.models import Venta
+from wa_campania.geografia import aplicar_zona, normalizar_zona
 
 
 def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
@@ -94,6 +95,10 @@ def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
                 | Q(direcciones__direccion_texto__icontains=barrio)
                 | Q(direcciones__localidad__icontains=barrio)
             )
+            condiciones_aplicadas = True
+
+        if normalizar_zona(f):
+            qs, _, _, _ = aplicar_zona(qs.distinct(), f)
             condiciones_aplicadas = True
 
         # Saldo: lo calculamos con un annotate sumando MovimientoCuenta.

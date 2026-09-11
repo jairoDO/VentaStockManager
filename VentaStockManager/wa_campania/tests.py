@@ -196,6 +196,31 @@ class AudienciaResolverTests(TestCase):
 
         self.assertEqual(list(qs.values_list('id', flat=True)), [self.c_con_wa.id])
 
+    def test_filtra_por_radio_usando_la_direccion_principal(self):
+        DireccionCliente.objects.create(
+            cliente=self.c_con_wa,
+            direccion_texto='Cerca del centro',
+            latitud='-31.421000',
+            longitud='-64.188800',
+            es_principal=True,
+        )
+        DireccionCliente.objects.create(
+            cliente=self.c_saldo_favor,
+            direccion_texto='Fuera de la zona',
+            latitud='-31.500000',
+            longitud='-64.188800',
+            es_principal=True,
+        )
+
+        qs = resolver_clientes({
+            'centro_latitud': -31.4201,
+            'centro_longitud': -64.1888,
+            'radio_km': 3,
+            'solo_con_whatsapp_valido': True,
+        })
+
+        self.assertEqual(list(qs.values_list('id', flat=True)), [self.c_con_wa.id])
+
 
 class ClientesCampaniaApiTests(TestCase):
 
@@ -293,6 +318,37 @@ class ClientesCampaniaApiTests(TestCase):
 
         self.assertEqual(data['total'], 1)
         self.assertEqual(data['results'][0]['id'], cliente.id)
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_lista_filtra_por_radio_y_devuelve_puntos_para_el_mapa(self, mock_status):
+        cercano = Cliente.objects.get(nombre='Cliente 00')
+        lejano = Cliente.objects.get(nombre='Cliente 01')
+        DireccionCliente.objects.create(
+            cliente=cercano,
+            direccion_texto='Centro',
+            latitud='-31.421000',
+            longitud='-64.188800',
+            es_principal=True,
+        )
+        DireccionCliente.objects.create(
+            cliente=lejano,
+            direccion_texto='Lejos',
+            latitud='-31.500000',
+            longitud='-64.188800',
+            es_principal=True,
+        )
+
+        data = self.client.get('/wa-campania/api/clientes/', {
+            'centro_latitud': '-31.4201',
+            'centro_longitud': '-64.1888',
+            'radio_km': '3',
+        }).json()
+
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['results'][0]['id'], cercano.id)
+        self.assertEqual([punto['id'] for punto in data['map_points']], [cercano.id])
+        self.assertEqual(data['clientes_sin_coordenadas'], 10)
+        self.assertEqual(data['zona']['radio_km'], 3.0)
 
     @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
     def test_lista_filtra_por_campania_anterior(self, mock_status):

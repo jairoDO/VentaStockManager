@@ -33,6 +33,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from . import wa_client
+from .geografia import aplicar_zona
 
 
 log = logging.getLogger(__name__)
@@ -118,10 +119,30 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
             | Q(whatsapp_number__icontains=buscar)
         )
 
+    qs, ubicaciones, zona, sin_coordenadas = aplicar_zona(
+        qs.distinct(), request.GET,
+    )
+
     paginator = Paginator(qs, 10)
     pagina = paginator.get_page(request.GET.get('page') or 1)
     from vendedor.models import Vendedor
     from .models import Campania
+
+    clientes_mapa = {
+        cliente.pk: cliente
+        for cliente in Cliente.objects.filter(pk__in=ubicaciones.keys())
+    }
+    puntos_mapa = []
+    for cliente_id, ubicacion in ubicaciones.items():
+        cliente = clientes_mapa.get(cliente_id)
+        if cliente is None:
+            continue
+        puntos_mapa.append({
+            'id': cliente_id,
+            'nombre': cliente.nombre_completo().strip(),
+            **ubicacion,
+        })
+    puntos_mapa.sort(key=lambda punto: punto['nombre'].lower())
 
     return JsonResponse({
         'results': [
@@ -140,6 +161,13 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
         'has_next': pagina.has_next(),
         'excluded_sender_number': sender_number,
         'excluded_sender_client_ids': excluded_sender_client_ids,
+        'map_points': puntos_mapa,
+        'clientes_sin_coordenadas': sin_coordenadas,
+        'zona': ({
+            'latitud': zona[0],
+            'longitud': zona[1],
+            'radio_km': zona[2],
+        } if zona else None),
         'vendedores': [
             {'id': vendedor.id, 'nombre': vendedor.display_name()}
             for vendedor in Vendedor.objects.select_related('usuario').order_by(

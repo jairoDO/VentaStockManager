@@ -20,6 +20,9 @@ Esquema del JSON que mantenemos (NO cambia, así
     "vendedor_ids": list[int],
     "campania_origen_id": int | None,
     "barrio": str,
+    "centro_latitud": float | None,
+    "centro_longitud": float | None,
+    "radio_km": float | None,
     "solo_con_whatsapp_valido": bool,
   }
 """
@@ -119,12 +122,44 @@ class AudienciaFiltroWidget(forms.Widget):
                 <div style="font-size:11px; color:#64748b; margin-top:3px;">Podés elegir uno o varios vendedores.</div>
               </div>
 
+              <div class="af-zona-mapa" style="padding:12px; background:white; border:1px solid #cbd5e1; border-radius:6px;">
+                <div style="display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:10px; margin-bottom:8px;">
+                  <div>
+                    <label style="display:block; font-size:12px; font-weight:700; color:#334155; margin-bottom:3px;">
+                      📍 Zona en el mapa (recomendado)
+                    </label>
+                    <div style="font-size:11px; color:#64748b;">Tocá el mapa para marcar el centro. El radio es aproximado y se mide en línea recta.</div>
+                  </div>
+                  <label style="font-size:12px; color:#475569;">
+                    Radio
+                    <select class="af-radio-km browser-default" style="display:inline-block; width:auto; min-width:95px; margin-left:5px; padding:5px 8px; border:1px solid #cbd5e1; border-radius:5px; background:white;">
+                      <option value="1">1 km</option>
+                      <option value="2">2 km</option>
+                      <option value="3" selected>3 km</option>
+                      <option value="5">5 km</option>
+                      <option value="10">10 km</option>
+                      <option value="20">20 km</option>
+                      <option value="30">30 km</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="af-map" style="height:300px; width:100%; border:1px solid #cbd5e1; border-radius:6px; overflow:hidden;"></div>
+                <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-top:8px;">
+                  <span class="af-map-summary" style="font-size:12px; color:#475569;">Marcá un punto para usar el radio.</span>
+                  <div style="display:flex; gap:6px;">
+                    <button type="button" class="af-use-location" style="padding:5px 9px;">⌖ Mi ubicación</button>
+                    <button type="button" class="af-clear-zone" style="padding:5px 9px;" disabled>Quitar zona</button>
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:4px;">
-                  Barrio o localidad
+                  Localidad escrita (alternativa)
                 </label>
                 <input type="search" class="af-barrio" placeholder="Ej. Alta Córdoba"
                        style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px;">
+                <div style="font-size:11px; color:#64748b; margin-top:3px;">Úsala para clientes antiguos que todavía no tengan ubicación en el mapa.</div>
               </div>
 
               <!-- Filtro: días desde última compra -->
@@ -205,4 +240,10 @@ class AudienciaFiltroWidget(forms.Widget):
     class Media:
         # URL versionada: después de un deploy algunos teléfonos conservaban
         # el JS anterior y los desplegables quedaban en "Cargando…".
-        js = ('/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260911a',)
+        css = {
+            'all': ('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',),
+        }
+        js = (
+            'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+            '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260911b',
+        )
