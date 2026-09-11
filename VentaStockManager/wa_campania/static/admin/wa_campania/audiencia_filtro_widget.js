@@ -84,7 +84,6 @@
     let centerMarker = null;
     let radiusCircle = null;
     let clientMarkers = null;
-    let fittedInitialPoints = false;
 
     function sync() {
       // Reconstruir el JSON desde el UI.
@@ -171,7 +170,6 @@
       if (audienceMap && radiusCircle) audienceMap.removeLayer(radiusCircle);
       centerMarker = null;
       radiusCircle = null;
-      fittedInitialPoints = false;
       sync();
       loadClients(1);
     }
@@ -180,7 +178,6 @@
       if (!audienceMap || !clientMarkers) return;
       clientMarkers.clearLayers();
       const points = data.map_points || [];
-      const bounds = [];
       points.forEach(function (point) {
         const coordinates = [Number(point.latitud), Number(point.longitud)];
         if (!Number.isFinite(coordinates[0]) || !Number.isFinite(coordinates[1])) return;
@@ -196,7 +193,6 @@
           : '<br>' + Number(point.distancia_km).toFixed(1).replace('.', ',') + ' km del centro';
         marker.bindTooltip('<b>' + escapeHtml(point.nombre) + '</b>' + distance);
         marker.addTo(clientMarkers);
-        bounds.push(coordinates);
       });
 
       const missing = Number(data.clientes_sin_coordenadas || 0);
@@ -208,10 +204,6 @@
         if (missing) mapSummary.textContent += ' · ' + missing + ' sin ubicación';
       }
 
-      if (centerLatitude === null && !fittedInitialPoints && bounds.length) {
-        audienceMap.fitBounds(bounds, {padding: [25, 25], maxZoom: 13});
-        fittedInitialPoints = true;
-      }
     }
 
     function initAudienceMap() {
@@ -219,14 +211,24 @@
         mapSummary.textContent = 'No se pudo cargar el mapa. Podés usar la localidad escrita.';
         return;
       }
+      // El galpón está en el ingreso sur de Villa Allende. Empezamos ahí
+      // y no alejamos el mapa para abarcar clientes con puntos dispersos.
       const initialCenter = centerLatitude === null
-        ? [-31.4201, -64.1888]
+        ? [-31.3073, -64.2811]
         : [centerLatitude, centerLongitude];
-      audienceMap = window.L.map(mapElement).setView(initialCenter, centerLatitude === null ? 11 : 13);
-      window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(audienceMap);
+      audienceMap = window.L.map(mapElement).setView(initialCenter, centerLatitude === null ? 14 : 13);
+      if (window.L.maplibreGL && window.maplibregl) {
+        window.L.maplibreGL({
+          style: 'https://tiles.openfreemap.org/styles/positron',
+        }).addTo(audienceMap);
+        audienceMap.attributionControl.addAttribution(
+          '<a href="https://openfreemap.org/" target="_blank">OpenFreeMap</a> · ' +
+          '<a href="https://www.openmaptiles.org/" target="_blank">© OpenMapTiles</a> · ' +
+          'datos <a href="https://www.openstreetmap.org/copyright" target="_blank">© OpenStreetMap</a>',
+        );
+      } else {
+        mapSummary.textContent = 'No se pudo cargar el fondo del mapa. Actualizá la página para volver a intentar.';
+      }
       clientMarkers = window.L.layerGroup().addTo(audienceMap);
       audienceMap.on('click', function (event) {
         setSelectedZone(event.latlng.lat, event.latlng.lng, true);

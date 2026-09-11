@@ -241,9 +241,14 @@ class AudienciaFiltroWidget(forms.Widget):
         # URL versionada: después de un deploy algunos teléfonos conservaban
         # el JS anterior y los desplegables quedaban en "Cargando…".
         css = {
-            'all': ('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',),
+            'all': (
+                'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+                'https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css',
+            ),
         }
         js = (
             'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-            '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260911b',
+            'https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js',
+            'https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js',
+            '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260911c',
         )
