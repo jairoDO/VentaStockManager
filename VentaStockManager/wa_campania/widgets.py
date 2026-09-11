@@ -205,4 +205,4 @@ class AudienciaFiltroWidget(forms.Widget):
     class Media:
         # URL versionada: después de un deploy algunos teléfonos conservaban
         # el JS anterior y los desplegables quedaban en "Cargando…".
-        js = ('/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260907b',)
+        js = ('/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260911a',)

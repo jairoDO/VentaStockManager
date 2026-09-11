@@ -90,6 +90,16 @@
       return div.innerHTML;
     }
 
+    function refreshMaterialSelect(select) {
+      // Material Admin transforma los <select> al cargar la página. Como
+      // vendedores y campañas llegan después por fetch, el desplegable
+      // visible conserva las opciones iniciales si no lo reconstruimos.
+      if (!window.M || !window.M.FormSelect) return;
+      const instance = window.M.FormSelect.getInstance(select);
+      if (instance) instance.destroy();
+      window.M.FormSelect.init(select);
+    }
+
     function loadClients(page) {
       currentPage = page || 1;
       const params = new URLSearchParams({page: String(currentPage), q: clientSearch.value.trim()});
@@ -111,6 +121,7 @@
               option.selected = selectedVendedores.has(Number(option.value));
             });
             selVendedores.dataset.loaded = '1';
+            refreshMaterialSelect(selVendedores);
           }
           if (selCampaniaOrigen.dataset.loaded !== '1') {
             selCampaniaOrigen.innerHTML = '<option value="">No usar una campaña anterior</option>' +
@@ -120,6 +131,7 @@
               }).join('');
             selCampaniaOrigen.value = selectedCampaniaOrigen ? String(selectedCampaniaOrigen) : '';
             selCampaniaOrigen.dataset.loaded = '1';
+            refreshMaterialSelect(selCampaniaOrigen);
           }
           const excludedIds = (data.excluded_sender_client_ids || []).map(Number);
           excludedIds.forEach(function (id) { selectedIds.delete(id); });
@@ -157,6 +169,14 @@
           nextButton.disabled = !data.has_next;
         })
         .catch(function (error) {
+          if (selVendedores.dataset.loaded !== '1') {
+            selVendedores.innerHTML = '<option disabled>No se pudieron cargar los vendedores</option>';
+            refreshMaterialSelect(selVendedores);
+          }
+          if (selCampaniaOrigen.dataset.loaded !== '1') {
+            selCampaniaOrigen.innerHTML = '<option value="">No se pudieron cargar las campañas anteriores</option>';
+            refreshMaterialSelect(selCampaniaOrigen);
+          }
           clientList.innerHTML = '<div style="padding:16px; color:#b91c1c; text-align:center;">' + escapeHtml(error.message) + '</div>';
         });
     }
