@@ -13,7 +13,7 @@ from django.utils.html import format_html
 
 from cliente.models import (
     CarteraCliente, Cliente, CuentaCliente, DireccionCliente, MovimientoCuenta, PrecioCliente,
-    AlertaClienteInactivo,
+    AlertaClienteInactivo, HorarioAtencionCliente,
 )
 from cliente.admin_permissions import SuperuserOnlyAdminMixin, StaffFullAccessAdminMixin
 from vendedor.models import Vendedor
@@ -189,6 +189,14 @@ class DireccionClienteInline(admin.StackedInline):
     readonly_fields = ('fuente',)
 
 
+class HorarioAtencionClienteInline(admin.TabularInline):
+    model = HorarioAtencionCliente
+    extra = 0
+    fields = ('dia_semana', 'desde_1', 'hasta_1', 'desde_2', 'hasta_2')
+    verbose_name = 'Horario para recibir pedidos'
+    verbose_name_plural = 'Horarios para recibir pedidos (hasta dos franjas por día)'
+
+
 class CarteraClienteAdmin(admin.ModelAdmin):
     """Hace visible la gestión de cartera como una aplicación del admin."""
     icon_name = 'group_add'
@@ -248,7 +256,7 @@ class ClienteAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'accion_habilitar_whatsapp',
         'accion_deshabilitar_whatsapp',
     ]
-    inlines = (DireccionClienteInline,)
+    inlines = (DireccionClienteInline, HorarioAtencionClienteInline)
 
     def get_queryset(self, request):
         """

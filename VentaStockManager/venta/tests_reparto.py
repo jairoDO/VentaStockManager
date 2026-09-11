@@ -1,5 +1,6 @@
 import json
-from datetime import date, timedelta
+from datetime import date, time, timedelta
+from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -7,7 +8,13 @@ from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
 from articulo.models import Articulo
-from cliente.models import Cliente, DireccionCliente
+from cliente.models import (
+    Cliente,
+    CuentaCliente,
+    DireccionCliente,
+    HorarioAtencionCliente,
+    MovimientoCuenta,
+)
 from vendedor.models import Repartidor, Vendedor
 from venta.models import ArticuloVenta, Pedido, PedidoEstadoHistorial, Venta
 
@@ -222,6 +229,11 @@ class RepartoFlujoTests(TestCase):
                 # backend debe usar automáticamente la fecha operativa.
                 'fecha_compra': '2000-01-01',
                 'fecha_entrega': str(date.today()),
+                'horario_confirmado': True,
+                'horario_desde': '08:00',
+                'horario_hasta': '12:00',
+                'horario_2_desde': '16:00',
+                'horario_2_hasta': '20:00',
                 'items': [{
                     'articulo_id': self.articulo.pk,
                     'cantidad': 1,
@@ -239,6 +251,102 @@ class RepartoFlujoTests(TestCase):
         self.assertEqual(venta.pedido.direccion_entrega, direccion)
         self.assertEqual(venta.pedido.direccion_entrega_texto, 'Circunvalación 2500')
         self.assertTrue(venta.pedido.direccion_confirmada)
+        self.assertEqual(venta.pedido.horario_entrega_desde, time(8, 0))
+        self.assertEqual(venta.pedido.horario_entrega_2_hasta, time(20, 0))
+        horario = HorarioAtencionCliente.objects.get(
+            cliente=self.cliente,
+            dia_semana=date.today().weekday(),
+        )
+        self.assertEqual(venta.pedido.horario_atencion, horario)
+        self.assertEqual(horario.hasta_1, time(12, 0))
+
+        # La FK permite saber qué horario originó el pedido, pero la copia
+        # histórica no debe cambiar si luego el cliente modifica su atención.
+        horario.desde_1 = time(9, 30)
+        horario.hasta_1 = time(13, 30)
+        horario.save()
+        venta.pedido.refresh_from_db()
+        self.assertEqual(venta.pedido.horario_atencion, horario)
+        self.assertEqual(venta.pedido.horario_entrega_desde, time(8, 0))
+        self.assertEqual(venta.pedido.horario_entrega_hasta, time(12, 0))
+
+    def test_guardar_venta_rechaza_horario_sin_confirmar(self):
+        DireccionCliente.objects.create(
+            cliente=self.cliente,
+            direccion_texto='Circunvalación 2500',
+            localidad='Córdoba',
+            latitud='-31.450000',
+            longitud='-64.220000',
+            confirmada=True,
+            es_principal=True,
+        )
+        self.client.force_login(self.usuario_vendedor)
+        response = self.client.post(
+            reverse('venta_api_guardar'),
+            data=json.dumps({
+                'cliente_id': self.cliente.pk,
+                'vendedor_id': self.vendedor.pk,
+                'fecha_entrega': str(date.today()),
+                'horario_confirmado': False,
+                'horario_desde': '08:00',
+                'horario_hasta': '12:00',
+                'items': [{
+                    'articulo_id': self.articulo.pk,
+                    'cantidad': 1,
+                    'precio': '1500.00',
+                    'descuento_porcentaje': 0,
+                }],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            'Confirmá el horario de atención para poder guardar la venta.',
+            response.json()['errores'],
+        )
+        self.assertEqual(Venta.objects.count(), 0)
+
+    def test_guardar_desde_formulario_viejo_pide_recargar(self):
+        self.client.force_login(self.usuario_vendedor)
+        response = self.client.post(
+            reverse('venta_api_guardar'),
+            data=json.dumps({
+                'cliente_id': self.cliente.pk,
+                'vendedor_id': self.vendedor.pk,
+                'fecha_entrega': str(date.today()),
+                'items': [],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            'Este formulario quedó desactualizado. Recargá la página',
+            ' '.join(response.json()['errores']),
+        )
+
+    def test_api_horario_devuelve_dos_franjas_del_dia_elegido(self):
+        fecha = date.today()
+        HorarioAtencionCliente.objects.create(
+            cliente=self.cliente,
+            dia_semana=fecha.weekday(),
+            desde_1=time(8, 0),
+            hasta_1=time(12, 0),
+            desde_2=time(16, 0),
+            hasta_2=time(20, 0),
+        )
+        self.client.force_login(self.usuario_vendedor)
+
+        response = self.client.get(
+            reverse('venta_api_cliente_horario', args=[self.cliente.pk]),
+            {'fecha': fecha.isoformat()},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['configurado'])
+        self.assertEqual(response.json()['desde_1'], '08:00')
+        self.assertEqual(response.json()['hasta_2'], '20:00')
 
     def test_guardar_venta_rechaza_fecha_entrega_vacia(self):
         self.client.force_login(self.usuario_vendedor)
@@ -416,18 +524,20 @@ class RepartoFlujoTests(TestCase):
 
     def test_planificacion_abre_en_hoy_y_no_esta_en_acciones_de_pedido(self):
         from VentaStockManager.admin import admin_site
+        from venta.views_reparto import _fecha_hoy_operativa
 
-        pedido_hoy = self._crear_venta().pedido
+        hoy = _fecha_hoy_operativa()
+        pedido_hoy = self._crear_venta(fecha_entrega=hoy).pedido
         pedido_manana = self._crear_venta(
-            fecha_entrega=date.today() + timedelta(days=1),
+            fecha_entrega=hoy + timedelta(days=1),
         ).pedido
         self.client.force_login(self.admin)
 
         response = self.client.get(reverse('reparto_planificar'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context['fecha'], date.today())
-        self.assertContains(response, f'value="{date.today().isoformat()}"')
+        self.assertEqual(response.context['fecha'], hoy)
+        self.assertContains(response, f'value="{hoy.isoformat()}"')
         self.assertContains(response, f'#{pedido_hoy.pk}')
         self.assertNotContains(response, f'#{pedido_manana.pk}')
         request = RequestFactory().get('/admin/venta/pedido/')
@@ -557,7 +667,15 @@ class RepartoFlujoTests(TestCase):
         pedido = self._crear_venta().pedido
         pedido.repartidor = self.repartidor
         pedido.estado = Pedido.ASIGNADO
-        pedido.save(update_fields=['repartidor', 'estado'])
+        pedido.horario_entrega_desde = time(9, 0)
+        pedido.horario_entrega_hasta = time(13, 0)
+        pedido.horario_entrega_2_desde = time(16, 0)
+        pedido.horario_entrega_2_hasta = time(20, 0)
+        pedido.save(update_fields=[
+            'repartidor', 'estado', 'horario_entrega_desde',
+            'horario_entrega_hasta', 'horario_entrega_2_desde',
+            'horario_entrega_2_hasta',
+        ])
 
         self.client.force_login(self.usuario_repartidor)
         panel = self.client.get(
@@ -573,16 +691,44 @@ class RepartoFlujoTests(TestCase):
         self.assertContains(panel, 'Más cercano')
         self.assertContains(panel, 'navigator.geolocation')
         self.assertContains(panel, 'data-pedido-id')
+        self.assertContains(panel, 'Puede recibir:')
+        self.assertContains(panel, '09:00–13:00 / 16:00–20:00')
+        self.assertContains(panel, 'no llegás antes del cierre')
+        self.assertContains(panel, 'Confirmar entrega y cobro')
+        self.assertContains(panel, 'Todo efectivo')
+        self.assertContains(panel, 'Todo transferencia')
+        self.assertContains(panel, 'Todo a cuenta corriente')
 
         response = self.client.post(
             reverse('reparto_actualizar_estado', args=[pedido.pk]),
-            data=json.dumps({'estado': Pedido.ENTREGADO}),
+            data=json.dumps({
+                'estado': Pedido.ENTREGADO,
+                'pago': {
+                    'efectivo': '500.00',
+                    'transferencia': '400.00',
+                    'cuenta_corriente': '600.00',
+                },
+            }),
             content_type='application/json',
         )
         self.assertEqual(response.status_code, 200)
         pedido.refresh_from_db()
         self.assertEqual(pedido.estado, Pedido.ENTREGADO)
         self.assertIsNotNone(pedido.entregado_en)
+        self.assertIsNotNone(pedido.cobro_entrega_registrado_en)
+        self.assertEqual(pedido.monto_efectivo_entrega, Decimal('500.00'))
+        self.assertEqual(pedido.monto_transferencia_entrega, Decimal('400.00'))
+        self.assertEqual(pedido.monto_cuenta_corriente_entrega, Decimal('600.00'))
+        self.assertEqual(pedido.monto_pagado, Decimal('900.00'))
+        self.assertFalse(pedido.pagado)
+        self.assertEqual(CuentaCliente.objects.get(cliente=self.cliente).saldo, Decimal('-600.00'))
+        self.assertTrue(
+            MovimientoCuenta.objects.filter(
+                pedido_origen=pedido,
+                tipo=MovimientoCuenta.TIPO_PAGO,
+                monto=Decimal('900.00'),
+            ).exists()
+        )
 
         correccion = self.client.post(
             reverse('reparto_actualizar_estado', args=[pedido.pk]),
@@ -609,6 +755,39 @@ class RepartoFlujoTests(TestCase):
             content_type='application/json',
         )
         self.assertEqual(prohibido.status_code, 403)
+
+    def test_entregado_requiere_forma_de_pago_y_total_completo(self):
+        pedido = self._crear_venta().pedido
+        pedido.repartidor = self.repartidor
+        pedido.estado = Pedido.ASIGNADO
+        pedido.save(update_fields=['repartidor', 'estado'])
+        self.client.force_login(self.usuario_repartidor)
+
+        sin_pago = self.client.post(
+            reverse('reparto_actualizar_estado', args=[pedido.pk]),
+            data=json.dumps({'estado': Pedido.ENTREGADO}),
+            content_type='application/json',
+        )
+        self.assertEqual(sin_pago.status_code, 400)
+        self.assertIn('cómo se pagó', sin_pago.json()['error'])
+
+        pago_incompleto = self.client.post(
+            reverse('reparto_actualizar_estado', args=[pedido.pk]),
+            data=json.dumps({
+                'estado': Pedido.ENTREGADO,
+                'pago': {
+                    'efectivo': '1000.00',
+                    'transferencia': '0',
+                    'cuenta_corriente': '0',
+                },
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(pago_incompleto.status_code, 400)
+        self.assertIn('deben sumar', pago_incompleto.json()['error'])
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.estado, Pedido.ASIGNADO)
+        self.assertIsNone(pedido.cobro_entrega_registrado_en)
 
     def test_no_entregado_requiere_motivo(self):
         pedido = self._crear_venta().pedido

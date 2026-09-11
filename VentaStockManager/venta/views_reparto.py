@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from cliente.models import CuentaCliente, MovimientoCuenta
 from vendedor.models import Repartidor, Vendedor
 from venta.models import Pedido, PedidoEstadoHistorial
 from venta.utils import subtotal_linea, total_venta
@@ -91,6 +93,17 @@ def _parse_ids(raw: str) -> list[int]:
         if parsed > 0 and parsed not in ids:
             ids.append(parsed)
     return ids
+
+
+def _decimal_cobro(valor, nombre, errores):
+    try:
+        monto = Decimal(str(valor if valor not in (None, '') else '0').replace(',', '.'))
+    except (InvalidOperation, TypeError, ValueError):
+        errores.append(f'{nombre}: ingresá un monto válido.')
+        return Decimal('0')
+    if monto < 0:
+        errores.append(f'{nombre}: el monto no puede ser negativo.')
+    return monto.quantize(Decimal('0.01'))
 
 
 def _es_admin(user):
@@ -328,7 +341,17 @@ def reparto_panel(request):
         'latitud': float(pedido.latitud_entrega) if pedido.latitud_entrega is not None else None,
         'longitud': float(pedido.longitud_entrega) if pedido.longitud_entrega is not None else None,
         'estado': pedido.estado,
+        'total': str(pedido.total_reparto.quantize(Decimal('0.01'))),
+        'efectivo': str(pedido.monto_efectivo_entrega),
+        'transferencia': str(pedido.monto_transferencia_entrega),
+        'cuenta_corriente': str(pedido.monto_cuenta_corriente_entrega),
+        'cobro_registrado': bool(pedido.cobro_entrega_registrado_en),
         'repartidor': str(pedido.repartidor) if pedido.repartidor else 'Sin asignar',
+        'fecha_entrega': pedido.venta.fecha_entrega.isoformat(),
+        'horario_desde': pedido.horario_entrega_desde.strftime('%H:%M') if pedido.horario_entrega_desde else '',
+        'horario_hasta': pedido.horario_entrega_hasta.strftime('%H:%M') if pedido.horario_entrega_hasta else '',
+        'horario_2_desde': pedido.horario_entrega_2_desde.strftime('%H:%M') if pedido.horario_entrega_2_desde else '',
+        'horario_2_hasta': pedido.horario_entrega_2_hasta.strftime('%H:%M') if pedido.horario_entrega_2_hasta else '',
     } for pedido in pedidos]
 
     return render(request, 'venta/reparto_panel.html', {
@@ -371,9 +394,78 @@ def reparto_actualizar_estado(request, pedido_id):
     if nuevo_estado not in permitidos:
         return JsonResponse({'ok': False, 'error': 'Estado no permitido.'}, status=400)
 
+    cobro_entrega = None
+    if nuevo_estado == Pedido.ENTREGADO:
+        pago = payload.get('pago')
+        if not isinstance(pago, dict):
+            return JsonResponse({
+                'ok': False,
+                'error': 'Indicá cómo se pagó antes de marcar el pedido como entregado.',
+            }, status=400)
+        errores_cobro = []
+        efectivo = _decimal_cobro(pago.get('efectivo'), 'Efectivo', errores_cobro)
+        transferencia = _decimal_cobro(
+            pago.get('transferencia'), 'Transferencia', errores_cobro,
+        )
+        cuenta_corriente = _decimal_cobro(
+            pago.get('cuenta_corriente'), 'Cuenta corriente', errores_cobro,
+        )
+        total_pedido = Decimal(total_venta(pedido.venta) or 0).quantize(Decimal('0.01'))
+        total_declarado = efectivo + transferencia + cuenta_corriente
+        if total_declarado != total_pedido:
+            diferencia = total_pedido - total_declarado
+            errores_cobro.append(
+                f'Los importes deben sumar ${total_pedido:,.2f}. '
+                f'La diferencia es ${diferencia:,.2f}.'
+            )
+        if errores_cobro:
+            return JsonResponse({
+                'ok': False,
+                'error': ' '.join(errores_cobro),
+            }, status=400)
+        cobro_entrega = {
+            'efectivo': efectivo,
+            'transferencia': transferencia,
+            'cuenta_corriente': cuenta_corriente,
+        }
+
     try:
         with transaction.atomic():
-            pedido = Pedido.objects.select_for_update().get(pk=pedido.pk)
+            pedido = (
+                Pedido.objects
+                .select_for_update()
+                .select_related('venta__cliente')
+                .get(pk=pedido.pk)
+            )
+            if cobro_entrega is not None:
+                CuentaCliente.objects.get_or_create(cliente=pedido.venta.cliente)
+                total_cobrado = (
+                    cobro_entrega['efectivo'] + cobro_entrega['transferencia']
+                )
+                pedido.set_monto_pagado(total_cobrado, user=request.user)
+                pedido.monto_efectivo_entrega = cobro_entrega['efectivo']
+                pedido.monto_transferencia_entrega = cobro_entrega['transferencia']
+                pedido.monto_cuenta_corriente_entrega = cobro_entrega['cuenta_corriente']
+                pedido.cobro_entrega_registrado_en = timezone.now()
+                pedido.pagado = cobro_entrega['cuenta_corriente'] == 0
+                pedido.save(update_fields=[
+                    'monto_efectivo_entrega', 'monto_transferencia_entrega',
+                    'monto_cuenta_corriente_entrega',
+                    'cobro_entrega_registrado_en', 'pagado',
+                ])
+                partes = []
+                if cobro_entrega['efectivo']:
+                    partes.append(f'efectivo ${cobro_entrega["efectivo"]:,.2f}')
+                if cobro_entrega['transferencia']:
+                    partes.append(
+                        f'transferencia ${cobro_entrega["transferencia"]:,.2f}'
+                    )
+                MovimientoCuenta.objects.filter(pedido_origen=pedido).update(
+                    descripcion=(
+                        f'Cobro al entregar pedido #{pedido.id}: '
+                        + (' + '.join(partes) or 'sin cobro')
+                    ),
+                )
             pedido.cambiar_estado_entrega(
                 nuevo_estado,
                 usuario=request.user,
@@ -388,5 +480,6 @@ def reparto_actualizar_estado(request, pedido_id):
         'pedido_id': pedido.pk,
         'estado': pedido.estado,
         'estado_display': pedido.get_estado_display(),
+        'forma_pago': pedido.forma_pago_entrega_texto,
         'entregado_en': pedido.entregado_en.isoformat() if pedido.entregado_en else None,
     })

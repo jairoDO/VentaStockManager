@@ -68,7 +68,7 @@
       <section class="bg-white rounded-xl shadow-sm p-4 mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 class="font-bold text-slate-800">Orden de entrega</h2>
-          <p class="text-sm text-slate-500">Usá la ubicación actual del teléfono para empezar por el pedido más cercano.</p>
+          <p class="text-sm text-slate-500">Usá la ubicación actual para ordenar y estimar si llegás dentro del horario. Es aproximado y no incluye tránsito.</p>
         </div>
         <button type="button" @click="ordenarPorCercania()" :disabled="ubicando"
                 class="shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg font-semibold">
@@ -104,7 +104,19 @@
               <p class="text-sm text-slate-700 mt-1">{{ pedido.direccion_entrega_texto|default:"Sin dirección cargada" }}</p>
               {% if pedido.localidad_entrega %}<p class="text-xs text-slate-500">{{ pedido.localidad_entrega }}, {{ pedido.provincia_entrega }}</p>{% endif %}
               {% if pedido.referencia_entrega %}<p class="text-xs text-blue-700 mt-1">Referencia: {{ pedido.referencia_entrega }}</p>{% endif %}
+              {% if pedido.horario_entrega_texto %}
+                <p class="text-sm font-semibold text-violet-800 mt-2">🕐 Puede recibir: {{ pedido.horario_entrega_texto }}</p>
+              {% else %}
+                <p class="text-xs font-semibold text-amber-700 mt-2">⚠ Pedido anterior sin horario confirmado</p>
+              {% endif %}
+              <span x-show="estimaciones[{{ pedido.id }}]" x-cloak
+                    :class="claseEstimacion(estimaciones[{{ pedido.id }}]?.tipo)"
+                    class="inline-block mt-2 text-xs px-2 py-1 rounded-full font-bold"
+                    x-text="estimaciones[{{ pedido.id }}]?.texto"></span>
               {% if es_vista_admin %}<p class="text-xs text-slate-500 mt-1">🚚 {{ pedido.repartidor|default:"Sin asignar" }}</p>{% endif %}
+              {% if pedido.cobro_entrega_registrado_en %}
+                <p class="text-sm font-semibold text-emerald-800 mt-2">💵 {{ pedido.forma_pago_entrega_texto }}</p>
+              {% endif %}
             </div>
             <span class="text-sm font-semibold">{{ pedido.venta.ventas.count }} renglón(es)</span>
           </div>
@@ -172,7 +184,7 @@
             {% else %}
               <button type="button" @click="actualizarEstado({{ pedido.id }}, 'En reparto')"
                       class="px-3 py-2 bg-orange-100 border border-orange-200 text-orange-900 rounded text-sm font-medium">En reparto</button>
-              <button type="button" @click="actualizarEstado({{ pedido.id }}, 'Entregado')"
+              <button type="button" @click="abrirEntregado({{ pedido.id }})"
                       class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-sm font-semibold">✓ Entregado</button>
               <button type="button" @click="abrirNoEntregado({{ pedido.id }})"
                       class="px-3 py-2 bg-red-50 border border-red-200 text-red-800 rounded text-sm font-medium">No entregado</button>
@@ -185,6 +197,87 @@
         </div>
       {% endfor %}
     </section>
+
+    <div x-show="entregado.abierto" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-slate-900/60" @click="cerrarEntregado()"></div>
+      <div class="relative bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-5">
+        <h3 class="text-lg font-bold">Confirmar entrega y cobro</h3>
+        <p class="text-sm text-slate-600 mt-1">
+          Para marcar el pedido como entregado, indicá cómo se pagó el total.
+        </p>
+
+        <div class="mt-4 rounded-lg bg-slate-100 px-4 py-3 flex items-center justify-between">
+          <span class="font-medium">Total del pedido</span>
+          <strong class="text-xl" x-text="formatearMonto(entregado.total)"></strong>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4">
+          <button type="button" @click="completarPago('efectivo')"
+                  class="px-3 py-2 rounded border border-emerald-300 bg-emerald-50 text-emerald-900 text-sm font-semibold">
+            Todo efectivo
+          </button>
+          <button type="button" @click="completarPago('transferencia')"
+                  class="px-3 py-2 rounded border border-blue-300 bg-blue-50 text-blue-900 text-sm font-semibold">
+            Todo transferencia
+          </button>
+          <button type="button" @click="completarPago('cuentaCorriente')"
+                  class="px-3 py-2 rounded border border-amber-300 bg-amber-50 text-amber-900 text-sm font-semibold">
+            Todo a cuenta corriente
+          </button>
+        </div>
+
+        <div class="space-y-3 mt-4">
+          <label class="block">
+            <span class="block text-sm font-medium mb-1">Efectivo</span>
+            <input type="number" min="0" step="0.01" inputmode="decimal"
+                   x-model="entregado.efectivo"
+                   class="w-full border border-slate-300 rounded px-3 py-2">
+          </label>
+          <label class="block">
+            <span class="block text-sm font-medium mb-1">Transferencia</span>
+            <input type="number" min="0" step="0.01" inputmode="decimal"
+                   x-model="entregado.transferencia"
+                   class="w-full border border-slate-300 rounded px-3 py-2">
+          </label>
+          <label class="block">
+            <span class="block text-sm font-medium mb-1">A cuenta corriente</span>
+            <input type="number" min="0" step="0.01" inputmode="decimal"
+                   x-model="entregado.cuentaCorriente"
+                   class="w-full border border-slate-300 rounded px-3 py-2">
+          </label>
+          <label class="block">
+            <span class="block text-sm font-medium mb-1">Observación de la entrega (opcional)</span>
+            <textarea x-model="entregado.observacion" rows="2"
+                      class="w-full border border-slate-300 rounded px-3 py-2"
+                      placeholder="Ej. recibió el encargado"></textarea>
+          </label>
+        </div>
+
+        <div class="mt-4 rounded-lg border p-3"
+             :class="diferenciaPagoEntrega() === 0 ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'">
+          <div class="flex justify-between text-sm">
+            <span>Suma ingresada</span>
+            <strong x-text="formatearMonto(sumaPagoEntrega())"></strong>
+          </div>
+          <div x-show="diferenciaPagoEntrega() !== 0" class="flex justify-between text-sm text-amber-900 mt-1">
+            <span x-text="diferenciaPagoEntrega() > 0 ? 'Falta asignar' : 'Importe excedido'"></span>
+            <strong x-text="formatearMonto(Math.abs(diferenciaPagoEntrega()))"></strong>
+          </div>
+        </div>
+
+        <p x-show="entregado.error" x-cloak class="text-sm text-red-700 mt-3" x-text="entregado.error"></p>
+        <div class="flex justify-end gap-2 mt-4">
+          <button type="button" @click="cerrarEntregado()" :disabled="entregado.guardando"
+                  class="px-4 py-2 text-slate-700 disabled:opacity-50">Cancelar</button>
+          <button type="button" @click="confirmarEntregado()"
+                  :disabled="entregado.guardando || diferenciaPagoEntrega() !== 0"
+                  class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded font-semibold">
+            <span x-show="!entregado.guardando">Confirmar entrega</span>
+            <span x-show="entregado.guardando" x-cloak>Guardando…</span>
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div x-show="noEntregado.abierto" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-slate-900/60" @click="cerrarNoEntregado()"></div>
@@ -228,6 +321,12 @@
         ubicando: false,
         pedidoMasCercano: null,
         distancias: {},
+        estimaciones: {},
+        entregado: {
+          abierto: false, pedidoId: null, total: 0,
+          efectivo: '0.00', transferencia: '0.00', cuentaCorriente: '0.00',
+          observacion: '', error: '', guardando: false,
+        },
         noEntregado: {abierto: false, pedidoId: null, motivo: '', observacion: '', error: ''},
         inicializarPanel() {
           this.mapaDatos = JSON.parse(document.getElementById('pedidos-mapa').textContent || '[]');
@@ -262,6 +361,14 @@
             contenido.append(document.createTextNode(pedido.direccion || 'Sin dirección'));
             contenido.append(document.createElement('br'));
             contenido.append(document.createTextNode(pedido.estado));
+            if (pedido.horario_desde && pedido.horario_hasta) {
+              contenido.append(document.createElement('br'));
+              const segunda = pedido.horario_2_desde && pedido.horario_2_hasta
+                ? ` / ${pedido.horario_2_desde}–${pedido.horario_2_hasta}` : '';
+              contenido.append(document.createTextNode(
+                `Horario: ${pedido.horario_desde}–${pedido.horario_hasta}${segunda}`
+              ));
+            }
             contenido.append(document.createElement('br'));
             contenido.append(document.createTextNode('Repartidor: ' + pedido.repartidor));
             L.marker([pedido.latitud, pedido.longitud], {icon: icono})
@@ -287,6 +394,66 @@
           if (!Number.isFinite(distanciaKm)) return '';
           if (distanciaKm < 1) return `${Math.max(1, Math.round(distanciaKm * 1000))} m`;
           return `${distanciaKm.toFixed(1).replace('.', ',')} km`;
+        },
+        minutosHora(valor) {
+          if (!valor || !valor.includes(':')) return null;
+          const [horas, minutos] = valor.split(':').map(Number);
+          if (!Number.isFinite(horas) || !Number.isFinite(minutos)) return null;
+          return horas * 60 + minutos;
+        },
+        horaFecha(fecha) {
+          return fecha.toLocaleTimeString('es-AR', {hour: '2-digit', minute: '2-digit'});
+        },
+        fechaLocalISO(fecha) {
+          const ano = fecha.getFullYear();
+          const mes = String(fecha.getMonth() + 1).padStart(2, '0');
+          const dia = String(fecha.getDate()).padStart(2, '0');
+          return `${ano}-${mes}-${dia}`;
+        },
+        estimarLlegada(pedido, distanciaKm) {
+          if (!pedido.horario_desde || !pedido.horario_hasta) return null;
+          const ahora = new Date();
+          if (pedido.fecha_entrega !== this.fechaLocalISO(ahora)) return null;
+
+          // Ajuste sencillo para ciudad: la ruta real suele ser más larga
+          // que la línea recta. 25 km/h es una velocidad conservadora y
+          // dejamos un mínimo de cinco minutos para estacionar/entregar.
+          const minutosViaje = Math.max(5, Math.ceil((distanciaKm * 1.3 / 25) * 60));
+          const llegada = new Date(ahora.getTime() + minutosViaje * 60000);
+          const llegadaMinutos = llegada.getHours() * 60 + llegada.getMinutes();
+          const franjas = [
+            [pedido.horario_desde, pedido.horario_hasta],
+            [pedido.horario_2_desde, pedido.horario_2_hasta],
+          ].filter(([desde, hasta]) => desde && hasta)
+            .map(([desde, hasta]) => ({
+              desde, hasta,
+              inicio: this.minutosHora(desde),
+              fin: this.minutosHora(hasta),
+            }));
+
+          for (const franja of franjas) {
+            if (llegadaMinutos < franja.inicio) {
+              return {
+                tipo: 'espera',
+                texto: `Llegarías ${this.horaFecha(llegada)} · abre a las ${franja.desde}`,
+              };
+            }
+            if (llegadaMinutos <= franja.fin) {
+              return {
+                tipo: 'atiempo',
+                texto: `✓ Llegada aprox. ${this.horaFecha(llegada)} · dentro del horario`,
+              };
+            }
+          }
+          return {
+            tipo: 'tarde',
+            texto: `⚠ Llegada aprox. ${this.horaFecha(llegada)} · no llegás antes del cierre`,
+          };
+        },
+        claseEstimacion(tipo) {
+          if (tipo === 'atiempo') return 'bg-emerald-100 text-emerald-900';
+          if (tipo === 'espera') return 'bg-blue-100 text-blue-900';
+          return 'bg-red-100 text-red-900';
         },
         ordenarTarjetas(pedidosOrdenados) {
           if (!this.$refs.listaPedidos) return;
@@ -370,6 +537,11 @@
               this.distancias = Object.fromEntries(
                 cercanos.map(pedido => [pedido.id, pedido.distancia]),
               );
+              this.estimaciones = Object.fromEntries(
+                cercanos
+                  .map(pedido => [pedido.id, this.estimarLlegada(pedido, pedido.distancia)])
+                  .filter(([, estimacion]) => estimacion !== null),
+              );
               this.pedidoMasCercano = cercanos[0].id;
               this.ordenarTarjetas(pedidosCalculados);
               this.mostrarUbicacionEnMapa(latitudActual, longitudActual);
@@ -390,13 +562,83 @@
             {enableHighAccuracy: true, timeout: 15000, maximumAge: 60000},
           );
         },
-        async actualizarEstado(pedidoId, estado, motivo = '', observacion = '') {
+        centavos(valor) {
+          const numero = Number(String(valor ?? '0').replace(',', '.'));
+          return Number.isFinite(numero) ? Math.round(numero * 100) : 0;
+        },
+        formatearMonto(valor) {
+          const numero = Number(valor || 0);
+          return numero.toLocaleString('es-AR', {style: 'currency', currency: 'ARS'});
+        },
+        sumaPagoEntrega() {
+          return (
+            this.centavos(this.entregado.efectivo)
+            + this.centavos(this.entregado.transferencia)
+            + this.centavos(this.entregado.cuentaCorriente)
+          ) / 100;
+        },
+        diferenciaPagoEntrega() {
+          return (this.centavos(this.entregado.total) - this.centavos(this.sumaPagoEntrega())) / 100;
+        },
+        abrirEntregado(pedidoId) {
+          const pedido = this.mapaDatos.find(item => item.id === pedidoId);
+          if (!pedido) {
+            this.mensajeError = true;
+            this.mensaje = 'No se encontraron los datos de este pedido.';
+            return;
+          }
+          this.entregado = {
+            abierto: true,
+            pedidoId,
+            total: Number(pedido.total),
+            efectivo: pedido.cobro_registrado ? pedido.efectivo : '0.00',
+            transferencia: pedido.cobro_registrado ? pedido.transferencia : '0.00',
+            cuentaCorriente: pedido.cobro_registrado ? pedido.cuenta_corriente : '0.00',
+            observacion: '',
+            error: '',
+            guardando: false,
+          };
+        },
+        cerrarEntregado() {
+          if (!this.entregado.guardando) this.entregado.abierto = false;
+        },
+        completarPago(tipo) {
+          const total = Number(this.entregado.total).toFixed(2);
+          this.entregado.efectivo = tipo === 'efectivo' ? total : '0.00';
+          this.entregado.transferencia = tipo === 'transferencia' ? total : '0.00';
+          this.entregado.cuentaCorriente = tipo === 'cuentaCorriente' ? total : '0.00';
+          this.entregado.error = '';
+        },
+        async confirmarEntregado() {
+          this.entregado.error = '';
+          if (this.diferenciaPagoEntrega() !== 0) {
+            this.entregado.error = 'Los importes deben sumar exactamente el total del pedido.';
+            return;
+          }
+          this.entregado.guardando = true;
+          const ok = await this.actualizarEstado(
+            this.entregado.pedidoId,
+            'Entregado',
+            '',
+            this.entregado.observacion,
+            {
+              efectivo: this.entregado.efectivo,
+              transferencia: this.entregado.transferencia,
+              cuenta_corriente: this.entregado.cuentaCorriente,
+            },
+          );
+          if (!ok) {
+            this.entregado.error = this.mensaje;
+            this.entregado.guardando = false;
+          }
+        },
+        async actualizarEstado(pedidoId, estado, motivo = '', observacion = '', pago = null) {
           this.mensaje = '';
           try {
             const r = await fetch(`/reparto/pedido/${pedidoId}/estado/`, {
               method: 'POST', credentials: 'same-origin',
               headers: {'Content-Type': 'application/json', 'X-CSRFToken': cookie('csrftoken')},
-              body: JSON.stringify({estado, motivo, observacion}),
+              body: JSON.stringify({estado, motivo, observacion, pago}),
             });
             const data = await r.json();
             if (!r.ok || !data.ok) {

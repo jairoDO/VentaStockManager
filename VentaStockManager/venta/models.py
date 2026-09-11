@@ -449,6 +449,20 @@ class Pedido(models.Model):
         max_digits=9, decimal_places=6, null=True, blank=True,
     )
     direccion_confirmada = models.BooleanField(default=False)
+    # Copia histórica del horario confirmado al vender. No dependemos del
+    # horario actual del cliente porque puede cambiar después de la entrega.
+    horario_atencion = models.ForeignKey(
+        'cliente.HorarioAtencionCliente',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='pedidos',
+        help_text='Horario del cliente utilizado al crear este pedido.',
+    )
+    horario_entrega_desde = models.TimeField(null=True, blank=True)
+    horario_entrega_hasta = models.TimeField(null=True, blank=True)
+    horario_entrega_2_desde = models.TimeField(null=True, blank=True)
+    horario_entrega_2_hasta = models.TimeField(null=True, blank=True)
     repartidor = models.ForeignKey(
         Repartidor,
         null=True,
@@ -494,6 +508,16 @@ class Pedido(models.Model):
             '"Registrar pago" no vuelve a aplicarse sobre este pedido.'
         ),
     )
+    monto_efectivo_entrega = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0'),
+    )
+    monto_transferencia_entrega = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0'),
+    )
+    monto_cuenta_corriente_entrega = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0'),
+    )
+    cobro_entrega_registrado_en = models.DateTimeField(null=True, blank=True)
 
     def set_monto_pagado(self, nuevo_monto, user=None):
         """
@@ -608,6 +632,20 @@ class Pedido(models.Model):
         return resultado
 
     @property
+    def forma_pago_entrega_texto(self):
+        """Resumen del cobro declarado al completar la entrega."""
+        if not self.cobro_entrega_registrado_en:
+            return ''
+        partes = []
+        if self.monto_efectivo_entrega:
+            partes.append(f'Efectivo ${self.monto_efectivo_entrega:,.2f}')
+        if self.monto_transferencia_entrega:
+            partes.append(f'Transferencia ${self.monto_transferencia_entrega:,.2f}')
+        if self.monto_cuenta_corriente_entrega:
+            partes.append(f'Cuenta corriente ${self.monto_cuenta_corriente_entrega:,.2f}')
+        return ' · '.join(partes) or 'Sin importe registrado'
+
+    @property
     def tiene_coordenadas_entrega(self):
         return self.latitud_entrega is not None and self.longitud_entrega is not None
 
@@ -621,6 +659,23 @@ class Pedido(models.Model):
         self.latitud_entrega = direccion.latitud
         self.longitud_entrega = direccion.longitud
         self.direccion_confirmada = direccion.confirmada
+
+    def aplicar_horario(self, horario):
+        """Copia las franjas confirmadas al pedido para preservar el histórico."""
+        self.horario_atencion = horario
+        self.horario_entrega_desde = horario.desde_1
+        self.horario_entrega_hasta = horario.hasta_1
+        self.horario_entrega_2_desde = horario.desde_2
+        self.horario_entrega_2_hasta = horario.hasta_2
+
+    @property
+    def horario_entrega_texto(self):
+        if not self.horario_entrega_desde or not self.horario_entrega_hasta:
+            return ''
+        texto = f'{self.horario_entrega_desde:%H:%M}–{self.horario_entrega_hasta:%H:%M}'
+        if self.horario_entrega_2_desde and self.horario_entrega_2_hasta:
+            texto += f' / {self.horario_entrega_2_desde:%H:%M}–{self.horario_entrega_2_hasta:%H:%M}'
+        return texto
 
     def cambiar_estado_entrega(
         self,

@@ -309,6 +309,73 @@ class DireccionCliente(models.Model):
         self.es_principal = True
 
 
+class HorarioAtencionCliente(models.Model):
+    """Hasta dos franjas de recepción por cliente y día de la semana."""
+
+    DIAS_SEMANA = (
+        (0, 'Lunes'),
+        (1, 'Martes'),
+        (2, 'Miércoles'),
+        (3, 'Jueves'),
+        (4, 'Viernes'),
+        (5, 'Sábado'),
+        (6, 'Domingo'),
+    )
+
+    cliente = models.ForeignKey(
+        Cliente,
+        related_name='horarios_atencion',
+        on_delete=models.CASCADE,
+    )
+    dia_semana = models.PositiveSmallIntegerField(choices=DIAS_SEMANA)
+    desde_1 = models.TimeField(verbose_name='Desde')
+    hasta_1 = models.TimeField(verbose_name='Hasta')
+    desde_2 = models.TimeField(verbose_name='Segundo horario desde', null=True, blank=True)
+    hasta_2 = models.TimeField(verbose_name='Segundo horario hasta', null=True, blank=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('dia_semana',)
+        verbose_name = 'horario de atención'
+        verbose_name_plural = 'horarios de atención'
+        constraints = [
+            models.UniqueConstraint(
+                fields=('cliente', 'dia_semana'),
+                name='un_horario_por_cliente_y_dia',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errores = {}
+        if self.desde_1 and self.hasta_1 and self.desde_1 >= self.hasta_1:
+            errores['hasta_1'] = 'El cierre debe ser posterior a la apertura.'
+        if bool(self.desde_2) != bool(self.hasta_2):
+            errores['desde_2'] = 'Completá ambos campos del segundo horario.'
+        if self.desde_2 and self.hasta_2:
+            if self.desde_2 >= self.hasta_2:
+                errores['hasta_2'] = 'El segundo cierre debe ser posterior a la apertura.'
+            elif self.hasta_1 and self.desde_2 < self.hasta_1:
+                errores['desde_2'] = 'El segundo horario no puede superponerse con el primero.'
+        if errores:
+            raise ValidationError(errores)
+
+    @property
+    def franjas(self):
+        resultado = [(self.desde_1, self.hasta_1)]
+        if self.desde_2 and self.hasta_2:
+            resultado.append((self.desde_2, self.hasta_2))
+        return resultado
+
+    def __str__(self):
+        if not self.desde_1 or not self.hasta_1:
+            return f'{self.get_dia_semana_display()}: horario incompleto'
+        texto = f'{self.desde_1:%H:%M}–{self.hasta_1:%H:%M}'
+        if self.desde_2 and self.hasta_2:
+            texto += f' / {self.desde_2:%H:%M}–{self.hasta_2:%H:%M}'
+        return f'{self.get_dia_semana_display()}: {texto}'
+
+
 # ---------------------------------------------------------------------------
 # Cuenta corriente
 # ---------------------------------------------------------------------------

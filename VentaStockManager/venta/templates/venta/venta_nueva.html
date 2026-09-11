@@ -134,7 +134,7 @@
         <input type="date"
                x-ref="fechaEntregaInput"
                x-model="fechaEntrega"
-               @change="intentoGuardar = false"
+               @change="intentoGuardar = false; horarioEntrega.confirmado = false; cargarHorarioCliente()"
                required
                :aria-invalid="intentoGuardar && !fechaEntrega"
                :class="intentoGuardar && !fechaEntrega
@@ -224,6 +224,100 @@
         <span x-show="!direccionEntregaConfirmada()">Confirmar dirección</span>
         <span x-show="direccionEntregaConfirmada()">Revisar ubicación</span>
       </button>
+    </div>
+  </div>
+
+  {% comment %}
+  Horario en el que el cliente puede recibir el pedido. Se guarda por
+  día de la semana y se copia al pedido al facturar. El vendedor debe
+  revisarlo y confirmarlo, incluso cuando ya estaba cargado.
+  {% endcomment %}
+  <div x-show="cliente.id && fechaEntrega" x-cloak x-ref="horarioEntregaPanel"
+       :class="horarioEntrega.confirmado
+               ? 'bg-emerald-50 border-emerald-300'
+               : (intentoGuardar ? 'bg-red-50 border-red-400' : 'bg-amber-50 border-amber-300')"
+       class="border-2 rounded-lg p-4 mb-4">
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-2">
+        <div>
+          <div class="font-semibold text-sm"
+               :class="horarioEntrega.confirmado ? 'text-emerald-900' : 'text-amber-900'">
+            <span x-show="horarioEntrega.confirmado">🕐 Horario confirmado</span>
+            <span x-show="!horarioEntrega.confirmado">⚠ Confirmá cuándo puede recibir el pedido</span>
+            <span x-show="horarioEntrega.diaLabel" class="font-normal"
+                  x-text="' · ' + horarioEntrega.diaLabel"></span>
+          </div>
+          <p class="text-xs text-slate-600 mt-1">
+            Podés cargar un horario corrido o dos franjas, por ejemplo 08:00–12:00 y 16:00–20:00.
+          </p>
+          <p class="text-xs font-semibold text-slate-700 mt-1">
+            Formato de 24 horas: 12:00 es el mediodía y 00:00 es la medianoche.
+          </p>
+          <p x-show="!horarioEntrega.cargando && !horarioEntrega.configurado"
+             class="text-xs text-amber-800 mt-1">
+            Este cliente todavía no tenía horario para ese día. Completalo para continuar.
+          </p>
+        </div>
+        <span x-show="horarioEntrega.cargando" class="text-sm text-slate-500">Cargando horario…</span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="rounded-lg border border-slate-300 bg-white p-3">
+          <p class="text-sm font-bold text-slate-800 mb-2">Horario 1 <span class="font-normal text-slate-500">(obligatorio)</span></p>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="text-xs font-medium text-slate-700">
+              Abre desde
+              <input type="time" x-model="horarioEntrega.desde1"
+                     @input="horarioEntrega.confirmado = false; horarioEntrega.error = ''"
+                     class="mt-1 w-full border border-slate-300 rounded px-3 py-2 bg-white">
+            </label>
+            <label class="text-xs font-medium text-slate-700">
+              Atiende hasta
+              <input type="time" x-model="horarioEntrega.hasta1"
+                     @input="horarioEntrega.confirmado = false; horarioEntrega.error = ''"
+                     class="mt-1 w-full border border-slate-300 rounded px-3 py-2 bg-white">
+            </label>
+          </div>
+        </div>
+        <div x-show="horarioEntrega.usarSegunda" x-cloak
+             class="rounded-lg border border-violet-300 bg-violet-50 p-3">
+          <p class="text-sm font-bold text-violet-900 mb-2">Horario 2 <span class="font-normal text-violet-700">(después del corte)</span></p>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="text-xs font-medium text-slate-700">
+              Vuelve a abrir
+              <input type="time" x-model="horarioEntrega.desde2"
+                     @input="horarioEntrega.confirmado = false; horarioEntrega.error = ''"
+                     class="mt-1 w-full border border-slate-300 rounded px-3 py-2 bg-white">
+            </label>
+            <label class="text-xs font-medium text-slate-700">
+              Cierra a las
+              <input type="time" x-model="horarioEntrega.hasta2"
+                     @input="horarioEntrega.confirmado = false; horarioEntrega.error = ''"
+                     class="mt-1 w-full border border-slate-300 rounded px-3 py-2 bg-white">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          <input type="checkbox" x-model="horarioEntrega.usarSegunda"
+                 @change="horarioEntrega.confirmado = false; if (!horarioEntrega.usarSegunda) { horarioEntrega.desde2 = ''; horarioEntrega.hasta2 = ''; }"
+                 class="rounded border-slate-300">
+          Tiene horario cortado
+        </label>
+        <button type="button" @click="confirmarHorarioEntrega()"
+                :disabled="horarioEntrega.cargando"
+                class="px-4 py-2 rounded font-semibold text-sm bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white">
+          ✓ Confirmar horario
+        </button>
+      </div>
+      <p x-show="horarioEntrega.error" x-cloak class="text-sm font-semibold text-red-800"
+         x-text="horarioEntrega.error"></p>
+      <p x-show="intentoGuardar && !horarioEntrega.confirmado" x-cloak
+         class="text-sm font-semibold text-red-800">
+        Confirmá el horario de atención para poder guardar la venta.
+      </p>
     </div>
   </div>
 
@@ -893,6 +987,18 @@
       // fecha de entrega de forma explícita antes de guardar.
       fechaEntrega: '',
       intentoGuardar: false,
+      horarioEntrega: {
+        cargando: false,
+        configurado: false,
+        confirmado: false,
+        diaLabel: '',
+        desde1: '',
+        hasta1: '',
+        usarSegunda: false,
+        desde2: '',
+        hasta2: '',
+        error: '',
+      },
 
       // Modal "Nuevo cliente" — para crear un cliente sin salir de la
       // pantalla de venta. Se selecciona automáticamente al crearlo.
@@ -953,6 +1059,19 @@
           this.cliente.query = data.cliente_label;
           this.vendedorId = String(data.vendedor_id || '');
           this.fechaEntrega = data.fecha_entrega;
+          const horarioInicial = data.horario_entrega || {};
+          this.horarioEntrega.diaLabel = horarioInicial.dia_label || '';
+          this.horarioEntrega.desde1 = horarioInicial.desde_1 || '';
+          this.horarioEntrega.hasta1 = horarioInicial.hasta_1 || '';
+          this.horarioEntrega.desde2 = horarioInicial.desde_2 || '';
+          this.horarioEntrega.hasta2 = horarioInicial.hasta_2 || '';
+          this.horarioEntrega.usarSegunda = Boolean(
+            horarioInicial.desde_2 && horarioInicial.hasta_2
+          );
+          this.horarioEntrega.configurado = Boolean(
+            horarioInicial.desde_1 && horarioInicial.hasta_1
+          );
+          this.horarioEntrega.confirmado = this.horarioEntrega.configurado;
           this.descuentoPorcentaje = Number(data.descuento_porcentaje || 0);
           this.descuentoMotivo = data.descuento_motivo || '';
           this.items = (data.items || []).map(it => ({
@@ -1026,6 +1145,79 @@
         );
       },
 
+      horarioEntregaValido() {
+        return this.errorHorarioEntrega() === '';
+      },
+      errorHorarioEntrega() {
+        const h = this.horarioEntrega;
+        if (!h.desde1 || !h.hasta1) {
+          return 'Completá desde qué hora y hasta qué hora atiende el cliente.';
+        }
+        if (h.desde1 >= h.hasta1) {
+          return `El Horario 1 no es válido: abre a las ${h.desde1} y cierra a las ${h.hasta1}. `
+            + 'La hora de cierre debe ser posterior. Recordá: 12:00 es el mediodía y 00:00 es la medianoche.';
+        }
+        if (!h.usarSegunda) return '';
+        if (!h.desde2 || !h.hasta2) {
+          return 'Completá las dos horas del Horario 2 o desmarcá “Tiene horario cortado”.';
+        }
+        if (h.desde2 >= h.hasta2) {
+          return `El Horario 2 no es válido: vuelve a abrir a las ${h.desde2} y cierra a las ${h.hasta2}.`;
+        }
+        if (h.desde2 < h.hasta1) {
+          return `Los horarios se superponen: el primero termina a las ${h.hasta1} `
+            + `y el segundo empieza a las ${h.desde2}.`;
+        }
+        return '';
+      },
+      async cargarHorarioCliente() {
+        const clienteId = this.cliente.id;
+        const fecha = this.fechaEntrega;
+        this.horarioEntrega.confirmado = false;
+        this.horarioEntrega.error = '';
+        if (!clienteId || !fecha) {
+          this.horarioEntrega.configurado = false;
+          this.horarioEntrega.diaLabel = '';
+          this.horarioEntrega.desde1 = '';
+          this.horarioEntrega.hasta1 = '';
+          this.horarioEntrega.usarSegunda = false;
+          this.horarioEntrega.desde2 = '';
+          this.horarioEntrega.hasta2 = '';
+          return;
+        }
+        this.horarioEntrega.cargando = true;
+        try {
+          const params = new URLSearchParams({fecha});
+          const r = await fetch(`/venta/api/clientes/${clienteId}/horario/?${params}`, {
+            credentials: 'same-origin',
+          });
+          const data = await r.json();
+          if (!r.ok || !data.ok) throw new Error(data.error || 'No se pudo cargar el horario.');
+          if (this.cliente.id !== clienteId || this.fechaEntrega !== fecha) return;
+          this.horarioEntrega.configurado = Boolean(data.configurado);
+          this.horarioEntrega.diaLabel = data.dia_label || '';
+          this.horarioEntrega.desde1 = data.desde_1 || '';
+          this.horarioEntrega.hasta1 = data.hasta_1 || '';
+          this.horarioEntrega.desde2 = data.desde_2 || '';
+          this.horarioEntrega.hasta2 = data.hasta_2 || '';
+          this.horarioEntrega.usarSegunda = Boolean(data.desde_2 && data.hasta_2);
+        } catch (error) {
+          this.horarioEntrega.error = error.message || 'No se pudo cargar el horario.';
+        } finally {
+          this.horarioEntrega.cargando = false;
+        }
+      },
+      confirmarHorarioEntrega() {
+        const error = this.errorHorarioEntrega();
+        if (error) {
+          this.horarioEntrega.confirmado = false;
+          this.horarioEntrega.error = error;
+          return;
+        }
+        this.horarioEntrega.error = '';
+        this.horarioEntrega.confirmado = true;
+      },
+
       // Las funciones del modal (abrirModal, confirmarModal,
       // cancelarModal) vienen del spread `...modalState()` arriba.
       // Definirlas en partials/_modal_alpine.html.
@@ -1088,6 +1280,7 @@
         // Refrescamos saldo + listas_activas en un solo fetch al
         // endpoint /saldo/. Más simple que dos requests.
         this.refrescarSaldoCliente();
+        this.cargarHorarioCliente();
       },
       limpiarCliente() {
         this.cliente.id = null;
@@ -1096,6 +1289,7 @@
         this.cliente.saldo = '0';
         this.cliente.direccion_principal = null;
         this.cliente.results = [];
+        this.cargarHorarioCliente();
         this.aplicarSaldo = false;
         this.saldoAAplicar = 0;
       },
@@ -1913,11 +2107,16 @@
         if (this.cliente.id && !direccionConfirmada) {
           this.errores.push('Confirmá la dirección para poder guardar la venta.');
         }
+        if (this.cliente.id && this.fechaEntrega && !this.horarioEntrega.confirmado) {
+          this.errores.push('Confirmá el horario de atención para poder guardar la venta.');
+        }
         if (this.errores.length) {
           this.$nextTick(() => {
-            const destino = !direccionConfirmada && this.cliente.id
-              ? this.$refs.direccionEntregaPanel
-              : this.$refs.fechaEntregaInput;
+            const destino = !this.fechaEntrega
+              ? this.$refs.fechaEntregaInput
+              : (!direccionConfirmada && this.cliente.id
+                ? this.$refs.direccionEntregaPanel
+                : this.$refs.horarioEntregaPanel);
             destino?.scrollIntoView({
               behavior: 'smooth',
               block: 'center',
@@ -1949,6 +2148,11 @@
             direccion_id: this.cliente.direccion_principal?.id || null,
             vendedor_id: this.vendedorId ? Number(this.vendedorId) : null,
             fecha_entrega: this.fechaEntrega,
+            horario_confirmado: this.horarioEntrega.confirmado,
+            horario_desde: this.horarioEntrega.desde1,
+            horario_hasta: this.horarioEntrega.hasta1,
+            horario_2_desde: this.horarioEntrega.usarSegunda ? this.horarioEntrega.desde2 : '',
+            horario_2_hasta: this.horarioEntrega.usarSegunda ? this.horarioEntrega.hasta2 : '',
             descuento_porcentaje: String(this.descuentoPorcentaje || 0),
             descuento_motivo: this.descuentoMotivo || '',
             // Cobro y cuenta corriente. Solo tienen efecto en creates;

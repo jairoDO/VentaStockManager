@@ -742,6 +742,10 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
         'direccion_confirmada', 'direccion_entrega_texto',
         'localidad_entrega', 'provincia_entrega', 'referencia_entrega',
         'latitud_entrega', 'longitud_entrega', 'entregado_en',
+        'horario_atencion', 'horario_entrega_desde', 'horario_entrega_hasta',
+        'horario_entrega_2_desde', 'horario_entrega_2_hasta',
+        'monto_efectivo_entrega', 'monto_transferencia_entrega',
+        'monto_cuenta_corriente_entrega', 'cobro_entrega_registrado_en',
         'motivo_no_entrega', 'observacion_entrega',
     )
 
@@ -756,6 +760,11 @@ class PedidoAdmin(StaffFullAccessAdminMixin, admin.ModelAdmin):
                 ('localidad_entrega', 'provincia_entrega'),
                 ('latitud_entrega', 'longitud_entrega'),
                 'referencia_entrega',
+                'horario_atencion',
+                ('horario_entrega_desde', 'horario_entrega_hasta'),
+                ('horario_entrega_2_desde', 'horario_entrega_2_hasta'),
+                ('monto_efectivo_entrega', 'monto_transferencia_entrega'),
+                ('monto_cuenta_corriente_entrega', 'cobro_entrega_registrado_en'),
                 ('motivo_no_entrega', 'observacion_entrega'),
             ),
         }),

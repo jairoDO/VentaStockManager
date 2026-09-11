@@ -207,14 +207,26 @@ def _fila_pedido(pedido, cfg_flags, estilos):
         marca = '✔ Pagado' if pedido.pagado else '● Pendiente'
         fila.append(Paragraph(marca, body))
     if cfg_flags['formas_pago']:
-        # 3 casillas vacías tildables a mano. Usamos "[ ]" en vez de
-        # unicode ☐ porque Helvetica (fuente default de reportlab) es
-        # WinAnsi-only y renderiza los codepoints > 255 como cajitas
-        # negras — inaceptable. [ ] siempre funciona.
-        fila.append(Paragraph(
-            '[ ] Transf.<br/>[ ] Efec.<br/>[ ] Cta. cte.',
-            body,
-        ))
+        if pedido.cobro_entrega_registrado_en:
+            formas = []
+            if pedido.monto_efectivo_entrega:
+                formas.append(f'Efectivo ${pedido.monto_efectivo_entrega:,.2f}')
+            if pedido.monto_transferencia_entrega:
+                formas.append(
+                    f'Transf. ${pedido.monto_transferencia_entrega:,.2f}'
+                )
+            if pedido.monto_cuenta_corriente_entrega:
+                formas.append(
+                    f'Cta. cte. ${pedido.monto_cuenta_corriente_entrega:,.2f}'
+                )
+            fila.append(Paragraph('<br/>'.join(formas) or 'Sin importe', body))
+        else:
+            # Para pedidos todavía no entregados conservamos las casillas
+            # que se completan a mano en el reparto.
+            fila.append(Paragraph(
+                '[ ] Transf.<br/>[ ] Efec.<br/>[ ] Cta. cte.',
+                body,
+            ))
     return fila
 
 

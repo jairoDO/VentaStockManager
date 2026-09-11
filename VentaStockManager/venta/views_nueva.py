@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 from urllib.error import HTTPError, URLError
@@ -43,6 +43,7 @@ from cliente.models import (
     Cliente,
     CuentaCliente,
     DireccionCliente,
+    HorarioAtencionCliente,
     MovimientoCuenta,
     PrecioCliente,
 )
@@ -56,6 +57,73 @@ ZONA_HORARIA_OPERATIVA = ZoneInfo('America/Argentina/Cordoba')
 def _fecha_hoy_operativa():
     """Fecha comercial actual, independiente de que el servidor use UTC."""
     return datetime.now(ZONA_HORARIA_OPERATIVA).date()
+
+
+def _hora_desde_payload(valor, *, campo, errores, obligatoria=False):
+    """Normaliza un input HTML time y agrega un error entendible si falla."""
+    texto = str(valor or '').strip()
+    if not texto:
+        if obligatoria:
+            errores.append(f'{campo}: completá el horario.')
+        return None
+    try:
+        return time.fromisoformat(texto)
+    except (TypeError, ValueError):
+        errores.append(f'{campo}: el horario no es válido.')
+        return None
+
+
+def _horario_desde_payload(payload, errores):
+    campos_horario = {
+        'horario_confirmado', 'horario_desde', 'horario_hasta',
+        'horario_2_desde', 'horario_2_hasta',
+    }
+    if not campos_horario.intersection(payload):
+        errores.append(
+            'Este formulario quedó desactualizado. Recargá la página para '
+            'ver y confirmar el horario de atención.'
+        )
+        return {
+            'desde_1': None,
+            'hasta_1': None,
+            'desde_2': None,
+            'hasta_2': None,
+        }
+
+    if not bool(payload.get('horario_confirmado')):
+        errores.append('Confirmá el horario de atención para poder guardar la venta.')
+
+    desde_1 = _hora_desde_payload(
+        payload.get('horario_desde'), campo='Horario desde', errores=errores,
+        obligatoria=True,
+    )
+    hasta_1 = _hora_desde_payload(
+        payload.get('horario_hasta'), campo='Horario hasta', errores=errores,
+        obligatoria=True,
+    )
+    desde_2 = _hora_desde_payload(
+        payload.get('horario_2_desde'), campo='Segundo horario desde', errores=errores,
+    )
+    hasta_2 = _hora_desde_payload(
+        payload.get('horario_2_hasta'), campo='Segundo horario hasta', errores=errores,
+    )
+
+    if desde_1 and hasta_1 and desde_1 >= hasta_1:
+        errores.append('El cierre del primer horario debe ser posterior a la apertura.')
+    if bool(desde_2) != bool(hasta_2):
+        errores.append('Completá ambos campos del segundo horario o dejalos vacíos.')
+    if desde_2 and hasta_2:
+        if desde_2 >= hasta_2:
+            errores.append('El cierre del segundo horario debe ser posterior a la apertura.')
+        elif hasta_1 and desde_2 < hasta_1:
+            errores.append('El segundo horario no puede superponerse con el primero.')
+
+    return {
+        'desde_1': desde_1,
+        'hasta_1': hasta_1,
+        'desde_2': desde_2,
+        'hasta_2': hasta_2,
+    }
 
 
 def api_login_required(view_func):
@@ -744,6 +812,37 @@ def api_cliente_saldo(request, cliente_id):
     })
 
 
+@login_required
+@require_GET
+def api_cliente_horario(request, cliente_id):
+    """Devuelve las franjas guardadas para el día de la entrega elegida."""
+    cliente = get_object_or_404(Cliente, pk=cliente_id)
+    fecha_raw = (request.GET.get('fecha') or '').strip()
+    try:
+        fecha_entrega = date.fromisoformat(fecha_raw)
+    except (TypeError, ValueError):
+        return JsonResponse(
+            {'ok': False, 'error': 'Elegí una fecha de entrega válida.'},
+            status=400,
+        )
+
+    dia_semana = fecha_entrega.weekday()
+    horario = HorarioAtencionCliente.objects.filter(
+        cliente=cliente,
+        dia_semana=dia_semana,
+    ).first()
+    return JsonResponse({
+        'ok': True,
+        'configurado': horario is not None,
+        'dia_semana': dia_semana,
+        'dia_label': dict(HorarioAtencionCliente.DIAS_SEMANA)[dia_semana],
+        'desde_1': horario.desde_1.strftime('%H:%M') if horario else '',
+        'hasta_1': horario.hasta_1.strftime('%H:%M') if horario else '',
+        'desde_2': horario.desde_2.strftime('%H:%M') if horario and horario.desde_2 else '',
+        'hasta_2': horario.hasta_2.strftime('%H:%M') if horario and horario.hasta_2 else '',
+    })
+
+
 @api_login_required
 @require_GET
 def api_direccion_geocodificar(request):
@@ -997,6 +1096,7 @@ def api_venta_guardar(request):
     vendedor_id = payload.get('vendedor_id') or _vendedor_for_user(request.user)
     fecha_entrega = payload.get('fecha_entrega')
     items = payload.get('items') or []
+    horario_entrega = _horario_desde_payload(payload, errores)
 
     descuento_pct = _decimal_or_400(
         payload.get('descuento_porcentaje'),
@@ -1187,6 +1287,22 @@ def api_venta_guardar(request):
                 cliente_anterior_id = cliente.id
 
             pedido = venta.pedido
+            horario_cliente, _ = HorarioAtencionCliente.objects.update_or_create(
+                cliente=cliente,
+                dia_semana=fecha_entrega_validada.weekday(),
+                defaults={
+                    'desde_1': horario_entrega['desde_1'],
+                    'hasta_1': horario_entrega['hasta_1'],
+                    'desde_2': horario_entrega['desde_2'],
+                    'hasta_2': horario_entrega['hasta_2'],
+                },
+            )
+            pedido.aplicar_horario(horario_cliente)
+            pedido.save(update_fields=[
+                'horario_atencion',
+                'horario_entrega_desde', 'horario_entrega_hasta',
+                'horario_entrega_2_desde', 'horario_entrega_2_hasta',
+            ])
             if direccion:
                 pedido.aplicar_direccion(direccion)
                 pedido.save(update_fields=[
@@ -1578,7 +1694,7 @@ def venta_editar(request, id):
     AJAX) para que el operador no vea un flash vacío al cargar.
     """
     venta = get_object_or_404(
-        Venta.objects.select_related('cliente', 'vendedor'),
+        Venta.objects.select_related('cliente', 'vendedor', 'pedido'),
         pk=id,
     )
     items = []
@@ -1614,6 +1730,13 @@ def venta_editar(request, id):
         'cliente_label': venta.cliente.nombre_completo() if venta.cliente else '',
         'vendedor_id': venta.vendedor_id,
         'fecha_entrega': str(venta.fecha_entrega),
+        'horario_entrega': {
+            'dia_label': dict(HorarioAtencionCliente.DIAS_SEMANA)[venta.fecha_entrega.weekday()],
+            'desde_1': venta.pedido.horario_entrega_desde.strftime('%H:%M') if venta.pedido.horario_entrega_desde else '',
+            'hasta_1': venta.pedido.horario_entrega_hasta.strftime('%H:%M') if venta.pedido.horario_entrega_hasta else '',
+            'desde_2': venta.pedido.horario_entrega_2_desde.strftime('%H:%M') if venta.pedido.horario_entrega_2_desde else '',
+            'hasta_2': venta.pedido.horario_entrega_2_hasta.strftime('%H:%M') if venta.pedido.horario_entrega_2_hasta else '',
+        },
         'descuento_porcentaje': str(getattr(venta, 'descuento_porcentaje', 0) or 0),
         'descuento_motivo': getattr(venta, 'descuento_motivo', '') or '',
         'items': items,
