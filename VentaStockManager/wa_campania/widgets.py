@@ -287,5 +287,5 @@ class AudienciaFiltroWidget(forms.Widget):
             'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
             'https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js',
             'https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js',
-                '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260915b',
+                '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260915c',
         )

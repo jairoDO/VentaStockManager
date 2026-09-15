@@ -81,6 +81,44 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
             continue
     campania_origen_id = request.GET.get('campania')
     barrio = (request.GET.get('barrio') or '').strip()
+    dia_visita = request.GET.get('dia_visita')
+    dia_visita_valido = (
+        dia_visita is not None
+        and str(dia_visita).isdigit()
+        and 0 <= int(dia_visita) <= 6
+    )
+
+    # Diagnóstico de ruta antes de aplicar consentimiento y número. Sirve
+    # para explicar por qué una ruta con clientes puede producir audiencia 0.
+    clientes_ruta = Cliente.objects.all()
+    if vendedor_ids:
+        if dia_visita_valido:
+            clientes_ruta = clientes_ruta.filter(
+                ruta_semanal__vendedor_id__in=vendedor_ids,
+            )
+        else:
+            clientes_ruta = clientes_ruta.filter(
+                vendedor_asignado_id__in=vendedor_ids,
+            )
+    if dia_visita_valido:
+        clientes_ruta = clientes_ruta.filter(
+            ruta_semanal__dia_semana=int(dia_visita),
+        )
+    hay_filtro_ruta = bool(vendedor_ids) or dia_visita_valido
+    ruta_clientes_total = (
+        clientes_ruta.order_by().values('pk').distinct().count()
+        if hay_filtro_ruta else None
+    )
+    ruta_sin_consentimiento = (
+        clientes_ruta.filter(puede_recibir_whatsapp=False)
+        .order_by().values('pk').distinct().count()
+        if hay_filtro_ruta else 0
+    )
+    ruta_sin_whatsapp = (
+        clientes_ruta.filter(whatsapp_number='')
+        .order_by().values('pk').distinct().count()
+        if hay_filtro_ruta else 0
+    )
 
     # WhatsApp no entrega de forma visible mensajes enviados a la misma
     # cuenta que está vinculada al bot. Evitamos ofrecerla como destinataria
@@ -105,12 +143,6 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
     todos = request.GET.get('todos') == '1'
     filtros_aplicados = todos
     if not todos:
-        dia_visita = request.GET.get('dia_visita')
-        dia_visita_valido = (
-            dia_visita is not None
-            and str(dia_visita).isdigit()
-            and 0 <= int(dia_visita) <= 6
-        )
         if vendedor_ids:
             if dia_visita_valido:
                 qs = qs.filter(ruta_semanal__vendedor_id__in=vendedor_ids)
@@ -245,6 +277,9 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
         'audiencia_activa': filtros_aplicados,
         'audiencia_total': audiencia_total,
         'audiencia_total_final': audiencia_total_final,
+        'ruta_clientes_total': ruta_clientes_total,
+        'ruta_sin_consentimiento': ruta_sin_consentimiento,
+        'ruta_sin_whatsapp': ruta_sin_whatsapp,
         'excluidos_aplicables': excluidos_aplicables,
         'recomendacion_diaria': recomendacion_diaria,
         'radio_sugerido_km': radio_sugerido_km,

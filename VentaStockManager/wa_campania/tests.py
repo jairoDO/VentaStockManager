@@ -21,7 +21,13 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from cliente.models import Cliente, CuentaCliente, DireccionCliente, MovimientoCuenta
+from cliente.models import (
+    Cliente,
+    CuentaCliente,
+    DireccionCliente,
+    MovimientoCuenta,
+    RutaSemanalCliente,
+)
 from vendedor.models import Vendedor
 from venta.models import Venta
 from wa_campania.audiencia import resolver_clientes
@@ -294,6 +300,31 @@ class ClientesCampaniaApiTests(TestCase):
 
         response = self.client.get('/wa-campania/api/clientes/', {'q': 'Sin permiso'})
         self.assertEqual(response.json()['total'], 0)
+
+    @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
+    def test_ruta_informa_clientes_excluidos_por_whatsapp(self, mock_status):
+        usuario = User.objects.create_user('pedro_api')
+        vendedor = Vendedor.objects.create(
+            usuario=usuario, nombre='Pedro', apellido='Ruta',
+        )
+        habilitado = Cliente.objects.get(nombre='Cliente 00')
+        sin_permiso = Cliente.objects.get(nombre='Sin permiso')
+        RutaSemanalCliente.objects.create(
+            cliente=habilitado, vendedor=vendedor, dia_semana=1,
+        )
+        RutaSemanalCliente.objects.create(
+            cliente=sin_permiso, vendedor=vendedor, dia_semana=1,
+        )
+
+        data = self.client.get('/wa-campania/api/clientes/', {
+            'vendedor': vendedor.id,
+            'dia_visita': 1,
+        }).json()
+
+        self.assertEqual(data['ruta_clientes_total'], 2)
+        self.assertEqual(data['audiencia_total_final'], 1)
+        self.assertEqual(data['ruta_sin_consentimiento'], 1)
+        self.assertEqual(data['ruta_sin_whatsapp'], 0)
 
     @mock.patch('wa_campania.views.wa_client.get_status_detail', return_value={})
     def test_busqueda_no_cambia_total_definitivo_de_la_audiencia(self, mock_status):

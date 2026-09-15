@@ -72,8 +72,13 @@
     cbWhatsappValido.checked = state.solo_con_whatsapp_valido !== false;
     inputBarrio.value = state.barrio || '';
     const selectedVendedores = new Set((state.vendedor_ids || []).map(Number));
-    selDiaVisita.value = state.dia_visita === null || state.dia_visita === undefined
-      ? '' : String(state.dia_visita);
+    const isNewAudience = Object.keys(state).length === 0;
+    // JavaScript usa domingo=0; el modelo usa lunes=0.
+    const todayWeekday = (new Date().getDay() + 6) % 7;
+    selDiaVisita.value = isNewAudience
+      ? String(todayWeekday)
+      : (state.dia_visita === null || state.dia_visita === undefined
+        ? '' : String(state.dia_visita));
     let selectedCampaniaOrigen = state.campania_origen_id ? Number(state.campania_origen_id) : null;
     const selectedIds = new Set((state.clientes_ids || []).map(Number));
     const legacyExactMode = selectedIds.size > 0;
@@ -152,9 +157,21 @@
         ? total + (total === 1 ? ' cliente' : ' clientes')
         : 'Elegí un filtro';
       if (!active) {
-        audienceDetail.textContent = 'Elegí vendedor, zona, actividad, saldo o “todos” para formar la audiencia.';
+        audienceDetail.textContent = 'Elegí vendedor, día, zona, actividad, saldo o “todos” para formar la audiencia.';
       } else {
         const detail = [];
+        const routeTotal = Number(data.ruta_clientes_total);
+        if (Number.isFinite(routeTotal) && routeTotal > total) {
+          detail.push(routeTotal + ' asignados a la ruta, ' + total + ' habilitados para WhatsApp');
+          const reasons = [];
+          if (Number(data.ruta_sin_consentimiento || 0)) {
+            reasons.push(data.ruta_sin_consentimiento + ' sin consentimiento');
+          }
+          if (Number(data.ruta_sin_whatsapp || 0)) {
+            reasons.push(data.ruta_sin_whatsapp + ' sin número');
+          }
+          if (reasons.length) detail.push(reasons.join(' · '));
+        }
         if (Number(data.excluidos_aplicables || 0)) detail.push(data.excluidos_aplicables + ' excluidos');
         if (Number(data.clientes_sin_coordenadas || 0) && data.zona) {
           detail.push(data.clientes_sin_coordenadas + ' sin ubicación fuera del cálculo del radio');
