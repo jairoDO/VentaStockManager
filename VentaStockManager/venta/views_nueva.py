@@ -167,9 +167,18 @@ def _vendedor_for_user(user):
     return vendedor.id if vendedor else None
 
 
+def _puede_facturar_cualquier_cliente(user):
+    """Permiso operativo especial del usuario del mostrador/galpón."""
+    if not user or not user.is_authenticated:
+        return False
+    return (user.username or '').strip().lower() == 'galpon'
+
+
 def _clientes_de_la_cartera(user, queryset=None):
     """Limita la búsqueda de Nueva venta a la cartera del usuario actual."""
     queryset = queryset if queryset is not None else Cliente.objects.all()
+    if _puede_facturar_cualquier_cliente(user):
+        return queryset
     vendedor_id = _vendedor_for_user(user)
     if not vendedor_id:
         return queryset.none()
@@ -664,11 +673,12 @@ def api_clientes_buscar(request):
     )
     clientes = list(qs)
     buscando_fuera_cartera = False
+    acceso_todos_los_clientes = _puede_facturar_cualquier_cliente(request.user)
 
     # Segunda oportunidad: si no hubo coincidencias en la cartera propia,
     # ofrecemos clientes fuera de la cartera. La reasignación nunca ocurre
     # al seleccionarlos: requiere pulsar explícitamente "Asignarme".
-    if not clientes:
+    if not clientes and not acceso_todos_los_clientes:
         buscando_fuera_cartera = True
         vendedor_id = _vendedor_for_user(request.user)
         clientes = list(
@@ -698,6 +708,7 @@ def api_clientes_buscar(request):
     return JsonResponse({
         'results': results,
         'buscando_fuera_cartera': buscando_fuera_cartera,
+        'acceso_todos_los_clientes': acceso_todos_los_clientes,
     })
 
 
@@ -1166,8 +1177,11 @@ def api_venta_guardar(request):
         elif not venta_id:
             vendedor_actual_id = _vendedor_for_user(request.user)
             if (
-                not vendedor_actual_id
-                or cliente.vendedor_asignado_id != vendedor_actual_id
+                not _puede_facturar_cualquier_cliente(request.user)
+                and (
+                    not vendedor_actual_id
+                    or cliente.vendedor_asignado_id != vendedor_actual_id
+                )
             ):
                 errores.append('El cliente no pertenece a tu cartera de vendedor.')
             if not (cliente.whatsapp_number or '').strip():

@@ -63,6 +63,26 @@ class CarteraClienteTests(TestCase):
             [self.cliente_osvaldo.pk],
         )
 
+    def test_galpon_puede_elegir_cliente_de_cualquier_vendedor_sin_reasignarlo(self):
+        User = get_user_model()
+        user_galpon = User.objects.create_user(
+            'galpon', password='x', is_staff=True,
+        )
+        Vendedor.objects.create(
+            usuario=user_galpon, nombre='Usuario', apellido='Galpón',
+        )
+        request = self.factory.get('/venta/api/clientes/buscar/', {'q': 'Otro'})
+        request.user = user_galpon
+
+        payload = json.loads(api_clientes_buscar(request).content)
+
+        self.assertTrue(payload['acceso_todos_los_clientes'])
+        self.assertFalse(payload['buscando_fuera_cartera'])
+        self.assertEqual(payload['results'][0]['id'], self.cliente_otro.pk)
+        self.assertFalse(payload['results'][0]['requiere_asignacion'])
+        self.cliente_otro.refresh_from_db()
+        self.assertEqual(self.cliente_otro.vendedor_asignado, self.otro)
+
     def test_si_no_hay_resultado_propio_busca_clientes_sin_asignar(self):
         libre = Cliente.objects.create(nombre='Micaela', apellido='Libre')
         request = self.factory.get('/venta/api/clientes/buscar/', {'q': 'Micaela'})
