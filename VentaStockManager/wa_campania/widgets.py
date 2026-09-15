@@ -18,6 +18,7 @@ Esquema del JSON que mantenemos (NO cambia, así
     "con_saldo_a_favor": bool,
     "con_saldo_deudor": bool,
     "vendedor_ids": list[int],
+    "dia_visita": int | None,
     "campania_origen_id": int | None,
     "barrio": str,
     "centro_latitud": float | None,
@@ -121,6 +122,20 @@ class AudienciaFiltroWidget(forms.Widget):
                   <option disabled>Cargando vendedores…</option>
                 </select>
                 <div style="font-size:11px; color:#64748b; margin-top:3px;">Podés elegir uno o varios vendedores.</div>
+              </div>
+
+              <div>
+                <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:4px;">
+                  Día habitual de visita
+                </label>
+                <select class="af-dia-visita browser-default" style="display:block; width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; background:white;">
+                  <option value="">Cualquier día</option>
+                  <option value="0">Lunes</option><option value="1">Martes</option>
+                  <option value="2">Miércoles</option><option value="3">Jueves</option>
+                  <option value="4">Viernes</option><option value="5">Sábado</option>
+                  <option value="6">Domingo</option>
+                </select>
+                <div style="font-size:11px; color:#64748b; margin-top:3px;">Combinado con vendedor permite enviar la campaña a su recorrido de ese día.</div>
               </div>
 
               <div class="af-zona-mapa" style="padding:12px; background:white; border:1px solid #cbd5e1; border-radius:6px;">
@@ -264,5 +279,5 @@ class AudienciaFiltroWidget(forms.Widget):
             'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
             'https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js',
             'https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js',
-            '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260911d',
+            '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260915a',
         )

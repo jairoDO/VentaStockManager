@@ -105,8 +105,20 @@ def api_clientes_campania(request: HttpRequest) -> JsonResponse:
     todos = request.GET.get('todos') == '1'
     filtros_aplicados = todos
     if not todos:
+        dia_visita = request.GET.get('dia_visita')
+        dia_visita_valido = (
+            dia_visita is not None
+            and str(dia_visita).isdigit()
+            and 0 <= int(dia_visita) <= 6
+        )
         if vendedor_ids:
-            qs = qs.filter(vendedor_asignado_id__in=vendedor_ids)
+            if dia_visita_valido:
+                qs = qs.filter(ruta_semanal__vendedor_id__in=vendedor_ids)
+            else:
+                qs = qs.filter(vendedor_asignado_id__in=vendedor_ids)
+            filtros_aplicados = True
+        if dia_visita_valido:
+            qs = qs.filter(ruta_semanal__dia_semana=int(dia_visita))
             filtros_aplicados = True
         if campania_origen_id and str(campania_origen_id).isdigit():
             qs = qs.filter(envios_whatsapp__campania_id=int(campania_origen_id))

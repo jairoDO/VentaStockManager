@@ -213,6 +213,47 @@ class CarteraCliente(Cliente):
         verbose_name_plural = 'Asignar clientes a vendedores'
 
 
+class RutaSemanalCliente(models.Model):
+    """Día habitual en que un vendedor visita a un cliente."""
+
+    DIAS = [
+        (0, 'Lunes'),
+        (1, 'Martes'),
+        (2, 'Miércoles'),
+        (3, 'Jueves'),
+        (4, 'Viernes'),
+        (5, 'Sábado'),
+        (6, 'Domingo'),
+    ]
+
+    cliente = models.OneToOneField(
+        Cliente, related_name='ruta_semanal', on_delete=models.CASCADE,
+    )
+    vendedor = models.ForeignKey(
+        'vendedor.Vendedor', related_name='rutas_semanales', on_delete=models.CASCADE,
+    )
+    dia_semana = models.PositiveSmallIntegerField(choices=DIAS)
+    sugerida = models.BooleanField(
+        default=True,
+        help_text='Fue estimada desde las ventas y todavía puede revisarse.',
+    )
+    confianza = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        help_text='Porcentaje de las compras recientes que coincidieron con este día.',
+    )
+    ventas_analizadas = models.PositiveIntegerField(default=0)
+    actualizada_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Ruta semanal de clientes'
+        verbose_name_plural = 'Rutas semanales de clientes'
+        ordering = ('vendedor_id', 'dia_semana', 'cliente__nombre')
+        indexes = [models.Index(fields=('vendedor', 'dia_semana'))]
+
+    def __str__(self):
+        return f'{self.get_dia_semana_display()} · {self.cliente.nombre_completo()}'
+
+
 class DireccionCliente(models.Model):
     """
     Domicilio reutilizable y geolocalizable de un cliente.

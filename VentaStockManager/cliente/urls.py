@@ -8,9 +8,11 @@ from .views import (
 )
 from .views_movimientos import registrar_movimiento, crear_cuenta_cliente
 from .views_cartera import gestionar_cartera_clientes
+from .views_rutas import gestionar_rutas_semanales
 
 urlpatterns = [
     path('cartera/', gestionar_cartera_clientes, name='cliente_cartera'),
+    path('rutas-semanales/', gestionar_rutas_semanales, name='cliente_rutas_semanales'),
     path('mostrar_todos_los_clientes/', mostrar_todos_los_clientes, name='clientes'),
     path('procesar_nuevo_cliente/', procesar_nuevo_cliente, name='procesar_cliente'),
     path('mis-articulos/', ListaArticulosView.as_view(), name='mis_articulos'),

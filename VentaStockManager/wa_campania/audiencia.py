@@ -81,11 +81,25 @@ def resolver_clientes(filtro: dict) -> QuerySet[Cliente]:
                 vendedor_ids.append(int(vendedor_id))
             except (TypeError, ValueError):
                 continue
+        dia_visita = f.get('dia_visita')
+        try:
+            dia_visita = int(dia_visita) if dia_visita not in (None, '') else None
+        except (TypeError, ValueError):
+            dia_visita = None
+        dia_visita_valido = dia_visita is not None and 0 <= dia_visita <= 6
+
         if vendedor_ids:
             # La cartera confirmada es la fuente de verdad. No usamos
             # cualquier venta histórica porque un cliente puede haber sido
             # atendido antes por otro vendedor y luego reasignado.
-            qs = qs.filter(vendedor_asignado_id__in=vendedor_ids)
+            if dia_visita_valido:
+                qs = qs.filter(ruta_semanal__vendedor_id__in=vendedor_ids)
+            else:
+                qs = qs.filter(vendedor_asignado_id__in=vendedor_ids)
+            condiciones_aplicadas = True
+
+        if dia_visita_valido:
+            qs = qs.filter(ruta_semanal__dia_semana=dia_visita)
             condiciones_aplicadas = True
 
         barrio = str(f.get('barrio') or '').strip()

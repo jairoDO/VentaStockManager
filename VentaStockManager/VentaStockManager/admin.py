@@ -40,14 +40,14 @@ from venta.admin import VentaAdmin, PedidoAdmin, AlertaStockAdmin
 from articulo.admin import ArticuloAdmin
 from cliente.admin import (
     ClienteAdmin, CuentaClienteAdmin, MovimientoCuentaAdmin, PrecioClienteAdmin,
-    AlertaClienteInactivoAdmin, CarteraClienteAdmin,
+    AlertaClienteInactivoAdmin, CarteraClienteAdmin, RutaSemanalClienteAdmin,
 )
 from compra.admin import ProvedorAdmin, CompraAdmin
 from venta.models import Venta, Pedido, AlertaStock
 from articulo.models import Articulo
 from cliente.models import (
     CarteraCliente, Cliente, CuentaCliente, MovimientoCuenta, PrecioCliente,
-    AlertaClienteInactivo,
+    AlertaClienteInactivo, RutaSemanalCliente,
 )
 from compra.models import Proveedor, Compra
 from django.apps import apps
@@ -451,6 +451,7 @@ admin_site.register(SolicitudListaCliente, SolicitudListaClienteAdmin)
 admin_site.register(ListaPrecios, ListaPreciosAdmin)
 admin_site.register(Cliente, ClienteAdmin)
 admin_site.register(CarteraCliente, CarteraClienteAdmin)
+admin_site.register(RutaSemanalCliente, RutaSemanalClienteAdmin)
 admin_site.register(Proveedor, ProvedorAdmin)
 admin_site.register(Compra, CompraAdmin)
 admin_site.register(FacturaConfiguration, FacturaConfigurationAdmin)

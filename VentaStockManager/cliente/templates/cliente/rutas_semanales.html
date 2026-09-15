@@ -1,0 +1,78 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<style>
+  .rutas-wrap { max-width: 1280px; margin: 0 auto; color: #1e293b; }
+  .rutas-card { background:#fff; border:1px solid #dbe3ec; border-radius:10px; padding:16px; margin-bottom:16px; }
+  .rutas-primary { border-top:4px solid #2563eb; }
+  .rutas-filtros { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; align-items:end; }
+  .rutas-filtros label { display:block; font-size:12px; font-weight:700; margin-bottom:4px; }
+  .rutas-filtros select,.rutas-filtros input[type="search"] { display:block; box-sizing:border-box; width:100%; height:42px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; padding:0 10px; }
+  .rutas-wrap input[type="checkbox"] { position:static !important; opacity:1 !important; pointer-events:auto !important; width:18px; height:18px; margin:0 5px 0 0; accent-color:#2563eb; }
+  .rutas-btn { border:0; border-radius:6px; padding:10px 14px; background:#2563eb; color:#fff; font-weight:700; cursor:pointer; }
+  .rutas-btn.sec { background:#475569; }
+  .rutas-tabla { width:100%; border-collapse:collapse; }
+  .rutas-tabla th,.rutas-tabla td { padding:9px 8px; border-bottom:1px solid #e2e8f0; text-align:left; }
+  .rutas-tag { display:inline-block; padding:3px 8px; border-radius:12px; background:#e0f2fe; color:#075985; font-size:11px; }
+  .rutas-resumen { overflow:auto; }
+  .rutas-resumen td { min-width:120px; vertical-align:top; }
+  .resultado-cabecera { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+  .resultado-cabecera h2 { margin:0; font-size:22px; }
+  .rutas-acciones { padding:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:12px; }
+  details.rutas-card summary { cursor:pointer; font-weight:700; }
+  .muted { color:#64748b; font-size:12px; }
+  @media(max-width:700px){ .rutas-tabla{font-size:12px}.rutas-card{padding:10px} }
+</style>
+
+<div class="rutas-wrap">
+  <h1>Rutas semanales de clientes</h1>
+  <p>Elegí un vendedor y un día para ver y organizar sus clientes.</p>
+
+  {% if messages %}{% for message in messages %}<div class="rutas-card">{{ message }}</div>{% endfor %}{% endif %}
+
+  <form method="get" class="rutas-card rutas-primary rutas-filtros">
+    <div><label>Vendedor</label><select class="browser-default" name="vendedor"><option value="">Todos los vendedores</option>{% for v in vendedores %}<option value="{{ v.id }}" {% if vendedor == v.id|stringformat:'s' %}selected{% endif %}>{{ v.display_name }}</option>{% endfor %}</select></div>
+    <div><label>Día de visita</label><select class="browser-default" name="dia"><option value="">Todos los días</option>{% for numero,nombre in dias %}<option value="{{ numero }}" {% if dia == numero|stringformat:'s' %}selected{% endif %}>{{ nombre }}</option>{% endfor %}</select></div>
+    <div><label>Estado</label><select class="browser-default" name="estado"><option value="">Todos</option><option value="sin_dia" {% if estado == 'sin_dia' %}selected{% endif %}>Sin día asignado</option><option value="sugeridos" {% if estado == 'sugeridos' %}selected{% endif %}>Sugeridos por el sistema</option><option value="confirmados" {% if estado == 'confirmados' %}selected{% endif %}>Confirmados manualmente</option></select></div>
+    <div><label>Buscar cliente</label><input type="search" name="q" value="{{ q }}" placeholder="Nombre, dirección o código"></div>
+    <button class="rutas-btn" type="submit">Ver clientes</button>
+  </form>
+
+  <form method="post" class="rutas-card">
+    {% csrf_token %}<input type="hidden" name="accion" value="asignar"><input type="hidden" name="volver_a" value="{{ volver_a }}">
+    <div class="resultado-cabecera">
+      <div><h2>{{ pagina.paginator.count }} cliente{{ pagina.paginator.count|pluralize }}</h2><span class="muted">{% if vendedor_seleccionado %}{{ vendedor_seleccionado.display_name }}{% else %}Todos los vendedores{% endif %} · {% if dia_seleccionado %}{{ dia_seleccionado }}{% else %}Todos los días{% endif %}</span></div>
+      {% if vendedor or dia or estado or q %}<a href="{{ request.path }}">Limpiar filtros</a>{% endif %}
+    </div>
+    <div class="rutas-acciones rutas-filtros">
+      <div><label>Vendedor de destino</label><select class="browser-default" name="vendedor_destino" required><option value="">Elegir…</option>{% for v in vendedores %}<option value="{{ v.id }}">{{ v.display_name }}</option>{% endfor %}</select></div>
+      <div><label>Día de destino</label><select class="browser-default" name="dia_destino" required><option value="">Elegir…</option>{% for numero,nombre in dias %}<option value="{{ numero }}">{{ nombre }}</option>{% endfor %}</select></div>
+      <button class="rutas-btn" type="submit">Mover seleccionados</button>
+    </div>
+    <label style="display:block;margin-bottom:12px"><input type="checkbox" name="todos_filtrados" value="1"> Mover los {{ pagina.paginator.count }} clientes de este filtro, incluidas las demás páginas</label>
+    <div style="overflow:auto"><table class="rutas-tabla"><thead><tr><th><input type="checkbox" onclick="document.querySelectorAll('.ruta-check').forEach(c=>c.checked=this.checked)"></th><th>Cliente</th><th>Vendedor de cartera</th><th>Ruta actual</th><th>Origen</th></tr></thead><tbody>
+      {% for cliente in pagina %}<tr><td><input class="ruta-check" type="checkbox" name="cliente_ids" value="{{ cliente.id }}"></td><td><b>{{ cliente.nombre_completo }}</b><br><span class="muted">{{ cliente.direccion|default:'Sin dirección' }}</span></td><td>{{ cliente.vendedor_asignado.display_name|default:'Sin asignar' }}</td><td>{% if cliente.ruta_semanal %}{{ cliente.ruta_semanal.get_dia_semana_display }} · {{ cliente.ruta_semanal.vendedor.display_name }}{% else %}<span class="muted">Sin día</span>{% endif %}</td><td>{% if cliente.ruta_semanal.sugerida %}<span class="rutas-tag">Sugerido · {{ cliente.ruta_semanal.confianza }}% · {{ cliente.ruta_semanal.ventas_analizadas }} ventas</span>{% elif cliente.ruta_semanal %}<span class="rutas-tag">Confirmado</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="5">No hay clientes con estos filtros.</td></tr>{% endfor %}
+    </tbody></table></div>
+    <div style="display:flex;justify-content:center;gap:12px;margin-top:14px">{% if pagina.has_previous %}<a href="?{{ query_sin_pagina }}&page={{ pagina.previous_page_number }}">← Anterior</a>{% endif %}<span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>{% if pagina.has_next %}<a href="?{{ query_sin_pagina }}&page={{ pagina.next_page_number }}">Siguiente →</a>{% endif %}</div>
+  </form>
+
+  <details class="rutas-card">
+    <summary>Ver estadísticas históricas</summary>
+    <div class="rutas-resumen" style="margin-top:14px">
+      <p><span class="muted">“Habitual” es la mediana de clientes distintos atendidos en los días que hubo ventas.</span></p>
+      <table class="rutas-tabla"><thead><tr><th>Vendedor</th>{% for numero,nombre in dias %}<th>{{ nombre }}</th>{% endfor %}</tr></thead><tbody>
+        {% for fila in resumen %}<tr><th>{{ fila.vendedor.display_name }}</th>{% for d in fila.dias %}<td><b>{{ d.asignados }} asignados</b>{% if d.mediana %}<br><span class="muted">Habitual: {{ d.mediana }}<br>{{ d.dias_con_ventas }} días medidos</span>{% else %}<br><span class="muted">Sin historial</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}
+      </tbody></table>
+    </div>
+  </details>
+
+  <details class="rutas-card">
+    <summary>Actualizar sugerencias desde las ventas</summary>
+    <form method="post" style="margin-top:14px">
+      {% csrf_token %}<input type="hidden" name="accion" value="recalcular">
+      <p class="muted">Analiza los últimos 3 meses. Las correcciones manuales no se modifican.</p>
+      <button class="rutas-btn sec" type="submit">↻ Recalcular sugerencias</button>
+    </form>
+  </details>
+</div>
+{% endblock %}

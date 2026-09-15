@@ -13,7 +13,7 @@ from django.utils.html import format_html
 
 from cliente.models import (
     CarteraCliente, Cliente, CuentaCliente, DireccionCliente, MovimientoCuenta, PrecioCliente,
-    AlertaClienteInactivo, HorarioAtencionCliente,
+    AlertaClienteInactivo, HorarioAtencionCliente, RutaSemanalCliente,
 )
 from cliente.admin_permissions import SuperuserOnlyAdminMixin, StaffFullAccessAdminMixin
 from vendedor.models import Vendedor
@@ -204,6 +204,30 @@ class CarteraClienteAdmin(admin.ModelAdmin):
     def changelist_view(self, request, extra_context=None):
         from django.shortcuts import redirect
         return redirect('cliente_cartera')
+
+    def has_module_permission(self, request):
+        return request.user.is_authenticated and request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_authenticated and request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class RutaSemanalClienteAdmin(admin.ModelAdmin):
+    """Entrada del menú del admin hacia el planificador semanal."""
+    icon_name = 'date_range'
+
+    def changelist_view(self, request, extra_context=None):
+        from django.shortcuts import redirect
+        return redirect('cliente_rutas_semanales')
 
     def has_module_permission(self, request):
         return request.user.is_authenticated and request.user.is_superuser

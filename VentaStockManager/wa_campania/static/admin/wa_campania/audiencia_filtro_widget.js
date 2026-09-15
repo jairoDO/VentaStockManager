@@ -7,7 +7,7 @@
  *
  * Estado leído/escrito del JSON:
  *   { todos, compraron_ultimos_dias, con_saldo_a_favor,
- *     con_saldo_deudor, vendedor_ids, campania_origen_id, barrio,
+ *     con_saldo_deudor, vendedor_ids, dia_visita, campania_origen_id, barrio,
  *     centro_latitud, centro_longitud, radio_km, clientes_excluidos_ids,
  *     solo_con_whatsapp_valido }
  *
@@ -27,6 +27,7 @@
     const cbDeudor = container.querySelector('.af-deudor');
     const cbWhatsappValido = container.querySelector('.af-whatsapp-valido');
     const selVendedores = container.querySelector('.af-vendedores');
+    const selDiaVisita = container.querySelector('.af-dia-visita');
     const selCampaniaOrigen = container.querySelector('.af-campania-origen');
     const inputBarrio = container.querySelector('.af-barrio');
     const filtrosBox = container.querySelector('.af-filtros');
@@ -69,6 +70,8 @@
     cbWhatsappValido.checked = state.solo_con_whatsapp_valido !== false;
     inputBarrio.value = state.barrio || '';
     const selectedVendedores = new Set((state.vendedor_ids || []).map(Number));
+    selDiaVisita.value = state.dia_visita === null || state.dia_visita === undefined
+      ? '' : String(state.dia_visita);
     let selectedCampaniaOrigen = state.campania_origen_id ? Number(state.campania_origen_id) : null;
     const selectedIds = new Set((state.clientes_ids || []).map(Number));
     const legacyExactMode = selectedIds.size > 0;
@@ -103,6 +106,7 @@
         con_saldo_deudor: cbDeudor.checked,
         solo_con_whatsapp_valido: cbWhatsappValido.checked,
         vendedor_ids: Array.from(selectedVendedores),
+        dia_visita: selDiaVisita.value === '' ? null : Number(selDiaVisita.value),
         campania_origen_id: selectedCampaniaOrigen,
         barrio: inputBarrio.value.trim(),
         centro_latitud: centerLatitude,
@@ -300,6 +304,7 @@
       const params = new URLSearchParams({page: String(currentPage), q: clientSearch.value.trim()});
       if (cbTodos.checked) params.set('todos', '1');
       Array.from(selectedVendedores).forEach(function (id) { params.append('vendedor', String(id)); });
+      if (selDiaVisita.value !== '') params.set('dia_visita', selDiaVisita.value);
       if (selectedCampaniaOrigen) params.set('campania', String(selectedCampaniaOrigen));
       if (inputBarrio.value.trim()) params.set('barrio', inputBarrio.value.trim());
       if (selDias.value) params.set('dias', selDias.value);
@@ -418,6 +423,11 @@
     });
     selCampaniaOrigen.addEventListener('change', function () {
       selectedCampaniaOrigen = selCampaniaOrigen.value ? Number(selCampaniaOrigen.value) : null;
+      cbTodos.checked = false;
+      sync();
+      loadClients(1);
+    });
+    selDiaVisita.addEventListener('change', function () {
       cbTodos.checked = false;
       sync();
       loadClients(1);
