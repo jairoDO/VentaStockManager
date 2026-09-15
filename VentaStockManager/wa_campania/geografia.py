@@ -12,6 +12,12 @@ RADIO_MAXIMO_KM = 200.0
 
 def normalizar_zona(filtro):
     """Devuelve ``(latitud, longitud, radio_km)`` o ``None`` si está incompleta."""
+    # Las campañas nuevas exigen habilitar el mapa explícitamente. Si la
+    # clave no existe mantenemos compatibilidad con campañas antiguas que ya
+    # tenían coordenadas guardadas antes de incorporar este interruptor.
+    usar_zona = filtro.get('usar_zona')
+    if usar_zona in (False, '', '0', 'false', 'False'):
+        return None
     try:
         latitud = float(filtro.get('centro_latitud'))
         longitud = float(filtro.get('centro_longitud'))

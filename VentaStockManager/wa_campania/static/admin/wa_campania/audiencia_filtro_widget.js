@@ -8,7 +8,7 @@
  * Estado leído/escrito del JSON:
  *   { todos, compraron_ultimos_dias, con_saldo_a_favor,
  *     con_saldo_deudor, vendedor_ids, dia_visita, campania_origen_id, barrio,
- *     centro_latitud, centro_longitud, radio_km, clientes_excluidos_ids,
+ *     usar_zona, centro_latitud, centro_longitud, radio_km, clientes_excluidos_ids,
  *     solo_con_whatsapp_valido }
  *
  * Compatibilidad: solo vanilla JS. Sin Alpine ni jQuery.
@@ -39,6 +39,8 @@
     const selectedCount = container.querySelector('.af-selected-count');
     const senderNotice = container.querySelector('.af-sender-notice');
     const mapElement = container.querySelector('.af-map');
+    const useZoneCheckbox = container.querySelector('.af-usar-zona');
+    const zoneControls = container.querySelector('.af-zona-controles');
     const mapSummary = container.querySelector('.af-map-summary');
     const radiusSelect = container.querySelector('.af-radio-km');
     const clearZoneButton = container.querySelector('.af-clear-zone');
@@ -87,6 +89,12 @@
       centerLatitude = null;
       centerLongitude = null;
     }
+    // Las campañas antiguas no tenían este interruptor. Si ya guardaron
+    // coordenadas, mantenemos su comportamiento; las nuevas empiezan apagadas.
+    let useZone = state.usar_zona === true || (
+      state.usar_zona === undefined && centerLatitude !== null
+    );
+    useZoneCheckbox.checked = useZone;
     let radiusKm = Number(state.radio_km) || 3;
     if (!Array.from(radiusSelect.options).some(function (option) {
       return Number(option.value) === radiusKm;
@@ -109,9 +117,10 @@
         dia_visita: selDiaVisita.value === '' ? null : Number(selDiaVisita.value),
         campania_origen_id: selectedCampaniaOrigen,
         barrio: inputBarrio.value.trim(),
+        usar_zona: useZone,
         centro_latitud: centerLatitude,
         centro_longitud: centerLongitude,
-        radio_km: centerLatitude !== null ? radiusKm : null,
+        radio_km: useZone && centerLatitude !== null ? radiusKm : null,
         clientes_ids: Array.from(selectedIds),
         clientes_excluidos_ids: Array.from(excludedIds),
       };
@@ -123,6 +132,7 @@
       selectedCount.textContent = legacyExactMode
         ? selectedIds.size + (selectedIds.size === 1 ? ' seleccionado' : ' seleccionados')
         : excludedIds.size + (excludedIds.size === 1 ? ' excluido' : ' excluidos');
+      zoneControls.style.display = useZone ? 'block' : 'none';
       clearZoneButton.disabled = centerLatitude === null;
     }
 
@@ -216,6 +226,7 @@
     }
 
     function setSelectedZone(latitude, longitude, reloadClients) {
+      if (!useZone) return;
       centerLatitude = Number(latitude);
       centerLongitude = Number(longitude);
       cbTodos.checked = false;
@@ -311,7 +322,7 @@
       if (cbFavor.checked) params.set('favor', '1');
       if (cbDeudor.checked) params.set('deudor', '1');
       excludedIds.forEach(function (id) { params.append('excluido', String(id)); });
-      if (centerLatitude !== null && centerLongitude !== null) {
+      if (useZone && centerLatitude !== null && centerLongitude !== null) {
         params.set('centro_latitud', String(centerLatitude));
         params.set('centro_longitud', String(centerLongitude));
         params.set('radio_km', String(radiusKm));
@@ -448,6 +459,15 @@
         drawSelectedZone();
         loadClients(1);
       }
+    });
+    useZoneCheckbox.addEventListener('change', function () {
+      useZone = useZoneCheckbox.checked;
+      cbTodos.checked = false;
+      sync();
+      if (useZone && audienceMap) {
+        setTimeout(function () { audienceMap.invalidateSize(); }, 0);
+      }
+      loadClients(1);
     });
     clearZoneButton.addEventListener('click', clearSelectedZone);
     useLocationButton.addEventListener('click', function () {

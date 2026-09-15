@@ -21,6 +21,7 @@ Esquema del JSON que mantenemos (NO cambia, así
     "dia_visita": int | None,
     "campania_origen_id": int | None,
     "barrio": str,
+    "usar_zona": bool,
     "centro_latitud": float | None,
     "centro_longitud": float | None,
     "radio_km": float | None,
@@ -139,6 +140,12 @@ class AudienciaFiltroWidget(forms.Widget):
               </div>
 
               <div class="af-zona-mapa" style="padding:12px; background:white; border:1px solid #cbd5e1; border-radius:6px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:700; color:#334155;">
+                  <input type="checkbox" class="af-usar-zona">
+                  <span>Filtrar también por una zona del mapa</span>
+                </label>
+                <div style="font-size:11px; color:#64748b; margin:3px 0 8px 26px;">Dejalo apagado para usar solamente vendedor y día.</div>
+                <div class="af-zona-controles" style="display:none;">
                 <div style="display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:10px; margin-bottom:8px;">
                   <div>
                     <label style="display:block; font-size:12px; font-weight:700; color:#334155; margin-bottom:3px;">
@@ -166,6 +173,7 @@ class AudienciaFiltroWidget(forms.Widget):
                     <button type="button" class="af-use-location" style="padding:5px 9px;">⌖ Mi ubicación</button>
                     <button type="button" class="af-clear-zone" style="padding:5px 9px;" disabled>Quitar zona</button>
                   </div>
+                </div>
                 </div>
               </div>
 
@@ -279,5 +287,5 @@ class AudienciaFiltroWidget(forms.Widget):
             'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
             'https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js',
             'https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js',
-            '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260915a',
+                '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260915b',
         )

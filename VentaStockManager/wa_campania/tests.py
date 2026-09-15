@@ -223,9 +223,36 @@ class AudienciaResolverTests(TestCase):
         )
 
         qs = resolver_clientes({
+            'usar_zona': True,
             'centro_latitud': -31.4201,
             'centro_longitud': -64.1888,
             'radio_km': 3,
+            'solo_con_whatsapp_valido': True,
+        })
+
+        self.assertEqual(list(qs.values_list('id', flat=True)), [self.c_con_wa.id])
+
+    def test_zona_desactivada_no_reduce_otro_filtro(self):
+        usuario = User.objects.create_user('vendedor_sin_zona')
+        vendedor = Vendedor.objects.create(
+            usuario=usuario, nombre='Ruta', apellido='Martes',
+        )
+        self.c_con_wa.vendedor_asignado = vendedor
+        self.c_con_wa.save(update_fields=['vendedor_asignado'])
+        DireccionCliente.objects.create(
+            cliente=self.c_con_wa,
+            direccion_texto='Muy lejos del centro',
+            latitud='-32.000000',
+            longitud='-65.000000',
+            es_principal=True,
+        )
+
+        qs = resolver_clientes({
+            'vendedor_ids': [vendedor.id],
+            'usar_zona': False,
+            'centro_latitud': -31.4201,
+            'centro_longitud': -64.1888,
+            'radio_km': 1,
             'solo_con_whatsapp_valido': True,
         })
 
@@ -369,6 +396,7 @@ class ClientesCampaniaApiTests(TestCase):
         )
 
         data = self.client.get('/wa-campania/api/clientes/', {
+            'usar_zona': '1',
             'centro_latitud': '-31.4201',
             'centro_longitud': '-64.1888',
             'radio_km': '3',
