@@ -86,6 +86,15 @@ class AudienciaFiltroWidget(forms.Widget):
 
         html = f'''
         <div class="audiencia-filtro-widget" id="{container_id}" data-name="{name}">
+          <style>
+            #{container_id} .af-primary-filters {{ display:grid; grid-template-columns:minmax(220px, 1fr) minmax(170px, .6fr); gap:12px; }}
+            #{container_id} .af-advanced {{ margin-top:12px; padding:10px 12px; background:#fff; border:1px solid #dbe3ec; border-radius:7px; }}
+            #{container_id} .af-advanced > summary {{ cursor:pointer; color:#334155; font-weight:700; }}
+            #{container_id} .af-advanced-content {{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }}
+            #{container_id} button {{ width:auto !important; min-width:0 !important; height:auto !important; min-height:32px; padding:5px 10px !important; line-height:20px !important; }}
+            #{container_id} .af-pagination {{ justify-content:flex-start !important; }}
+            @media (max-width:700px) {{ #{container_id} .af-primary-filters {{ grid-template-columns:1fr; }} }}
+          </style>
           <input type="hidden" name="{name}" value='{self._escape_attr(json_initial)}' />
           <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px;">
 
@@ -118,7 +127,7 @@ class AudienciaFiltroWidget(forms.Widget):
                 <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:4px;">
                   Vendedor asignado
                 </label>
-                <select class="af-vendedores" multiple size="4"
+                <select class="af-vendedores" multiple size="1"
                         style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; background:white;">
                   <option disabled>Cargando vendedores…</option>
                 </select>
@@ -287,5 +296,5 @@ class AudienciaFiltroWidget(forms.Widget):
             'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
             'https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js',
             'https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js',
-                '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260915c',
+                '/static/admin/wa_campania/audiencia_filtro_widget.js?v=20260915d',
         )

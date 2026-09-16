@@ -50,6 +50,38 @@
     const audienceRecommendation = container.querySelector('.af-audience-recommendation');
     const useSuggestedRadius = container.querySelector('.af-use-suggested-radius');
     const sendButton = document.querySelector('input[name="_saveandsend"]');
+    const audienceSummary = container.querySelector('.af-audience-summary');
+    const manualSelection = container.querySelector('.af-seleccion-manual');
+
+    // Jerarquía de la pantalla: vendedor y día son la tarea principal.
+    // El resto conserva toda su funcionalidad, pero queda plegado para que
+    // la cantidad y los destinatarios aparezcan sin hacer scroll.
+    const sellerBlock = selVendedores.parentElement;
+    const weekdayBlock = selDiaVisita.parentElement;
+    const campaignBlock = selCampaniaOrigen.parentElement;
+    const localityBlock = inputBarrio.parentElement;
+    const activityBlock = selDias.parentElement;
+    const balanceBlock = cbFavor.parentElement.parentElement;
+    const primaryFilters = document.createElement('div');
+    primaryFilters.className = 'af-primary-filters';
+    primaryFilters.appendChild(sellerBlock);
+    primaryFilters.appendChild(weekdayBlock);
+    filtrosBox.insertBefore(primaryFilters, filtrosBox.firstChild);
+
+    const advancedFilters = document.createElement('details');
+    advancedFilters.className = 'af-advanced';
+    const advancedSummary = document.createElement('summary');
+    advancedSummary.textContent = 'Más filtros (opcional)';
+    const advancedContent = document.createElement('div');
+    advancedContent.className = 'af-advanced-content';
+    advancedContent.appendChild(campaignBlock);
+    advancedContent.appendChild(container.querySelector('.af-zona-mapa'));
+    advancedContent.appendChild(localityBlock);
+    advancedContent.appendChild(activityBlock);
+    advancedContent.appendChild(balanceBlock);
+    advancedFilters.appendChild(advancedSummary);
+    advancedFilters.appendChild(advancedContent);
+    manualSelection.insertAdjacentElement('afterend', advancedFilters);
 
     // Parse del JSON inicial. Si falla, arrancamos con defaults sanos.
     let state;
@@ -60,6 +92,11 @@
     } catch (e) {
       state = {};
     }
+    advancedFilters.open = !!(
+      state.campania_origen_id || state.barrio || state.usar_zona ||
+      state.compraron_ultimos_dias || state.con_saldo_a_favor ||
+      state.con_saldo_deudor
+    );
 
     // Aplicar al UI los valores iniciales.
     cbTodos.checked = !!state.todos;
@@ -134,6 +171,8 @@
       // comunica que esos checkboxes no aplican.
       filtrosBox.style.opacity = next.todos ? '0.4' : '1';
       filtrosBox.style.pointerEvents = next.todos ? 'none' : 'auto';
+      advancedFilters.style.opacity = next.todos ? '0.4' : '1';
+      advancedFilters.style.pointerEvents = next.todos ? 'none' : 'auto';
       selectedCount.textContent = legacyExactMode
         ? selectedIds.size + (selectedIds.size === 1 ? ' seleccionado' : ' seleccionados')
         : excludedIds.size + (excludedIds.size === 1 ? ' excluido' : ' excluidos');
