@@ -49,6 +49,11 @@ CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 # segura.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+# Los mapas cargan mosaicos desde tile.openstreetmap.org. Django usa
+# ``same-origin`` por defecto, lo que elimina el Referer en esas solicitudes
+# cross-origin y hace que OpenStreetMap las bloquee por su política de uso.
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+
 # Cookies seguras solo cuando no estamos en dev.
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
