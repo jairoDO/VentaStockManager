@@ -150,3 +150,30 @@ class WorkerWakeupTests(TestCase):
                                    side_effect=lambda: setattr(command, 'stopping', True)) as run:
                 command.handle()
         run.assert_called_once()
+
+    @override_settings(USE_TZ=False, TIME_ZONE='UTC')
+    def test_production_naive_datetime_boundaries(self):
+        for now, expected in [
+            (datetime(2026, 10, 28, 10, 59), datetime(2026, 10, 28, 11)),
+            (datetime(2026, 10, 28, 11), datetime(2026, 10, 28, 11)),
+            (datetime(2026, 10, 28, 20, 59), datetime(2026, 10, 28, 20, 59)),
+            (datetime(2026, 10, 28, 21), datetime(2026, 10, 29, 11)),
+        ]:
+            allowed = operating_time(now)
+            self.assertEqual(allowed, expected)
+            self.assertGreaterEqual(allowed, now)
+            self.assertTrue(timezone.is_naive(allowed))
+
+    @override_settings(USE_TZ=False, TIME_ZONE='UTC')
+    @mock.patch('venta.management.commands.qcluster_horario.signal.signal')
+    @mock.patch('venta.management.commands.qcluster_horario.connections.close_all')
+    @mock.patch('venta.management.commands.qcluster_horario.next_work')
+    @mock.patch('venta.management.commands.qcluster_horario.time.sleep')
+    def test_production_naive_idle_loop_stays_alive(self, sleep, read, close, signals):
+        now = datetime(2026, 10, 28, 18)
+        read.return_value = (False, now + timedelta(hours=4))
+        command = Command()
+        sleep.side_effect = lambda _: setattr(command, 'stopping', True)
+        with mock.patch('venta.management.commands.qcluster_horario.timezone.now', return_value=now):
+            command.handle()
+        read.assert_called_once()

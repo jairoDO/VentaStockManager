@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.db import transaction
 from django.db.models.signals import post_save
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 TZ_ARG = ZoneInfo('America/Argentina/Buenos_Aires')
@@ -22,18 +23,23 @@ TZ_ARG = ZoneInfo('America/Argentina/Buenos_Aires')
 
 def operating_time(now):
     """First allowed instant at/after now. Only background work is restricted."""
+    was_naive = timezone.is_naive(now)
+    default_zone = timezone.get_default_timezone()
+    if was_naive:
+        now = timezone.make_aware(now, default_zone)
     now = now.astimezone(TZ_ARG)
     start = getattr(settings, 'Q_WORKER_START_HOUR', 8)
     end = getattr(settings, 'Q_WORKER_END_HOUR', 18)
     if not 0 <= start < end <= 24:
         raise ValueError('Q worker hours must satisfy 0 <= start < end <= 24')
     if now.hour < start:
-        return now.replace(hour=start, minute=0, second=0, microsecond=0)
-    if now.hour >= end:
-        return (now + timedelta(days=1)).replace(
+        now = now.replace(hour=start, minute=0, second=0, microsecond=0)
+    elif now.hour >= end:
+        now = (now + timedelta(days=1)).replace(
             hour=start, minute=0, second=0, microsecond=0,
         )
-    return now
+    # Match timezone.now() and Schedule.next_run under either USE_TZ setting.
+    return timezone.make_naive(now, default_zone) if was_naive else now
 
 
 def wake_path():
