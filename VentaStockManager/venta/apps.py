@@ -26,3 +26,7 @@ class VentaConfig(AppConfig):
         # ArticuloVenta (incluso cuando es cascade por borrar la
         # Venta entera desde el admin).
         from venta import signals  # noqa: F401
+
+        from venta.worker_wakeup import register_wakeup_signals
+
+        register_wakeup_signals()

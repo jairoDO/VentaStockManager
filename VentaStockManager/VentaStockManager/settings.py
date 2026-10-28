@@ -441,3 +441,9 @@ LOGGING = {
 if DEBUG:
     INSTALLED_APPS.append('debug_toolbar')
     MIDDLEWARE.append('debug_toolbar.middleware.DebugToolbarMiddleware')
+
+# The background worker sleeps without database access between jobs.
+# Web and worker share one Render instance; see venta.worker_wakeup.
+Q_WORKER_START_HOUR = env.int("Q_WORKER_START_HOUR", default=8)
+Q_WORKER_END_HOUR = env.int("Q_WORKER_END_HOUR", default=18)
+Q_WORKER_RECOVERY_SECONDS = env.int("Q_WORKER_RECOVERY_SECONDS", default=3600)

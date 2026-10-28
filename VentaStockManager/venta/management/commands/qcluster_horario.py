@@ -1,114 +1,130 @@
+"""Run django-q on demand between 08:00 and 18:00 Argentina.
+
+No queue polling while idle: local enqueue/changed-schedule hints wake us.
+Cached schedule times and hourly reconciliation preserve automatic maintenance
+and recover work enqueued by another machine. Queue rows (including locked
+rows) remain in Postgres until acknowledgement, so a running task is never
+mistaken for an empty queue. The web process is never stopped by this command.
 """
-Wrapper de `manage.py qcluster` que apaga el worker durante la noche.
-
-Motivación: el cliente no usa el sistema entre las 00:00 y las 07:00
-hora Argentina. Mientras qcluster corre, hace polling cada N segundos
-contra Postgres preguntando "¿hay tareas en la cola?", lo que mantiene
-a Neon despierto y consume Compute Hours del plan.
-
-Apagando qcluster esas 7 horas reducimos ~30% el polling diario y le
-damos a Neon una ventana real para hacer scale-to-zero. Las tareas
-programadas (django-q schedules) que caigan en esa ventana se ejecutan
-apenas qcluster vuelve a las 07:00 — django-q persiste los `Schedule`
-en DB y los recupera al arrancar.
-
-Por qué no matar el process desde honcho/Render: cuando un proceso de
-honcho termina, honcho mata a TODOS sus hijos (incluido gunicorn).
-Necesitamos un proceso que se quede vivo 24h pero internamente decida
-arrancar/parar qcluster.
-
-Por qué no usar `Q_CLUSTER['stopper']`: django-q2 no expone un hook de
-"pausa programada" — solo un stopper binario al startup. Manejarlo como
-subprocess es más simple y se entiende leyendo el código.
-"""
-
-import os
+import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.db import connections
+from django.db.models import Q
+from django.utils import timezone
+from django_q.conf import Conf
+from django_q.models import OrmQ, Schedule
+from django_q.scheduler import scheduler
 
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # Python < 3.9 — no debería pasar pero por las dudas
-    from backports.zoneinfo import ZoneInfo
-
-
-TZ_ARG = ZoneInfo("America/Argentina/Buenos_Aires")
-HORA_INICIO_NOCHE = 0   # 00:00 ARG: empieza la pausa nocturna
-HORA_FIN_NOCHE = 6      # 06:00 ARG: vuelve qcluster
-# IMPORTANTE: esta ventana tiene que coincidir con la de
-# `VentaStockManager.middleware_horario.FueraDeHorarioMiddleware`, que
-# bloquea el acceso HTTP de no-superusers en el mismo rango. Si
-# cambia uno, cambiar el otro.
+from venta.worker_wakeup import operating_time, wake_token
 
 
-def _ahora_arg():
-    return datetime.now(TZ_ARG)
+def next_work(now):
+    """Read once, then close DB connections before sleeping or spawning."""
+    try:
+        queue = OrmQ.objects.using(Conf.ORM).filter(key=Conf.CLUSTER_NAME)
+        schedules = Schedule.objects.exclude(repeats=0)
+        clusters = Q(cluster=Conf.CLUSTER_NAME)
+        if Conf.CLUSTER_NAME == Conf.PREFIX:
+            clusters |= Q(cluster__isnull=True)
+        scheduled = schedules.filter(clusters).order_by('next_run').values_list(
+            'next_run', flat=True,
+        ).first()
+        pending = queue.exists()
+        return pending, scheduled
+    finally:
+        connections.close_all()
 
 
-def _es_horario_nocturno():
-    return HORA_INICIO_NOCHE <= _ahora_arg().hour < HORA_FIN_NOCHE
-
-
-def _segundos_hasta_amanecer():
-    """Segundos hasta las 07:00 ARG del próximo amanecer."""
-    ahora = _ahora_arg()
-    objetivo = ahora.replace(
-        hour=HORA_FIN_NOCHE, minute=0, second=0, microsecond=0
-    )
-    if ahora >= objetivo:
-        objetivo += timedelta(days=1)
-    return int((objetivo - ahora).total_seconds())
+def queue_pending():
+    try:
+        # Include locks: dequeued but unacknowledged work must finish first.
+        return OrmQ.objects.using(Conf.ORM).filter(key=Conf.CLUSTER_NAME).exists()
+    finally:
+        connections.close_all()
 
 
 class Command(BaseCommand):
-    help = (
-        f"qcluster con pausa nocturna automática "
-        f"({HORA_INICIO_NOCHE:02d}:00–{HORA_FIN_NOCHE:02d}:00 hora Argentina)."
-    )
+    help = 'Task worker on demand, 08:00–18:00 Argentina, without idle DB polling.'
 
     def handle(self, *args, **opts):
-        proceso = None
-        while True:
-            if _es_horario_nocturno():
-                if proceso and proceso.poll() is None:
-                    self.stdout.write(
-                        "[qcluster_horario] Entrando en horario nocturno — "
-                        "parando qcluster."
-                    )
-                    proceso.terminate()
+        self.stopping = False
+        self.process = None
+        signal.signal(signal.SIGTERM, self._stop_requested)
+        signal.signal(signal.SIGINT, self._stop_requested)
+        deadline = timezone.now()
+        seen = None
+        self.stdout.write('[qcluster_horario] Modo bajo demanda 08:00–18:00 ARG.')
+        try:
+            while not self.stopping:
+                now = timezone.now()
+                allowed = operating_time(now)
+                if allowed > now:
+                    # Keep hints unconsumed: work queued overnight wakes at 08:00.
+                    time.sleep(min(2, max(0.1, (allowed - now).total_seconds())))
+                    continue
+                token = wake_token()
+                if token != seen or now >= deadline:
+                    # Snapshot before DB read, so a concurrent enqueue cannot be lost.
+                    seen = token
                     try:
-                        proceso.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        proceso.kill()
-                        proceso.wait()
-                    proceso = None
-                dormir = _segundos_hasta_amanecer()
-                self.stdout.write(
-                    f"[qcluster_horario] Durmiendo {dormir}s hasta las "
-                    f"{HORA_FIN_NOCHE:02d}:00 ARG."
-                )
-                # Cap a 1h para que el loop reevalúe periódicamente —
-                # robustez frente a cambios de horario / reloj.
-                time.sleep(min(dormir, 3600))
-                continue
+                        pending, scheduled = next_work(now)
+                        if pending or (scheduled and scheduled <= now):
+                            self._run_batch()
+                            deadline = timezone.now()
+                            continue
+                        recovery = getattr(settings, 'Q_WORKER_RECOVERY_SECONDS', 3600)
+                        deadline = now + timedelta(seconds=max(60, recovery))
+                        if scheduled:
+                            deadline = min(deadline, scheduled + timedelta(seconds=1))
+                        self.stdout.write(
+                            '[qcluster_horario] Cola vacía; dormido sin consultar DB.'
+                        )
+                    except Exception as exc:
+                        connections.close_all()
+                        self.stderr.write(f'[qcluster_horario] Reintento en 60s: {type(exc).__name__}')
+                        deadline = now + timedelta(seconds=60)
+                time.sleep(2)
+        finally:
+            self._stop_child()
+            connections.close_all()
 
-            if proceso is None or proceso.poll() is not None:
-                if proceso is not None:
-                    self.stdout.write(
-                        f"[qcluster_horario] qcluster salió con código "
-                        f"{proceso.returncode} — relanzando."
-                    )
-                else:
-                    self.stdout.write("[qcluster_horario] Levantando qcluster.")
-                proceso = subprocess.Popen(
-                    [sys.executable, "manage.py", "qcluster"],
-                    cwd=os.getcwd(),
-                )
+    def _stop_requested(self, signum, frame):
+        self.stopping = True
 
-            # Reevaluar cada minuto: rápido para detectar entrada en
-            # ventana nocturna, lento para no spammear logs.
-            time.sleep(60)
+    def _run_batch(self):
+        # Dispatch due schedules immediately instead of waiting for qcluster's timer.
+        try:
+            scheduler()
+        finally:
+            connections.close_all()
+        if self.stopping:
+            return
+        self.stdout.write('[qcluster_horario] Trabajo pendiente; levantando qcluster.')
+        self.process = subprocess.Popen([sys.executable, 'manage.py', 'qcluster'])
+        try:
+            while not self.stopping:
+                time.sleep(10)
+                if self.process.poll() is not None:
+                    raise RuntimeError('qcluster exited before draining its queue')
+                now = timezone.now()
+                if operating_time(now) > now or not queue_pending():
+                    break
+        finally:
+            self._stop_child()
+
+    def _stop_child(self):
+        if self.process is None:
+            return
+        try:
+            if self.process.poll() is None:
+                # django-q SIGTERM drains work and joins its children gracefully.
+                self.process.terminate()
+                self.process.wait()
+        finally:
+            self.process = None

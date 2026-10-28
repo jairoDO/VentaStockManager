@@ -24,8 +24,6 @@
 # venv en PATH al momento de ejecutar el Procfile. `python -m` evita
 # el problema importando el módulo (que SÍ está en sys.path).
 web: python -m gunicorn VentaStockManager.wsgi:application --log-file - --workers 2 --timeout 60
-# qcluster_horario en vez de qcluster directo: wrapper que apaga el
-# worker entre 00:00 y 07:00 ARG (cliente no usa el sistema esas horas)
-# para que Neon pueda hacer scale-to-zero y ahorrar Compute Hours.
-# Ver venta/management/commands/qcluster_horario.py.
+# Sleeps without database polling; wakes on queued work or a due schedule.
+# Background jobs run between 08:00 and 18:00 Argentina; the web stays online.
 worker: python manage.py qcluster_horario
