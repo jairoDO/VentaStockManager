@@ -1,68 +1,49 @@
-# wa-bot — bridge open-wa para VentaStockManager
+# wa-bot
 
-Service Node.js que corre [`@open-wa/wa-automate`](https://www.open-wa.org/)
-y expone una API HTTP simple para que Django pueda mandar mensajes de
-WhatsApp sin lidiar con Puppeteer.
+Private Node.js bridge between VentaStockManager and WhatsApp. It uses [`@whiskeysockets/baileys`](https://github.com/WhiskeySockets/Baileys) and exposes a small HTTP API consumed by the Django application.
 
-## Primera vez: escanear el QR
+The service is deployed separately from Django and stores its WhatsApp authentication state on a persistent volume. In production it must remain private and require a shared authentication token.
+
+## Run locally
 
 ```bash
 docker compose up -d wa-bot
 docker compose logs -f wa-bot
 ```
 
-El log va a mostrar:
-
-1. `[wa-bot] Iniciando open-wa…`
-2. Un **QR en ASCII** dibujado directamente en la terminal.
-3. Si preferís un QR "de verdad" (más fácil de escanear con el celu),
-   abrí `http://localhost:3000/qr` mientras el bot espera.
-
-Escaneá con la app de WhatsApp (Menú → Dispositivos vinculados →
-Vincular dispositivo). La sesión queda guardada en el volume
-`wa-bot-sessions` y sobrevive restarts/deploys.
-
-Cuando aparezca `[wa-bot] Cliente listo. WhatsApp conectado.`, está OK.
+On first start, scan the QR code with WhatsApp under **Linked devices**. The session is stored in the `wa_bot_sessions` Docker volume and survives container restarts.
 
 ## Endpoints
 
-| Método | Path           | Body                                        | Devuelve              |
-|--------|----------------|---------------------------------------------|-----------------------|
-| GET    | `/status`      | —                                           | `{ready, state, me}`  |
-| GET    | `/qr`          | —                                           | PNG del QR o 204      |
-| POST   | `/send-text`   | `{phone, message}`                          | `{ok, id}` o `{ok:false, error}` |
-| POST   | `/send-media`  | `{phone, message?, base64, mime, filename?}`| `{ok, id}` o `{ok:false, error}` |
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/status` | Connection and readiness status |
+| `GET` | `/qr` | QR code used to establish a session |
+| `POST` | `/send-text` | Send a text message |
+| `POST` | `/send-media` | Send a media attachment |
 
-Formato de `phone`: solo dígitos con código de país, sin `+`.
-Ejemplo: `5491155551234`.
+Phone numbers use international digits without the `+` prefix.
 
-## Autenticación
+## Authentication
 
-Variable de entorno **`WA_BOT_TOKEN`**:
+Set `WA_BOT_TOKEN` and send the same value from Django as `WHATSAPP_API_TOKEN`.
 
-- **Vacía o no seteada** → modo dev, sin auth. El bot loguea un
-  warning bien visible al arrancar.
-- **Con valor** → todos los endpoints exigen el header
-  `X-Bot-Token: <valor>`. Para `/qr` también acepta `?token=<valor>`
-  como query param (más cómodo para escanear desde el browser).
+- An empty token is allowed only for local development.
+- Production endpoints must require the `X-Bot-Token` header.
+- Store the token in Render environment variables; never commit it.
 
-En docker-compose local se deja vacío. En producción siempre debe
-estar seteado (generar uno aleatorio: `openssl rand -hex 32`).
+## Tests
 
-## Cuándo se cae la sesión
+```bash
+npm install
+npm test
+```
 
-- Si Osvaldo abre WhatsApp en el celu y va a Dispositivos vinculados →
-  Cerrar sesión, se cae.
-- Si WhatsApp decide vencer la sesión (cada 14 días sin actividad).
-- Si el volume `wa-bot-sessions` se borra.
+The current test suite verifies that sensitive Signal protocol session data is redacted from logs.
 
-En todos los casos, basta con `docker compose logs wa-bot`, ver el
-nuevo QR y re-escanear.
+## Operational risks
 
-## Riesgos a tener presente
-
-- **No es API oficial.** WhatsApp puede banear el número si detecta
-  patrones automatizados. Por eso el bridge respeta un delay mínimo
-  entre mensajes (configurado del lado de Django).
-- **Conviene usar un número dedicado** (chip aparte) para evitar
-  perder el WhatsApp principal del negocio si el ban llega.
+- This integration does not use the official WhatsApp Business API.
+- Automated messaging can lead to account restrictions; use a dedicated business number and conservative sending limits.
+- Deleting the persistent session volume requires pairing the account again.
+- Do not expose this service directly to the public internet.
