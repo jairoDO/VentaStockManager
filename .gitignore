@@ -190,6 +190,8 @@ settings.yaml
 # Excel files downloaded from Google Sheets (efímeros)
 articulo.xlsx/
 VentaStockManager/articulo/data/
+/VentaStockManager/articulos.xlsx
+/VentaStockManager/staticfiles/
 
 # Claude Code workspace
 .claude/
